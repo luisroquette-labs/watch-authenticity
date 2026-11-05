@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import pytest
 
-from core.types import Grade, Label, ManifestRecord, Prediction, Rejection
+from core.types import Grade, Label, ManifestRecord, ModelClass, Prediction, Rejection
 
 # Frameworks the domain core must never import (dataclasses/enum/typing/
 # datetime are stdlib and therefore always allowed).
@@ -52,8 +52,19 @@ def test_grade_enum_has_the_four_market_grades():
     assert Grade.SUPERCLONE == 4
 
 
-def test_label_enum_has_genuine_fake_excluded():
-    assert {label.name for label in Label} == {"GENUINE", "FAKE", "EXCLUDED"}
+def test_label_enum_has_genuine_fake_rejection_excluded():
+    assert {label.name for label in Label} == {"GENUINE", "FAKE", "REJECTION", "EXCLUDED"}
+
+
+def test_model_class_is_the_canonical_six_class_target_vocabulary():
+    assert list(ModelClass) == [
+        ModelClass.GENUINE,
+        ModelClass.GRADE_1,
+        ModelClass.GRADE_2,
+        ModelClass.GRADE_3,
+        ModelClass.GRADE_4,
+        ModelClass.REJECTION,
+    ]
 
 
 def test_manifest_record_genuine_photo_has_null_grade():
