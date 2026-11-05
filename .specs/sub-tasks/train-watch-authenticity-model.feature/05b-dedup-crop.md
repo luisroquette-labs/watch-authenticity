@@ -9,7 +9,7 @@
 **Agent:** sdd:developer
 **Depends on:** None
 **Parallel with:** `04a-manifest`, `04b-infra`, `05a-scrapers`, `05c-augment-splits`
-**Note:** Operates on raw images only (pHash + crop) — no manifest read, no `core.*` call. Grouped into Phase 2 only for review timing.
+**Note:** Historical prototype completed. `04c-data-acquisition.md` Task 4 adds physical-watch/repost grouping and replaces unconditional studio deletion with capture-style classification.
 
 **Goal:** Keep source-style confounds and duplicates out of the training set, and isolate each guided angle so heads see the watch part, not the background (CK-11, CK-21) — the crop is a first-line defense against the source-bias risk (item 13).
 

@@ -9,7 +9,7 @@
 **Agent:** sdd:developer
 **Depends on:** `04a-manifest`
 **Parallel with:** `05a-scrapers`, `05b-dedup-crop`
-**Note:** None
+**Note:** Historical prototype completed. `04c-data-acquisition.md` Task 6 supersedes row-level/source-derived splitting with rights/evidence-gated group splits and quantitative readiness.
 
 **Goal:** Apply heavy lighting/blur/JPEG + photographic-style augmentation (CK-16, item 13 source-bias defense) and produce the six disjoint splits — including the two that make the generalization gates meaningful — with no leakage.
 
