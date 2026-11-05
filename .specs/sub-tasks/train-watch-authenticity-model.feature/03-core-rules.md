@@ -9,7 +9,7 @@
 **Agent:** sdd:developer
 **Depends on:** `02-core-types`
 **Parallel with:** None
-**Note:** This is the highest-leverage, rubric-tested module. Every invariant lives here ONCE (CK-22) — no stage may re-implement any of these.
+**Note:** Historical prototype completed. `04c-data-acquisition.md` Task 2 supersedes source-as-ground-truth: this module must be reworked from `source_label_rule` to candidate-only `propose_source_label`; evidence adjudication owns final labels.
 
 **Goal:** Implement every pure safety rule the task's credibility rests on, framework-free, each exactly once. The rubric tests these directly; duplicating any of them across stages fails CK-22.
 

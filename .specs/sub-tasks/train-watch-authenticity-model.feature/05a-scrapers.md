@@ -9,7 +9,7 @@
 **Agent:** sdd:developer
 **Depends on:** `04a-manifest`
 **Parallel with:** `05b-dedup-crop`, `05c-augment-splits`
-**Note:** Seven source files share ONE pattern (fetch → `core.source_label_rule` → write via `labeling.manifest`). Label derivation is never per-scraper logic.
+**Note:** Historical prototype completed. `04c-data-acquisition.md` Tasks 2–3 supersede direct source labeling and manifest writes; adapters may only return candidates from an approved API/feed/export.
 
 **Goal:** Ingest photos per source and derive each row's label strictly via `core.source_label_rule`, with the two legally load-bearing gates enforced at the adapter boundary: Mercado Livre via official API only (CK-28) and Reddit default-excluded (CK-27/29).
 

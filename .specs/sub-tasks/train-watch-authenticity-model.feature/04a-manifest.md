@@ -9,7 +9,7 @@
 **Agent:** sdd:developer
 **Depends on:** `03-core-rules`
 **Parallel with:** `04b-infra`
-**Note:** None
+**Note:** Historical prototype completed. `04c-data-acquisition.md` Tasks 1 and 5 supersede the flat source-labeled manifest with candidate, rights, evidence and accepted-training records.
 
 **Goal:** Provide the versioned manifest I/O that every scraped photo row flows through, so the dataset is reproducible and legally auditable (CK-10) without redistributing images.
 
