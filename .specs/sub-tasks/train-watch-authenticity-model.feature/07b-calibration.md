@@ -22,18 +22,33 @@ Create `calibration/temperature_scaling.py`: reimplement Guo et al. 2017 `fit_te
 
 #### Success Criteria
 
-- [ ] `temperature_scale(logits, T=2.0)` yields a flatter (lower max) probability than `T=1.0` (CK-15)
-- [ ] Property: for any logit vector and `T>1`, `max(softmax(logits/T)) <= max(softmax(logits))` (CK-15)
-- [ ] Calibration fit reads only the validation split's manifest rows, never the test split's (CK-15 integration)
-- [ ] Reported confidence passes through `core.apply_grade4_ceiling` then `core.clip_confidence` (CK-3, CK-1)
-- [ ] `pytest tests/test_calibration.py` passes
+- [X] `temperature_scale(logits, T=2.0)` yields a flatter (lower max) probability than `T=1.0` (CK-15)
+- [X] Property: for any logit vector and `T>1`, `max(softmax(logits/T)) <= max(softmax(logits))` (CK-15)
+- [X] Calibration fit reads only the validation split's manifest rows, never the test split's (CK-15 integration)
+- [X] Reported confidence passes through `core.apply_grade4_ceiling` then `core.clip_confidence` (CK-3, CK-1)
+- [X] `pytest tests/test_calibration.py` passes
 
 #### Subtasks
 
-- [ ] Reimplement `fit_temperature` (LBFGS NLL) in `calibration/temperature_scaling.py`
-- [ ] Implement `calibrate(...)` chaining temperature → `core.apply_grade4_ceiling` → `core.clip_confidence`
-- [ ] Write unit + property tests for temperature flattening/monotonicity (CK-15)
-- [ ] Write integration test asserting fit uses validation split only (CK-15)
+- [X] Reimplement `fit_temperature` (LBFGS NLL) in `calibration/temperature_scaling.py`
+- [X] Implement `calibrate(...)` chaining temperature → `core.apply_grade4_ceiling` → `core.clip_confidence`
+- [X] Write unit + property tests for temperature flattening/monotonicity (CK-15)
+- [X] Write integration test asserting fit uses validation split only (CK-15)
+
+**Implementation note:** this sandbox's Python (3.14) has no `torch==2.5.1` wheel, matching the
+environment limitation `06-backbone-heads` already hit and documented. Followed the same pattern
+(`pytest.importorskip` + `TYPE_CHECKING`-only import) in `tests/test_calibration.py` so the native
+sandbox run documents an explicit skip (not a silent no-op). Additionally verified all 8 tests for
+real, not just structurally: built a disposable Python 3.12 venv, installed the pinned
+`torch==2.5.1`/`transformers==4.46.0`, and ran `pytest tests/test_calibration.py` plus
+`tests/test_model_build.py`/`test_core_rules.py`/`test_core_types.py` — 50/50 passed. Venv was
+discarded after verification; nothing added to the repo or its dependency pins.
+
+Also added `fit_temperature_on_validation_split(splits, logits_by_path, labels_by_path)` alongside
+the two functions named in Expected Output: the success criterion "fit reads only the validation
+split's manifest rows, never the test's" needed a real call site to enforce (not just a test that
+manually slices `splits[VAL]`), and `model/heads.py`'s own docstring already commits calibration
+(this step) to reading `GENUINE_CLASS_INDEX` from it rather than re-deriving the class-index layout.
 
 #### Blockers & Risks
 

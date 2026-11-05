@@ -31,23 +31,23 @@ Expose `GRADE4_GENUINE_CEILING` as a named constant with a `ponytail:`-style com
 
 #### Success Criteria
 
-- [ ] `core/rules.py` imports only stdlib (no torch/opencv/boto3)
-- [ ] `clip_confidence(0.0)==0.001`, `clip_confidence(1.0)==0.999`, `clip_confidence(0.5)==0.5` (CK-1)
-- [ ] `apply_grade4_ceiling(0.95,4) <= 0.60`, `apply_grade4_ceiling(0.40,4)==0.40` (CK-3)
-- [ ] `source_label_rule(listing_text="original", marketplace="olx")==EXCLUDED` (CK-13/18)
-- [ ] `source_label_rule(source="reddit", subreddit="r/rolex", permission_on_file=False)==EXCLUDED`; `...True)==GENUINE` (CK-27)
-- [ ] `aggregate_angles` has no trainable parameters (plain function) (CK-19)
-- [ ] `publish_gate(0.94,0.60,0.10)` blocks; `publish_gate(0.94,0.91,0.10)` allows (CK-8)
-- [ ] Property: for any `p∈[0,1]`, `clip_confidence(p)∈[0.001,0.999]`; for any `raw_genuine∈[0,1]`, `apply_grade4_ceiling(raw_genuine,4)<=0.60`
-- [ ] `pytest tests/test_core_rules.py` passes
+- [X] `core/rules.py` imports only stdlib (no torch/opencv/boto3)
+- [X] `clip_confidence(0.0)==0.001`, `clip_confidence(1.0)==0.999`, `clip_confidence(0.5)==0.5` (CK-1)
+- [X] `apply_grade4_ceiling(0.95,4) <= 0.60`, `apply_grade4_ceiling(0.40,4)==0.40` (CK-3)
+- [X] `source_label_rule(listing_text="original", marketplace="olx")==EXCLUDED` (CK-13/18)
+- [X] `source_label_rule(source="reddit", subreddit="r/rolex", permission_on_file=False)==EXCLUDED`; `...True)==GENUINE` (CK-27)
+- [X] `aggregate_angles` has no trainable parameters (plain function) (CK-19)
+- [X] `publish_gate(0.94,0.60,0.10)` blocks; `publish_gate(0.94,0.91,0.10)` allows (CK-8)
+- [X] Property: for any `p∈[0,1]`, `clip_confidence(p)∈[0.001,0.999]`; for any `raw_genuine∈[0,1]`, `apply_grade4_ceiling(raw_genuine,4)<=0.60`
+- [X] `pytest tests/test_core_rules.py` passes
 
 #### Subtasks
 
-- [ ] Implement `clip_confidence`, `apply_grade4_ceiling` + `GRADE4_GENUINE_CEILING`
-- [ ] Implement `grade_map`, `source_label_rule` (OLX-original + Reddit-permission gates)
-- [ ] Implement `aggregate_angles` (simple rule), `publish_gate`, `goldset_regression_gate`
-- [ ] Write unit tests for every rule's documented cases (CK-1,3,8,12,13,18,19,27)
-- [ ] Write hypothesis property tests for clip bounds and grade-4 ceiling
+- [X] Implement `clip_confidence`, `apply_grade4_ceiling` + `GRADE4_GENUINE_CEILING`
+- [X] Implement `grade_map`, `source_label_rule` (OLX-original + Reddit-permission gates)
+- [X] Implement `aggregate_angles` (simple rule), `publish_gate`, `goldset_regression_gate`
+- [X] Write unit tests for every rule's documented cases (CK-1,3,8,12,13,18,19,27)
+- [X] Write hypothesis property tests for clip bounds and grade-4 ceiling
 
 #### Blockers & Risks
 

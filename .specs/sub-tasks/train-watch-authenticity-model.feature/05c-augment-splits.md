@@ -23,18 +23,24 @@ Create `dataset/augment.py`: `augment_pipeline(image)` applying at least one of 
 
 #### Success Criteria
 
-- [ ] `augment_pipeline(fixture_image)` applies ≥1 of {blur, jpeg, lighting} and returns a tensor ≠ input (CK-16)
-- [ ] `splits.py` produces train/val/test/cross-source/factory-holdout/gold splits from manifest rows
-- [ ] Gold-set and factory-holdout photos never appear in the train split (no-leak test)
-- [ ] Cross-source split pairs genuine-in-replica-style vs fake-in-studio-style
-- [ ] `pytest tests/test_augment.py tests/test_splits.py` passes
+- [X] `augment_pipeline(fixture_image)` applies ≥1 of {blur, jpeg, lighting} and returns a tensor ≠ input (CK-16)
+- [X] `splits.py` produces train/val/test/cross-source/factory-holdout/gold splits from manifest rows
+- [X] Gold-set and factory-holdout photos never appear in the train split (no-leak test)
+- [X] Cross-source split pairs genuine-in-replica-style vs fake-in-studio-style
+- [X] Cross-source split photos never appear in the train split (no-leak test) — the rubric's heaviest-weighted criterion (0.25, generalization/regression rigor) depends on this pool being untainted
+- [X] `pytest tests/test_augment.py tests/test_splits.py` passes
 
 #### Subtasks
 
-- [ ] Implement `augment_pipeline` (lighting/blur/JPEG + style) in `dataset/augment.py`
-- [ ] Implement six-way split builder in `dataset/splits.py`
-- [ ] Write augment unit test (CK-16)
-- [ ] Write splits no-leak integration test (gold + factory-holdout disjoint from train)
+- [X] Implement `augment_pipeline` (lighting/blur/JPEG + style) in `dataset/augment.py`
+- [X] Implement six-way split builder in `dataset/splits.py`
+- [X] Write augment unit test (CK-16)
+- [X] Write splits no-leak integration test (gold + factory-holdout + cross-source all disjoint from train)
+
+**Implementation notes / deviations**:
+- `augment_pipeline` returns a `numpy.ndarray`, not a `torch.Tensor`. `torch`/`torchvision` are pinned in `requirements.txt` but are not importable in this execution environment (Python 3.14 has no published torch wheel yet); `numpy` + `Pillow` + `opencv-python-headless` (already installed) satisfy CK-16's "returns a tensor" under the array sense of "tensor" without adding an uninstallable dependency. `Pillow`/`numpy` were added as explicit pins to `requirements.txt` since `dataset/augment.py` now imports them directly rather than only transitively.
+- `ManifestRecord` has no dedicated photographic-style field, so the cross-source split's "genuine-in-replica-style vs fake-in-studio-style" pairing (item 13) is derived from `source`: `CASUAL_STYLE_SOURCES = {"watchuseek"}` (genuine owner-forum snapshots) paired against `STUDIO_STYLE_SOURCES = {"chinese_replica"}` (fake catalog/studio photos) in `dataset/splits.py`. This is a documented source->style lookup, not a measured/learned style classifier — extend the two sets as new scraper sources are added.
+- `build_splits` takes `gold_paths` and `holdout_sources` as explicit caller-supplied sets rather than inferring them, since gold-set membership (hand-verified) and held-out-factory membership are decisions no manifest row encodes on its own.
 
 #### Blockers & Risks
 

@@ -31,7 +31,7 @@ Decisões tomadas no brainstorm (03/11/2026):
 6. **Arquitetura**: backbone DINOv2 ViT-B/14 congelado (pré-treinado da Meta) + cabeça de classificação por ângulo (linear probe; destravar últimas camadas só se saturar). Augmentação pesada de luz/blur/compressão JPEG. Agregação dos ângulos por regra simples (não segundo modelo).
 7. **Calibração**: temperature scaling em validação separada — sem isso o score 0,1-99,9% não significa nada.
 8. **Avaliação**: conjunto de teste com factories que o treino nunca viu (superclone novo chega todo mês).
-9. **Infra de treino**: AWS g5.xlarge (A10G, ~US$1/h, treino 5-20h = US$5-20/rodada), créditos de bônus do dono. Fotos em S3. GitHub credits não servem (sem GPU de treino).
+9. **Infra de treino (decisão substituída em 05/11/2026)**: IBM Cloud VPC no perfil `gx3-16x80x1l4` (1x NVIDIA L4 24 GB, 16 vCPU, 80 GiB RAM), usando o crédito promocional de US$ 18.000 da CF GAUSS SERVICOS LTDA. Fotos, manifestos, checkpoints e relatórios ficam no IBM Cloud Object Storage; a imagem reprodutível de treino fica no IBM Cloud Container Registry. AWS/S3 ficam removidos do caminho normal e não existe fallback pago automático.
 10. **Open source**: pesos publicados (~400 MB). Fotos do dataset NÃO publicadas (copyright/ToS de raspagem — área cinzenta; decisão pendente do dono sobre abrir dataset parcial). Monetização futura: API hospedada / versão pro.
 11. **App** Next.js/Vercel com captura guiada fica para DEPOIS do modelo treinado (tarefa separada).
 12. **Precedente mapeado**: TrustWatch (Hoken Tech) faz similar, fechado, com 1 foto do dial, 96,2% alegado. Entrupy usa scanner óptico proprietário. Nenhum open source, nenhum dataset público de fake vs. real. Diferencial nosso: open source + multi-ângulo guiado + graus de fake + score honesto em camadas.
@@ -43,8 +43,10 @@ Adições de arquitetura (03/11/2026):
 15. **Porteiro de qualidade de foto**: checagem de nitidez/luz/enquadramento na captura (ex. variância do Laplaciano), antes da inferência — foto ruim é recusada com instrução de recaptura, não pontuada.
 16. **Explicabilidade**: mapa de calor (Grad-CAM) junto de todo score, mostrando a região que pesou. Dupla função: confiança do usuário + auditoria de vício de fonte (mapa destacando fundo = flagrante do item 13).
 17. **Manifesto do dataset + conjunto-ouro**: cada foto com fonte, URL, label, grau e hash num manifesto versionado (raspagem reproduzível/auditável). Conjunto-ouro de ~200 fotos verificadas à mão, congelado — gate de regressão obrigatório antes de publicar qualquer versão nova dos pesos.
+18. **IBM-first com limite de utilidade (05/11/2026)**: usar serviços IBM quando substituírem uma responsabilidade real do pipeline: VPC GPU para treino, Cloud Object Storage para dados/artefatos, Container Registry para a imagem, IAM/trusted profile para acesso sem segredo persistente, e Logs/Monitoring + billing/usage para auditoria e proteção de saldo. Não adicionar watsonx, Kubernetes, banco ou outro serviço apenas para consumir crédito; o modelo e os pesos continuam portáveis e open source.
+19. **Estado do crédito**: código aplicado segundo confirmação do dono em 05/11/2026. Saldo, data terminal e elegibilidade de cada SKU permanecem `PENDENTE E2E` até leitura autoritativa em `Billing and usage > Promotions and credits`. Nenhum provisionamento pode ocorrer antes dessa prova e de uma estimativa inferior ao saldo com margem para atraso de faturamento.
 
-Papel do dono: pagar GPU/storage (avisar antes de gastar), decidir escopo/publicação, validar labels por amostragem (20-30 fotos por rodada). Todo o código é do agente.
+Papel do dono: decidir escopo/publicação e validar labels por amostragem (20-30 fotos por rodada). O crédito IBM financia GPU/storage; qualquer risco de overage fora do saldo exige nova autorização explícita. Todo o código é do agente.
 
 ## Description
 
@@ -57,7 +59,7 @@ This task builds the training pipeline and the trained artifact for a calibrated
 The people who benefit are: the future end user of the (separately-built) guided-capture app, who gets an honest, explainable signal instead of a confident guess; and the owner, who gets an open-source, differentiated asset whose credibility rests on the pipeline actually resisting its single biggest named risk — learning "which website this photo came from" instead of "is this watch fake," because fakes are scraped overwhelmingly from forum/OLX-style photos and genuines overwhelmingly from Chrono24-style photos. That risk, and the owner's own mitigation plan for it (tight crops, style augmentation, cross-source testing, a release-blocking gate), is treated here as a first-class, independently-verified requirement, not an incidental nice-to-have. A second, newly-discovered risk — Reddit's Data API Terms explicitly prohibit using r/rolex content to train ML models without Reddit's written permission, and Reddit has litigated this exact pattern against other AI companies — modifies the user's own source list: r/rolex cannot be a blanket "genuine" source the way Watchuseek and Chrono24 are; it requires a documented permission gate.
 
 **Scope**:
-- Included: source-trust-based dataset scraping/labeling pipeline with a versioned manifest and a frozen ~200-photo gold set; perceptual-hash dedup and studio-photo filtering; a frozen DINOv2 ViT-B/14 backbone with per-angle linear-probe heads and a simple (non-learned) angle-aggregation rule; heavy lighting/blur/JPEG augmentation; AWS-GPU training with an explicit cost-confirmation step; temperature-scaling calibration on held-out validation; a fixed confidence ceiling for grade-4-consistent output; confidence clipping to (0.1%, 99.9%); an out-of-distribution/low-quality rejection path with a pre-inference quality gate; Grad-CAM explainability on every prediction; three-way evaluation (standard, cross-source, held-out-factory) with a source-bias release gate; a gold-set regression gate before any weight publish; and preparation of open weights (~400MB) + model card for publication, with raw dataset photos excluded from that publication and with Reddit-sourced content excluded from training unless a documented permission record exists.
+- Included: source-trust-based dataset scraping/labeling pipeline with a versioned manifest and a frozen ~200-photo gold set; perceptual-hash dedup and studio-photo filtering; a frozen DINOv2 ViT-B/14 backbone with per-angle linear-probe heads and a simple (non-learned) angle-aggregation rule; heavy lighting/blur/JPEG augmentation; IBM Cloud VPC L4 training with credit/balance/cost/TTL gates; IBM Cloud Object Storage, Container Registry, IAM and job observability; temperature-scaling calibration on held-out validation; a fixed confidence ceiling for grade-4-consistent output; confidence clipping to (0.1%, 99.9%); an out-of-distribution/low-quality rejection path with a pre-inference quality gate; Grad-CAM explainability on every prediction; three-way evaluation (standard, cross-source, held-out-factory) with a source-bias release gate; a gold-set regression gate before any weight publish; and preparation of open weights (~400MB) + model card for publication, with raw dataset photos excluded from that publication and with Reddit-sourced content excluded from training unless a documented permission record exists.
 - Excluded: the Next.js/Vercel guided-capture app and its UI (a separate, later task); any watch model other than the Rolex Submariner; publishing the raw dataset photos themselves; hosted API / monetization; the owner's own actions (approving GPU/storage spend, deciding final scope/publication, manually sampling 20-30 labels per round for QA).
 
 **User Scenarios**:
@@ -92,7 +94,8 @@ The people who benefit are: the future end user of the (separately-built) guided
 | CK-17 | Are open model weights (~400MB) and a model card prepared for publication while the raw dataset photos are excluded from what gets published? | principle | important |
 | CK-18 | Does any part of the pipeline treat an "original"-labeled OLX/ML ad as a genuine training example? | principle | pitfall |
 | CK-19 | Does the per-angle aggregation step use a second trained/learned model instead of the required simple rule? | principle | pitfall |
-| CK-20 | Does training-launch tooling require an explicit cost-confirmation step before provisioning a non-trivial AWS GPU training run? | hard_rule | important |
+| CK-20 | Does training-launch tooling refuse IBM GPU provisioning unless promo-credit balance/expiry/SKU eligibility are freshly evidenced, the estimated run fits inside available credit with safety margin, `confirm=True`, and a mandatory TTL/teardown path are all present? | hard_rule | essential |
+| CK-30 | Is the training/data path IBM-native (VPC L4 + Cloud Object Storage + Container Registry + IAM + observability) with no AWS/S3 or third-party paid fallback? | hard_rule | important |
 | CK-21 | Does a crop/region-extraction step isolate each guided angle (so classification heads see the watch part, not full-frame background)? | principle | important |
 | CK-22 | Is the new code free of function/logic/concept duplication across the scrape/train/calibrate/evaluate stages (e.g., one grade-mapping implementation, one confidence-clamp implementation)? | principle | important |
 | CK-23 | Does every test type selected in the Test Matrix (unit / integration / smoke / property-based) have at least one corresponding test? | hard_rule | essential |
@@ -377,8 +380,14 @@ Gold-set regression check vs. v1 baseline: PASS
 - [unit] augment_pipeline(fixture_image) applies at least one of {blur, jpeg-compression, lighting} and returns a tensor different from the unaugmented input
 
 #### CK-20: Does training-launch tooling require explicit cost confirmation?
-- [unit] launch_training(instance_type="g5.xlarge", confirm=False) raises/refuses to provision
-- [unit] launch_training(instance_type="g5.xlarge", confirm=True) proceeds to provisioning
+- [unit] launch_training(profile="gx3-16x80x1l4", confirm=False) raises before any IBM API call
+- [unit] missing/stale credit evidence, ineligible SKU, estimate above usable balance, or missing TTL each blocks provisioning even when `confirm=True`
+- [integration] a fully mocked eligible run provisions once, uploads terminal artifacts to COS, and deletes the VSI in `finally`
+
+#### CK-30: Is the operational path IBM-native without paid fallback?
+- [unit] COS upload/download uses the IBM COS client and the training image references IBM Cloud Container Registry
+- [static] no runtime import/call to AWS `boto3`, EC2 or S3 remains after migration
+- [integration] IAM/trusted-profile credentials are resolved without embedding an API key in source or artifacts
 
 #### CK-21: Does crop/region-extraction isolate each guided angle?
 - [unit] crop_angle(fixture_full_frame_image, angle="rehaut") returns a region smaller than the full frame centered on the expected sub-region
@@ -404,7 +413,7 @@ Gold-set regression check vs. v1 baseline: PASS
 - [ ] Standard-test, cross-source-test, and held-out-factory-test evaluation reports are produced, and the cross-source degradation gate passes (or publish is explicitly blocked with the result reported)
 - [ ] Model weights (~400MB) and a model card are prepared for open-source publication; raw dataset photos are excluded from that publication
 - [ ] No Reddit-sourced photo is present in the training set without a documented permission record; Mercado Livre sourcing uses the official API
-- [ ] Any non-trivial AWS GPU training run was preceded by an explicit cost confirmation
+- [ ] Every IBM GPU run has persisted preflight evidence (credit balance/expiry/SKU eligibility/estimate/TTL), terminal artifact upload, and VSI deletion; no overage or non-IBM paid fallback occurred
 
 ---
 
@@ -414,17 +423,17 @@ Gold-set regression check vs. v1 baseline: PASS
 
 ### Solution Strategy
 
-**Approach**: Greenfield Python pipeline built as a **Clean Architecture core wrapped in a Pipeline/Batch flow with Ports & Adapters** for external systems. Every safety-critical, rubric-scrutinized rule — confidence clamp, grade-4 ceiling, grade mapping, source-label rule, non-learned angle aggregation, publish/regression gate predicates, manifest record schema — lives **once** in a framework-free `core/` domain package (no `torch`/`opencv`/`boto3` imports). The ordered stages (scrape → build dataset → train → calibrate → evaluate → publish) are use-cases that orchestrate adapters implementing the SKILL.md "Recommended Stack" verbatim. This structure is the single highest-leverage decision for this task: it makes the hard-rule invariants impossible to duplicate (CK-22) or bypass, and trivially unit/property-testable with no fixtures.
+**Approach**: Greenfield Python pipeline built as a **Clean Architecture core wrapped in a Pipeline/Batch flow with Ports & Adapters** for external systems. Every safety-critical, rubric-scrutinized rule — confidence clamp, grade-4 ceiling, grade mapping, source-label rule, non-learned angle aggregation, publish/regression gate predicates, manifest record schema — lives **once** in a framework-free `core/` domain package (no `torch`/`opencv`/cloud-SDK imports). The ordered stages (scrape → build dataset → train → calibrate → evaluate → publish) are use-cases that orchestrate adapters implementing the SKILL.md stack. Cloud ownership is concentrated in one IBM adapter so the model remains portable and no stage can bypass the credit/TTL/teardown invariants.
 
 **Key Decisions**:
 1. **Pure domain core (`core/`)**: all safety logic isolated, framework-free — because the task's credibility rests on a few invariants the rubric tests directly, and because CK-22 forbids duplicating them across stages.
 2. **Adapter layer = SKILL.md Recommended Stack unchanged**: frozen `facebook/dinov2-base` → per-angle `nn.Linear(768, NUM_CLASSES)` → rule-based aggregation → reimplemented Guo et al. temperature scaling → `jacobgil/pytorch-grad-cam` targeting `model.blocks[-1].norm1`.
-3. **Legal/cost gates at the adapter boundary**: Reddit ingestion defaults `EXCLUDED` unless a documented permission record exists (CK-27/29); Mercado Livre exposes only an official-API ingest path (CK-28); AWS provisioning requires `confirm=True` (CK-20).
+3. **Legal/cost gates at the adapter boundary**: Reddit ingestion defaults `EXCLUDED` unless a documented permission record exists (CK-27/29); Mercado Livre exposes only an official-API ingest path (CK-28); IBM provisioning requires fresh credit evidence, eligible IBM-native SKU, estimate below usable balance, `confirm=True`, mandatory TTL and teardown (CK-20/30).
 4. **Three-way evaluation with publish-blocking gates**: standard + cross-source + held-out-factory accuracy, plus gold-set regression gate — all wired to *refuse* publish, not warn (CK-7/8/9/12).
 
 **Trade-offs Accepted**:
 - One extra layer (`core/`) over a flat script — accepted to buy single-source-of-truth invariants and zero-fixture testability.
-- Default to **g6.xlarge** (L4, ~$0.805/h, 24GB) over the spec's g5.xlarge — ~20% cheaper, identical VRAM for this frozen-backbone workload; the divergence is surfaced to the owner at the cost-confirmation step rather than resolved silently.
+- Default to IBM profile **`gx3-16x80x1l4`** (L4, 24 GB). It is larger on CPU/RAM than the former AWS g6.xlarge, but spends the existing promotional balance and removes new cash cost while preserving the required GPU memory.
 
 ### Architecture Decisions
 
@@ -443,17 +452,17 @@ Gold-set regression check vs. v1 baseline: PASS
 - `core/` is `torch`-free → unit + property tests need no GPU and no fixtures.
 - Slightly more structure than a script; every stage must import from `core/` rather than re-implementing.
 
-#### AD-2: g6.xlarge as default training instance
+#### AD-2: IBM Cloud as the exclusive funded training plane
 
-**Status**: Accepted (pending owner confirm at spend time)
+**Status**: Accepted; supersedes the AWS decision from 03/11/2026
 
-**Context**: Spec item 9 says g5.xlarge (~$1/h); SKILL.md recommends g6.xlarge (~$0.805/h), same 24GB VRAM.
+**Context**: The owner has an applied US$ 18,000 IBM Cloud promotional credit and wants this project to consume IBM services without new cash spend. IBM documents `gx3-16x80x1l4` with one NVIDIA L4 24 GB GPU, matching the VRAM class selected for the frozen DINOv2 workload.
 
-**Options**: (1) g5.xlarge as specified; (2) g6.xlarge cheaper counter-pick.
+**Options**: (1) keep AWS g6; (2) IBM VPC L4; (3) force managed watsonx training.
 
-**Decision**: Default g6.xlarge; surface the g5-vs-g6 choice to the owner at the mandatory cost-confirmation step (CK-20), never silently.
+**Decision**: Option 2. Use IBM VPC L4 for custom PyTorch, COS for data/artifacts, Container Registry for the immutable training image, IAM/trusted profiles for access, and IBM Logs/Monitoring plus billing/usage evidence for operations. Do not force watsonx when it duplicates the portable PyTorch pipeline.
 
-**Consequences**: ~20% cheaper per round; divergence from spec is explicit and owner-gated; confirm live pricing at deploy time (SKILL.md sources it from 3rd-party trackers).
+**Consequences**: AWS code and tests must be replaced and Phase 2 re-reviewed. Promotional credit is not a hard spending cap: missing/stale balance or SKU eligibility fails closed, every VSI has TTL plus `finally` teardown, and a safety reserve protects against delayed usage reporting. No paid fallback.
 
 #### AD-3: Reddit permission gate separated from other "genuine" sources
 
@@ -485,7 +494,8 @@ Gold-set regression check vs. v1 baseline: PASS
 | Explainability | `explainability/gradcam.py` | Grad-CAM heatmap targeting `model.blocks[-1].norm1` on every prediction | `grad-cam`, `torch` | **SKILL.md:81-82** (as-is), smoke-test on real ckpt |
 | Inference | `inference/predict.py` | Orchestrate quality→rejection→backbone→heads→aggregate→calibrate→clamp→ceiling→gradcam → `Prediction` | all above + `core` | New (orchestration) |
 | Evaluation | `evaluation/release_gate.py`, `evaluation/evaluate.py` | 3-split accuracy + per-grade; call `core.publish_gate` + `core.goldset_regression_gate` | `core`, inference | New |
-| Infra | `infra/aws_train.(sh|py)`, `infra/s3_sync.py` | GPU provisioning behind `confirm=True`; S3 photo sync | `boto3` | New; g6.xlarge default (AD-2) |
+| IBM infra | `infra/ibm_types.py`, `infra/ibm_evidence.py`, `infra/ibm_cost_guard.py`, `infra/ibm_cos.py`, `infra/ibm_vpc.py`, `infra/ibm_train.py`, `infra/ibm_watchdog.py` | Authoritative promo/price capture plus usage normalization, typed spend gate, VPC L4 lifecycle, append-only COS events, trusted-profile auth, independent TTL teardown and observability | IBM VPC/COS/platform SDKs | Replaces `aws_train.py`/`s3_sync.py`; AD-2 |
+| Training producer | `training/data.py`, `training/run.py` | Validate immutable COS dataset/splits, map the six classes and produce checkpoint/metrics/class map/run result | `core`, dataset, heads, torch | Extends the existing fixture-only smoke trainer |
 | Release | `release/publish_weights.py`, model card | Publish weights (~400MB) + card only if gates PASS; exclude raw photos | `huggingface_hub`, `core` | New |
 | Project meta | `requirements.txt`, `pyproject.toml`/preflight (ruff+mypy+pytest) | Pinned deps + CI preflight (none exists yet) | — | **SKILL.md:120-124** pins |
 
@@ -510,7 +520,7 @@ scrapers ──► labeling/manifest ──► dataset(dedup/crop/augment/splits
 ┌──────────────────────────────────────────────────────────────┐
 │                     watch-authenticity                         │
 │  L4 Frameworks: torch · transformers · opencv · ImageHash ·    │
-│                 grad-cam · boto3 · huggingface_hub             │
+│         grad-cam · IBM VPC/COS SDKs · huggingface_hub          │
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │ L3 Adapters: scrapers/ · adapters/backbone · model/*    │  │
 │  │              calibration · quality_gate · explainability │  │
@@ -539,7 +549,7 @@ Dependencies point inward only: core imports nothing above it.
 Feature: Rolex Submariner authenticity model (training pipeline + trained artifact)
 ├── Entry Points: stage CLIs (scrape, build-dataset, train, calibrate, evaluate, publish) + inference/predict
 ├── Core Logic: core/ pure invariants (clamp, ceiling, grade-map, aggregation, gates, schema)
-├── Data Layer: versioned manifest + frozen gold set + S3 photo store + exported weights (~400MB)
+├── Data Layer: versioned manifest + frozen gold set + IBM COS photo/artifact store + exported weights (~400MB)
 └── Output: calibrated per-angle prediction {confidence∈(0.1%,99.9%), grade|rejection, ceiling_applied, heatmap} + 3-split eval report + open weights + model card
 ```
 
@@ -609,8 +619,8 @@ ManifestRecord
 ├── path: str (required)
 ├── source: str (required)         # e.g. reptime_forum, chrono24, mercadolivre_api
 ├── url: str (required)
-├── label: Label (required)        # genuine | fake | excluded
-├── grade: int|null                # 1-4 when fake, null when genuine
+├── label: Label (required)        # genuine | fake | rejection | excluded
+├── grade: int|null                # 1-4 when fake; null otherwise
 ├── phash: str (required)          # perceptual hash
 ├── scraped_at: date (required)
 └── blur_score: float (optional)
@@ -647,7 +657,8 @@ goldset_regression_gate(current_acc, baseline_acc) -> bool
 fit_temperature(logits, labels) -> float            # SKILL.md:157-168, val split only
 quality_gate(image) -> Pass | Rejection             # pre-inference, SKILL.md:174-175
 mercadolivre_ingest(method: Literal["official_api"]) -> ...   # "scrape" raises (CK-28)
-launch_training(instance_type, *, confirm: bool)    # confirm=False refuses (CK-20)
+authorize_run(credit, usage, pricing, post_promo, spec, events, *, now) -> AuthorizationDecision
+launch_training(clients, authorized_run, *, confirm: bool) -> RunEvent  # false refuses (CK-20)
 ```
 
 ### Expected Changes
@@ -669,7 +680,11 @@ watch-authenticity/
 ├── explainability/gradcam.py        # NEW
 ├── inference/predict.py             # NEW: inference orchestration
 ├── evaluation/{evaluate,release_gate}.py     # NEW
-├── infra/{aws_train,s3_sync}.*      # NEW: g6.xlarge default, confirm-gated
+├── infra/{ibm_types,ibm_evidence,ibm_cost_guard,ibm_cos,ibm_vpc,ibm_train,ibm_watchdog}.py
+│                                     # REWORK: IBM VPC L4 + COS, credit/TTL/teardown-gated
+├── infra/{bootstrap_host.sh,code-engine-watchdog.yaml} # secretless boot + independent TTL cleanup
+├── training/{data,run}.py            # NEW: real immutable training producer
+├── Containerfile.train / requirements-train.lock # NEW: digest-pinned GPU runtime
 ├── release/publish_weights.py       # NEW: weights+card, raw photos excluded
 ├── tests/                           # NEW: unit/integration/smoke/property suite
 ├── requirements.txt                 # NEW: pinned deps (SKILL.md:120-124)
@@ -725,10 +740,14 @@ Phase 5: Evaluation + release (depends on Phase 4)
   - Reuse: core gates
 
 Phase 6: Infra (independent of 3-5; needed before real training run)
-- [ ] infra/aws_train.* behind confirm=True (g6.xlarge default, surface g5-vs-g6 to owner)
-  - Reuse: None — new; AD-2
-- [ ] infra/s3_sync.py
-  - Reuse: boto3
+- [ ] Replace AWS adapter with `infra/ibm_train.py`: VPC profile `gx3-16x80x1l4`, immutable Container Registry image, `confirm=True`, TTL and teardown in `finally`
+  - Reuse: existing cost-confirmation boundary; replace provider implementation under AD-2
+- [ ] Replace S3 adapter with `infra/ibm_cos.py` for dataset/checkpoint/report sync
+  - Reuse: existing upload/download contract; IBM COS SDK
+- [ ] Add `infra/ibm_cost_guard.py`: fresh credit/expiry/SKU evidence, conservative run estimate, safety reserve and fail-closed no-overage decision
+- [ ] Add `infra/ibm_vpc.py` + `infra/ibm_watchdog.py`: deterministic create reconciliation, no-inbound VSI, Code Engine watchdog and observed-404 deletion proof
+- [ ] Wire IAM/trusted profile plus IBM Logs/Monitoring; persist hash-chained run events, image/data lineage, estimated/observed usage and teardown proof
+- [ ] Add `training/data.py` + `training/run.py`: replace the fixture-only smoke path with the real immutable training producer before any GPU run
 ```
 
 ---
@@ -757,14 +776,12 @@ Phase 1
                     │ (core ready)
       ┌─────────────┴─────────────┐
       ▼                           ▼
-Phase 2                        (infra lane)
-  Step 04a-manifest [sonnet]   Step 04b-infra [sonnet]   (parallel, width 2; need core)
-      │                           │
-      ├───────────┬───────────┐   │
-      ▼           ▼           ▼   │
-  05a-scrapers 05b-dedup-   05c-augment-   (parallel, width 3; need 04a-manifest)
-  [sonnet]     crop[sonnet]  splits[sonnet]
-      └───────────┴───────────┴───┘
+Phase 2
+  Step 04a-manifest [sonnet] (needs core) ──┬──► 05a-scrapers [sonnet] (needs 04a)
+                                             └──► 05c-augment-splits [sonnet] (needs 04a)
+  Step 04b-infra [sonnet] (IBM migration rework; needs none)
+  Step 05b-dedup-crop [sonnet] (needs none)
+  04a/04b/05b start together at Phase-2 start; 05a+05c start once 04a finishes — peak width 3
          ═══ end of Phase 2 (review: opus) ═══
                     │ (05c dataset splits)
                     ▼
@@ -798,27 +815,34 @@ Phase 5
 
 | Step | Phase | Model | Agent | Depends on | Parallel with | Sub-Task File |
 |------|-------|-------|-------|------------|---------------|---------------|
-| `01-project-scaffolding` | Phase 1 | haiku | haiku | None | `02-core-types` | `.specs/sub-tasks/train-watch-authenticity-model.feature/01-project-scaffolding.md` |
-| `02-core-types` | Phase 1 | sonnet | sdd:developer | None | `01-project-scaffolding` | `.specs/sub-tasks/train-watch-authenticity-model.feature/02-core-types.md` |
-| `03-core-rules` | Phase 1 | sonnet | sdd:developer | `02-core-types` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/03-core-rules.md` |
-| `04a-manifest` | Phase 2 | sonnet | sdd:developer | `03-core-rules` | `04b-infra` | `.specs/sub-tasks/train-watch-authenticity-model.feature/04a-manifest.md` |
-| `04b-infra` | Phase 2 | sonnet | sdd:developer | `03-core-rules` | `04a-manifest` | `.specs/sub-tasks/train-watch-authenticity-model.feature/04b-infra.md` |
-| `05a-scrapers` | Phase 2 | sonnet | sdd:developer | `04a-manifest` | `05b-dedup-crop`, `05c-augment-splits` | `.specs/sub-tasks/train-watch-authenticity-model.feature/05a-scrapers.md` |
-| `05b-dedup-crop` | Phase 2 | sonnet | sdd:developer | `04a-manifest` | `05a-scrapers`, `05c-augment-splits` | `.specs/sub-tasks/train-watch-authenticity-model.feature/05b-dedup-crop.md` |
-| `05c-augment-splits` | Phase 2 | sonnet | sdd:developer | `04a-manifest` | `05a-scrapers`, `05b-dedup-crop` | `.specs/sub-tasks/train-watch-authenticity-model.feature/05c-augment-splits.md` |
-| `06-backbone-heads` | Phase 3 | sonnet | sdd:developer | `05c-augment-splits` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/06-backbone-heads.md` |
-| `07a-rejection` | Phase 3 | sonnet | sdd:developer | `06-backbone-heads` | `07b-calibration` | `.specs/sub-tasks/train-watch-authenticity-model.feature/07a-rejection.md` |
-| `07b-calibration` | Phase 3 | sonnet | sdd:developer | `06-backbone-heads` | `07a-rejection` | `.specs/sub-tasks/train-watch-authenticity-model.feature/07b-calibration.md` |
-| `08a-quality-gate` | Phase 4 | sonnet | sdd:developer | `03-core-rules` | `08b-gradcam` | `.specs/sub-tasks/train-watch-authenticity-model.feature/08a-quality-gate.md` |
-| `08b-gradcam` | Phase 4 | sonnet | sdd:developer | `06-backbone-heads` | `08a-quality-gate` | `.specs/sub-tasks/train-watch-authenticity-model.feature/08b-gradcam.md` |
+| `01-project-scaffolding` [DONE] | Phase 1 | haiku | haiku | None | `02-core-types` | `.specs/sub-tasks/train-watch-authenticity-model.feature/01-project-scaffolding.md` |
+| `02-core-types` [DONE] | Phase 1 | sonnet | sdd:developer | None | `01-project-scaffolding` | `.specs/sub-tasks/train-watch-authenticity-model.feature/02-core-types.md` |
+| `03-core-rules` [DONE] | Phase 1 | sonnet | sdd:developer | `02-core-types` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/03-core-rules.md` |
+| `04a-manifest` [DONE] | Phase 2 | sonnet | sdd:developer | `03-core-rules` | `04b-infra` | `.specs/sub-tasks/train-watch-authenticity-model.feature/04a-manifest.md` |
+| `04b-infra` [REWORK REQUIRED — AWS→IBM] | Phase 2 | sonnet | sdd:developer | None | `04a-manifest` | `.specs/sub-tasks/train-watch-authenticity-model.feature/04b-infra.md` |
+| `05a-scrapers` [DONE] | Phase 2 | sonnet | sdd:developer | `04a-manifest` | `05b-dedup-crop`, `05c-augment-splits` | `.specs/sub-tasks/train-watch-authenticity-model.feature/05a-scrapers.md` |
+| `05b-dedup-crop` [DONE] | Phase 2 | sonnet | sdd:developer | None | `04a-manifest`, `04b-infra`, `05a-scrapers`, `05c-augment-splits` | `.specs/sub-tasks/train-watch-authenticity-model.feature/05b-dedup-crop.md` |
+| `05c-augment-splits` [DONE] | Phase 2 | sonnet | sdd:developer | `04a-manifest` | `05a-scrapers`, `05b-dedup-crop` | `.specs/sub-tasks/train-watch-authenticity-model.feature/05c-augment-splits.md` |
+| `06-backbone-heads` [DONE] | Phase 3 | sonnet | sdd:developer | `05c-augment-splits` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/06-backbone-heads.md` |
+| `07a-rejection` [DONE] | Phase 3 | sonnet | sdd:developer | `06-backbone-heads` | `07b-calibration` | `.specs/sub-tasks/train-watch-authenticity-model.feature/07a-rejection.md` |
+| `07b-calibration` [DONE] | Phase 3 | sonnet | sdd:developer | `06-backbone-heads` | `07a-rejection` | `.specs/sub-tasks/train-watch-authenticity-model.feature/07b-calibration.md` |
+| `08a-quality-gate` [DONE] | Phase 4 | sonnet | sdd:developer | `03-core-rules` | `08b-gradcam` | `.specs/sub-tasks/train-watch-authenticity-model.feature/08a-quality-gate.md` |
+| `08b-gradcam` [DONE] | Phase 4 | sonnet | sdd:developer | `06-backbone-heads` | `08a-quality-gate` | `.specs/sub-tasks/train-watch-authenticity-model.feature/08b-gradcam.md` |
 | `09-inference-predict` | Phase 4 | sonnet | sdd:developer | `06-backbone-heads`, `07a-rejection`, `07b-calibration`, `08a-quality-gate`, `08b-gradcam` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/09-inference-predict.md` |
 | `10-evaluate` | Phase 5 | sonnet | sdd:developer | `09-inference-predict` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/10-evaluate.md` |
 | `11-release-gate` | Phase 5 | sonnet | sdd:developer | `10-evaluate` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/11-release-gate.md` |
 | `12-publish-weights` | Phase 5 | sonnet | sdd:developer | `11-release-gate` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/12-publish-weights.md` |
 
+**Resume order after the 05/11/2026 infrastructure decision:**
+
+1. Rework `04b-infra` from AWS to IBM and re-run the Phase 2 review on the resulting SHA.
+2. Implement `09-inference-predict` and review Phase 4 (`08a`/`08b` are implemented but the phase has never been reviewed as a whole).
+3. Execute Phase 5 evaluation/release work.
+4. Before the first real IBM run, capture authoritative promo balance/expiry/SKU eligibility; until then production provisioning remains `PENDENTE E2E`.
+
 ### Phase Overview
 
-#### Phase 1: Foundation (pure core + preflight)
+#### Phase 1: Foundation (pure core + preflight) [REVIEWED]
 
 Steps: `01-project-scaffolding`, `02-core-types`, `03-core-rules`
 Reviewer model: `opus`
@@ -839,7 +863,7 @@ Rubrics:
 - `Confidence Bound & Calibration Integrity` (clamp portion)
 - `Grade-4 Superclone Ceiling Enforcement` (ceiling function)
 
-#### Phase 2: Dataset ingestion (+ training infra)
+#### Phase 2: Dataset ingestion (+ training infra) [REVIEW INVALIDATED — IBM migration]
 
 Steps: `04a-manifest`, `04b-infra`, `05a-scrapers`, `05b-dedup-crop`, `05c-augment-splits`
 Reviewer model: `opus`
@@ -851,6 +875,7 @@ Checklist items:
 - `CK-16` — Does training apply lighting/blur/JPEG augmentation?
 - `CK-18` — Does ingestion treat an "original" OLX/ML ad as genuine? (pitfall — must be NO)
 - `CK-20` — Does training-launch tooling require an explicit cost-confirmation step?
+- `CK-30` — Is the operational path IBM-native with credit/TTL/teardown protection and no paid fallback?
 - `CK-21` — Does a crop/region-extraction step isolate each guided angle?
 - `CK-27` — Does the scraper exclude r/rolex without a documented permission record?
 - `CK-28` — Does Mercado Livre sourcing route through the official Developer API, not raw scraping?
@@ -859,7 +884,7 @@ Checklist items:
 Rubrics:
 - `Dataset Manifest Completeness & Auditability`
 
-#### Phase 3: Model + calibration
+#### Phase 3: Model + calibration [REVIEWED]
 
 Steps: `06-backbone-heads`, `07a-rejection`, `07b-calibration`
 Reviewer model: `opus`

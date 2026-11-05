@@ -22,16 +22,16 @@ Create `core/types.py` with: `Grade` (1-4), `Label` enum (`GENUINE | FAKE | EXCL
 
 #### Success Criteria
 
-- [ ] `core/types.py` imports only the Python stdlib (no torch/opencv/boto3/numpy framework imports)
-- [ ] `ManifestRecord` has required fields source, url, label, grade, phash, scraped_at (grade nullable)
-- [ ] `Prediction` carries confidence, genuine, grade, ceiling_applied, heatmap; `Rejection` carries reason, instruction
-- [ ] `pytest tests/test_core_types.py` passes
+- [X] `core/types.py` imports only the Python stdlib (no torch/opencv/boto3/numpy framework imports)
+- [X] `ManifestRecord` has required fields source, url, label, grade, phash, scraped_at (grade nullable)
+- [X] `Prediction` carries confidence, genuine, grade, ceiling_applied, heatmap; `Rejection` carries reason, instruction
+- [X] `pytest tests/test_core_types.py` passes
 
 #### Subtasks
 
-- [ ] Define `Grade`, `Label` enums in `core/types.py`
-- [ ] Define `ManifestRecord`, `Prediction`, `Rejection` value objects
-- [ ] Write `tests/test_core_types.py` asserting field presence and stdlib-only construction
+- [X] Define `Grade`, `Label` enums in `core/types.py`
+- [X] Define `ManifestRecord`, `Prediction`, `Rejection` value objects
+- [X] Write `tests/test_core_types.py` asserting field presence and stdlib-only construction
 
 #### Blockers & Risks
 

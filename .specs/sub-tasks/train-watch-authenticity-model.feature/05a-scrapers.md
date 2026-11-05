@@ -22,18 +22,33 @@ Create `scrapers/<source>.py` for olx, mercadolivre, chrono24, reptime, watchuse
 
 #### Success Criteria
 
-- [ ] Every scraper derives label via `core.source_label_rule` (no inline label logic)
-- [ ] `mercadolivre_ingest(method="scrape")` raises; `mercadolivre_ingest(method="official_api")` proceeds (CK-28)
-- [ ] Reddit ingestion yields EXCLUDED rows unless a documented permission record exists (CK-27/29)
-- [ ] An OLX/ML "original" listing is never written as GENUINE (CK-13/18)
-- [ ] `pytest tests/test_scrapers.py` passes (network mocked/fixtured)
+- [X] Every scraper derives label via `core.source_label_rule` (no inline label logic)
+- [X] `mercadolivre_ingest(method="scrape")` raises; `mercadolivre_ingest(method="official_api")` proceeds (CK-28)
+- [X] Reddit ingestion yields EXCLUDED rows unless a documented permission record exists (CK-27/29)
+- [X] An OLX/ML "original" listing is never written as GENUINE (CK-13/18)
+- [X] `pytest tests/test_scrapers.py` passes (network mocked/fixtured)
 
 #### Subtasks
 
-- [ ] Implement the seven scrapers over the shared fetch→label→write pattern
-- [ ] Implement `mercadolivre_ingest(method)` with scrape-path refusal (CK-28)
-- [ ] Route reddit through `source_label_rule` permission gate (CK-27/29)
-- [ ] Write `tests/test_scrapers.py`: CK-28 both methods, CK-27 both permission states, CK-13 original-ad exclusion
+- [X] Implement the seven scrapers over the shared fetch→label→write pattern
+- [X] Implement `mercadolivre_ingest(method)` with scrape-path refusal (CK-28)
+- [X] Route reddit through `source_label_rule` permission gate (CK-27/29)
+- [X] Write `tests/test_scrapers.py`: CK-28 both methods, CK-27 both permission states, CK-13 original-ad exclusion
+
+**Implementation note**: every `<source>_ingest(listings, *, manifest_dir,
+version)` takes pre-fetched listing dicts rather than touching the network
+directly — each file also exposes a `fetch_<source>()` helper (real
+`requests` calls, timeout-bounded) for production use, but tests exercise
+only `*_ingest` with fixture listings, so no test ever makes a real network
+call. `olx`/`mercadolivre`/`reptime`/`chinese_replica` route FAKE rows
+through `labeling.manifest.build_fake_row` (grade via `core.grade_map`);
+`chrono24`/`watchuseek`/`reddit` construct GENUINE `ManifestRecord`s
+directly with `grade=None` since no grade mapping applies to genuine
+photos. Every scraper calls `core.source_label_rule` to get `label` and
+skips writing when it returns `EXCLUDED` — none hardcodes GENUINE/FAKE.
+Added `types-requests` to `requirements.txt` so `mypy` resolves the
+`requests` import cleanly (reused existing stub-package pattern, no new
+runtime dependency).
 
 #### Blockers & Risks
 
