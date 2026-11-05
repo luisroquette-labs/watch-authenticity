@@ -20,6 +20,10 @@ from infra.ibm_types import (
 NOW = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)
 
 
+def _sku(service: str) -> str:
+    return f"ibm-{service}-us-south-rate-2026"
+
+
 def valid_run_spec() -> RunSpec:
     return RunSpec(
         run_id=UUID("11111111-1111-4111-8111-111111111111"),
@@ -58,14 +62,14 @@ def valid_credit(now: datetime = NOW) -> CreditEvidence:
         remaining_usd=Decimal("18000.00"),
         expires_at=now + timedelta(days=90),
         eligible_service_plans=(
-            ("vpc-vsi", "gx3-16x80x1l4"),
-            ("vpc-boot-volume", "standard"),
-            ("vpc-public-gateway", "standard"),
-            ("cos-storage", "standard"),
-            ("cos-operations", "standard"),
-            ("container-registry-storage", "standard"),
-            ("code-engine", "standard"),
-            ("logs-monitoring", "standard"),
+            ("vpc-vsi", "gx3-16x80x1l4", _sku("vpc-vsi"), "us-south"),
+            ("vpc-boot-volume", "standard", _sku("vpc-boot-volume"), "us-south"),
+            ("vpc-public-gateway", "standard", _sku("vpc-public-gateway"), "us-south"),
+            ("cos-storage", "standard", _sku("cos-storage"), "us-south"),
+            ("cos-operations", "standard", _sku("cos-operations"), "us-south"),
+            ("container-registry-storage", "standard", _sku("container-registry-storage"), "us-south"),
+            ("code-engine", "standard", _sku("code-engine"), "us-south"),
+            ("logs-monitoring", "standard", _sku("logs-monitoring"), "us-south"),
         ),
         evidence_sha256="1" * 64,
     )
@@ -78,6 +82,7 @@ def valid_usage(now: datetime = NOW) -> UsageEvidence:
         billing_period_start=now.replace(day=1, hour=0, minute=0, second=0, microsecond=0),
         observed_usage_usd=Decimal("0.00"),
         unreconciled_run_ids=(),
+        reconciled_run_receipts=(),
         evidence_sha256="2" * 64,
     )
 
@@ -93,17 +98,19 @@ def valid_pricing(now: datetime = NOW, spec: RunSpec | None = None) -> PricingEv
             PriceLine(
                 service="vpc-vsi",
                 plan="gx3-16x80x1l4",
+                sku_id=_sku("vpc-vsi"),
+                region="us-south",
                 unit="instance-hour",
                 estimated_quantity=Decimal("6"),
                 unit_price_usd=Decimal("2.00"),
             ),
-            PriceLine("vpc-boot-volume", "standard", "gb-hour", Decimal("600"), Decimal("0.001")),
-            PriceLine("vpc-public-gateway", "standard", "gateway-hour", Decimal("6"), Decimal("0.10")),
-            PriceLine("cos-storage", "standard", "gb-month", Decimal("50"), Decimal("0.02")),
-            PriceLine("cos-operations", "standard", "request", Decimal("1000"), Decimal("0.00001")),
-            PriceLine("container-registry-storage", "standard", "gb-month", Decimal("10"), Decimal("0.00")),
-            PriceLine("code-engine", "standard", "job-hour", Decimal("1"), Decimal("0.00")),
-            PriceLine("logs-monitoring", "standard", "gb", Decimal("1"), Decimal("0.00")),
+            PriceLine("vpc-boot-volume", "standard", _sku("vpc-boot-volume"), "us-south", "gb-hour", Decimal("600"), Decimal("0.001")),
+            PriceLine("vpc-public-gateway", "standard", _sku("vpc-public-gateway"), "us-south", "gateway-hour", Decimal("6"), Decimal("0.10")),
+            PriceLine("cos-storage", "standard", _sku("cos-storage"), "us-south", "gb-month", Decimal("50"), Decimal("0.02")),
+            PriceLine("cos-operations", "standard", _sku("cos-operations"), "us-south", "request", Decimal("1000"), Decimal("0.00001")),
+            PriceLine("container-registry-storage", "standard", _sku("container-registry-storage"), "us-south", "gb-month", Decimal("10"), Decimal("0.00")),
+            PriceLine("code-engine", "standard", _sku("code-engine"), "us-south", "job-hour", Decimal("1"), Decimal("0.00")),
+            PriceLine("logs-monitoring", "standard", _sku("logs-monitoring"), "us-south", "gb", Decimal("1"), Decimal("0.00")),
         ),
         evidence_sha256="4" * 64,
     )

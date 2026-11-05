@@ -206,6 +206,18 @@ def test_upload_is_idempotent_only_for_matching_hash_and_length(tmp_path: Path):
         upload_verified(cos, source, "private", "objects/artifact", digest)
 
 
+def test_upload_rejects_remote_bytes_that_lie_through_metadata(tmp_path: Path):
+    source = tmp_path / "artifact.bin"
+    source.write_bytes(b"good")
+    digest = _sha256(source)
+    key = f"objects/artifact/{digest}"
+    cos = FakeCOS()
+    cos.objects[key] = (b"evil", {"sha256": digest, "length": "4"})
+
+    with pytest.raises(IntegrityError, match="remote object bytes"):
+        upload_verified(cos, source, "private", "objects/artifact", digest)
+
+
 def test_interrupted_upload_removes_temporary_object_and_has_no_final(tmp_path: Path):
     source = tmp_path / "artifact.bin"
     source.write_bytes(b"artifact")
@@ -349,3 +361,39 @@ def test_append_event_preserves_written_object_when_head_is_ambiguous():
         append_event(cos, "private", "runs/abc", _event(UUID(int=1)))
 
     assert len(cos.objects) == 1
+
+
+def test_validate_event_chain_checks_contiguous_hashes_lineage_and_transitions():
+    spec = valid_run_spec()
+    planned = replace(
+        _event(UUID(int=1), sequence=1),
+        sequence=0,
+        state="planned",
+        instance_id=None,
+        previous_event_sha256=None,
+    )
+    from infra.ibm_types import run_event_sha256
+
+    deleting = replace(
+        planned,
+        event_id=UUID(int=2),
+        sequence=1,
+        state="deleting",
+        previous_event_sha256=run_event_sha256(planned),
+    )
+    deleted = replace(
+        deleting,
+        event_id=UUID(int=3),
+        sequence=2,
+        state="deleted",
+        previous_event_sha256=run_event_sha256(deleting),
+    )
+    validate_event_chain((planned, deleting, deleted), spec)
+    for broken in (
+        (planned, deleted),
+        (planned, replace(deleting, previous_event_sha256="f" * 64)),
+        (planned, replace(deleting, lineage_sha256="f" * 64)),
+        (planned, replace(deleting, state="running")),
+    ):
+        with pytest.raises(IntegrityError):
+            validate_event_chain(broken, spec)

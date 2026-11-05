@@ -47,7 +47,12 @@ def _credit_record() -> dict[str, Any]:
         "remaining_usd": "18000.00",
         "expires_at": (NOW + timedelta(days=90)).isoformat(),
         "eligible_service_plans": [
-            {"service": service, "plan": plan}
+            {
+                "service": service,
+                "plan": plan,
+                "sku_id": f"ibm-{service}-us-south-rate-2026",
+                "region": "us-south",
+            }
             for service, plan in (
                 ("vpc-vsi", "gx3-16x80x1l4"),
                 ("vpc-boot-volume", "standard"),
@@ -83,6 +88,8 @@ def _pricing_record() -> dict[str, Any]:
             {
                 "service": service,
                 "plan": plan,
+                "sku_id": f"ibm-{service}-us-south-rate-2026",
+                "region": "us-south",
                 "unit": unit,
                 "estimated_quantity": quantity,
                 "unit_price_usd": price,
@@ -120,7 +127,10 @@ def test_credit_loader_binds_runtime_record_to_authoritative_capture(tmp_path: P
 
     assert credit.remaining_usd == Decimal("18000.00")
     assert credit.account_id == "account-1"
-    assert ("vpc-vsi", "gx3-16x80x1l4") in credit.eligible_service_plans
+    assert any(
+        item[:2] == ("vpc-vsi", "gx3-16x80x1l4")
+        for item in credit.eligible_service_plans
+    )
     assert len(credit.evidence_sha256) == 64
 
 
@@ -161,7 +171,14 @@ def test_credit_loader_rejects_future_non_usd_and_unknown_plan(tmp_path: Path):
         ("currency", "BRL", "USD"),
         (
             "eligible_service_plans",
-            [{"service": "vpc-vsi", "plan": "mystery-plan"}],
+            [
+                {
+                    "service": "vpc-vsi",
+                    "plan": "mystery-plan",
+                    "sku_id": "ibm-vpc-vsi-us-south-rate-2026",
+                    "region": "us-south",
+                }
+            ],
             "unknown service plan",
         ),
     ):

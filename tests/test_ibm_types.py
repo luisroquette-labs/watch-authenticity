@@ -165,20 +165,21 @@ def test_resource_instance_and_object_refs_validate_boundaries():
 
 
 def test_authorized_run_only_accepts_allowed_decision_and_freezes_values():
-    decision = AuthorizationDecision(
-        allowed=True,
-        reasons=(),
-        estimated_usd=Decimal("12.00"),
-        usable_credit_usd=Decimal("17500.00"),
-        evidence_hashes=("1" * 64, "2" * 64),
-        run_spec_sha256=run_spec_sha256(valid_run_spec()),
+    from infra.ibm_cost_guard import authorize_run
+
+    decision = authorize_run(
+        valid_credit(), valid_usage(), valid_pricing(), valid_post_promo_plan(),
+        valid_run_spec(), (), now=NOW,
     )
     run = AuthorizedRun.from_decision(valid_run_spec(), decision, decision.evidence_hashes)
-    assert run.estimated_usd == Decimal("12.00")
+    assert run.estimated_usd == decision.estimated_usd
     with pytest.raises(FrozenInstanceError):
         run.estimated_usd = Decimal("1")
 
-    denied = replace(decision, allowed=False, reasons=("insufficient credit",))
+    denied = authorize_run(
+        replace(valid_credit(), remaining_usd=Decimal("0")), valid_usage(),
+        valid_pricing(), valid_post_promo_plan(), valid_run_spec(), (), now=NOW,
+    )
     with pytest.raises(ValueError, match="denied"):
         AuthorizedRun.from_decision(valid_run_spec(), denied, denied.evidence_hashes)
 
@@ -194,6 +195,23 @@ def test_authorized_run_only_accepts_allowed_decision_and_freezes_values():
         )
     with pytest.raises(TypeError, match="from_decision"):
         AuthorizedRun()
+
+    tampered = object.__new__(AuthorizationDecision)
+    for field in (
+        "allowed",
+        "reasons",
+        "estimated_usd",
+        "usable_credit_usd",
+        "evidence_hashes",
+        "run_spec_sha256",
+        "authorization_sha256",
+        "_capability",
+        "_signature",
+    ):
+        object.__setattr__(tampered, field, getattr(decision, field))
+    object.__setattr__(tampered, "estimated_usd", Decimal("0"))
+    with pytest.raises(ValueError, match="signature"):
+        AuthorizedRun.from_decision(valid_run_spec(), tampered, tampered.evidence_hashes)
 
 
 def test_run_spec_requires_account_and_positive_metering_dimensions():
@@ -225,18 +243,16 @@ def test_run_spec_rejects_metering_dimensions_below_conservative_floor():
 
 
 def test_authorization_decision_keeps_allowed_and_reasons_consistent():
-    decision = AuthorizationDecision(
-        allowed=True,
-        reasons=(),
-        estimated_usd=Decimal("12.00"),
-        usable_credit_usd=Decimal("17500.00"),
-        evidence_hashes=("1" * 64,),
-        run_spec_sha256=run_spec_sha256(valid_run_spec()),
-    )
-    with pytest.raises(ValueError, match="allowed"):
-        replace(decision, reasons=("unexpected",))
-    with pytest.raises(ValueError, match="denied"):
-        replace(decision, allowed=False)
+    with pytest.raises(TypeError, match="authorize_run"):
+        AuthorizationDecision(
+            allowed=True,
+            reasons=(),
+            estimated_usd=Decimal("0"),
+            usable_credit_usd=Decimal("0"),
+            evidence_hashes=("1" * 64,),
+            run_spec_sha256=run_spec_sha256(valid_run_spec()),
+            authorization_sha256="2" * 64,
+        )
 
 
 def test_all_primary_evidence_objects_are_frozen():

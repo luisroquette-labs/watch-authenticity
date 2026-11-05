@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -16,6 +17,9 @@ from infra.ibm_types import (
     RunEvent,
     RunSpec,
     UsageEvidence,
+    _make_authorization_decision,
+    run_event_sha256,
+    validate_run_event_chain,
 )
 
 REQUIRED_METERED_LINES = frozenset(
@@ -55,22 +59,17 @@ def _timestamp_reasons(name: str, observed_at: datetime, now: datetime) -> list[
     return []
 
 
-def _latest_prior_events(events: tuple[RunEvent, ...], spec: RunSpec) -> dict[UUID, RunEvent]:
-    latest: dict[UUID, RunEvent] = {}
+def _event_groups(events: tuple[RunEvent, ...]) -> dict[UUID, tuple[RunEvent, ...]]:
+    grouped: dict[UUID, list[RunEvent]] = {}
     for event in events:
-        if event.run_id == spec.run_id:
-            continue
-        current = latest.get(event.run_id)
-        if current is None or event.sequence > current.sequence:
-            latest[event.run_id] = event
-    return latest
+        grouped.setdefault(event.run_id, []).append(event)
+    return {run_id: tuple(values) for run_id, values in grouped.items()}
 
 
-def _prior_event_chain_is_forked(events: tuple[RunEvent, ...], spec: RunSpec) -> bool:
-    branches: dict[tuple[UUID, int], set[RunEvent]] = {}
+def _chain_is_forked(events: tuple[RunEvent, ...]) -> bool:
+    branches: dict[int, set[RunEvent]] = {}
     for event in events:
-        if event.run_id != spec.run_id:
-            branches.setdefault((event.run_id, event.sequence), set()).add(event)
+        branches.setdefault(event.sequence, set()).add(event)
     return any(len(values) > 1 for values in branches.values())
 
 
@@ -125,9 +124,14 @@ def authorize_run(
         if line.service in REQUIRED_METERED_LINES
     ):
         reasons.append("pricing includes an unknown service plan")
-    eligible_pairs = frozenset(credit.eligible_service_plans)
-    if any((line.service, line.plan) not in eligible_pairs for line in pricing.lines):
-        reasons.append("pricing includes an ineligible service plan")
+    eligible_skus = frozenset(credit.eligible_service_plans)
+    if any(
+        (line.service, line.plan, line.sku_id, line.region) not in eligible_skus
+        for line in pricing.lines
+    ):
+        reasons.append("pricing includes an ineligible provider SKU")
+    if any(line.region != spec.region for line in pricing.lines):
+        reasons.append("pricing SKU region differs from run region")
     if pricing.run_spec_sha256 != run_spec_sha256(spec):
         reasons.append("pricing is bound to a different run spec")
     for line in pricing.lines:
@@ -156,10 +160,30 @@ def authorize_run(
 
     if usage.unreconciled_run_ids:
         reasons.append("prior run usage is unreconciled")
-    if _prior_event_chain_is_forked(events, spec):
-        reasons.append("prior run event chain is forked")
-    if any(event.state != "deleted" for event in _latest_prior_events(events, spec).values()):
-        reasons.append("prior run has no terminal deletion event")
+    groups = _event_groups(events)
+    if spec.run_id in groups:
+        reasons.append("run_id already has persisted events")
+    receipts = {receipt.run_id: receipt for receipt in usage.reconciled_run_receipts}
+    for run_id, chain in groups.items():
+        if run_id == spec.run_id:
+            continue
+        if _chain_is_forked(chain):
+            reasons.append("prior run event chain is forked")
+            continue
+        try:
+            validate_run_event_chain(chain, run_id)
+        except ValueError:
+            reasons.append("prior run event chain is invalid")
+        terminal = max(chain, key=lambda event: event.sequence)
+        if terminal.state != "deleted":
+            reasons.append("prior run has no terminal deletion event")
+        receipt = receipts.get(run_id)
+        if (
+            receipt is None
+            or receipt.usage_evidence_sha256 != usage.evidence_sha256
+            or receipt.lineage_sha256 != terminal.lineage_sha256
+        ):
+            reasons.append("prior run usage reconciliation receipt is missing")
 
     persistent_entries = {entry.service: entry for entry in post_promo.entries}
     if set(persistent_entries) != PERSISTENT_METERED_SERVICES:
@@ -193,15 +217,29 @@ def authorize_run(
         pricing.evidence_sha256,
         post_promo.owner_authorization_sha256,
         post_promo.evidence_sha256,
+        *(receipt.receipt_sha256 for receipt in usage.reconciled_run_receipts),
     )
     if len(set(evidence_hashes_with_duplicates)) != len(evidence_hashes_with_duplicates):
         reasons.append("evidence hashes are not distinct")
     evidence_hashes = tuple(dict.fromkeys(evidence_hashes_with_duplicates))
-    return AuthorizationDecision(
+    spec_hash = run_spec_sha256(spec)
+    authorization_material = "\0".join(
+        (
+            spec_hash,
+            *evidence_hashes,
+            *(run_event_sha256(event) for event in events),
+            now.isoformat(),
+            str(estimated),
+            str(usable),
+            *(reasons or ("allowed",)),
+        )
+    ).encode()
+    return _make_authorization_decision(
         allowed=not reasons,
         reasons=tuple(reasons),
         estimated_usd=estimated,
         usable_credit_usd=usable,
         evidence_hashes=evidence_hashes,
-        run_spec_sha256=run_spec_sha256(spec),
+        run_spec_sha256=spec_hash,
+        authorization_sha256=hashlib.sha256(authorization_material).hexdigest(),
     )

@@ -8,7 +8,13 @@ from uuid import UUID
 import pytest
 
 from infra.ibm_cost_guard import REQUIRED_METERED_LINES, authorize_run
-from infra.ibm_types import RunEvent
+from infra.ibm_evidence import run_spec_sha256
+from infra.ibm_types import (
+    AuthorizationDecision,
+    RunEvent,
+    UsageReconciliationReceipt,
+    run_event_sha256,
+)
 from tests.conftest import (
     NOW,
     valid_credit,
@@ -83,7 +89,7 @@ def test_authorize_run_rejects_ineligible_service_plan():
     )
     decision = _authorize(credit=credit)
     assert not decision.allowed
-    assert "pricing includes an ineligible service plan" in decision.reasons
+    assert "pricing includes an ineligible provider SKU" in decision.reasons
 
 
 def test_authorize_run_requires_48h_expiry_margin():
@@ -174,7 +180,7 @@ def test_authorize_run_rejects_non_usd_and_wrong_run_spec_binding():
 
 def test_authorize_run_rejects_duplicate_service_lines():
     pricing = valid_pricing()
-    duplicate = replace(pricing.lines[0], plan="standard")
+    duplicate = replace(pricing.lines[0], plan="standard", sku_id="duplicate-sku")
     pricing = replace(pricing, lines=pricing.lines + (duplicate,))
     decision = _authorize(pricing=pricing)
     assert not decision.allowed
@@ -184,9 +190,10 @@ def test_authorize_run_rejects_duplicate_service_lines():
 def test_authorize_run_rejects_unknown_plan_even_when_credit_lists_it():
     pricing = valid_pricing()
     pricing = replace(pricing, lines=(replace(pricing.lines[0], plan="mystery"),) + pricing.lines[1:])
+    current = valid_credit().eligible_service_plans[0]
     credit = replace(
         valid_credit(),
-        eligible_service_plans=(("vpc-vsi", "mystery"),)
+        eligible_service_plans=((current[0], "mystery", current[2], current[3]),)
         + valid_credit().eligible_service_plans[1:],
     )
     decision = _authorize(pricing=pricing, credit=credit)
@@ -224,7 +231,7 @@ def test_authorize_run_returns_every_financial_refusal_reason():
     assert {
         "credit evidence is stale",
         "pricing evidence is stale",
-        "pricing includes an ineligible service plan",
+        "pricing includes an ineligible provider SKU",
         "prior run usage is unreconciled",
         "missing required metered service: logs-monitoring",
         "pricing is bound to a different run spec",
@@ -371,3 +378,109 @@ def test_authorize_run_blocks_any_prior_event_fork_even_if_one_branch_deleted():
 
     assert not decision.allowed
     assert "prior run event chain is forked" in decision.reasons
+
+
+def _reconciled_prior_chain() -> tuple[tuple[RunEvent, ...], UsageReconciliationReceipt]:
+    prior_run = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    planned = RunEvent(
+        event_id=UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        run_id=prior_run,
+        sequence=0,
+        state="planned",
+        observed_at=NOW,
+        instance_id=None,
+        lineage_sha256="a" * 64,
+        previous_event_sha256=None,
+        payload_sha256="b" * 64,
+    )
+    deleting = replace(
+        planned,
+        event_id=UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+        sequence=1,
+        state="deleting",
+        previous_event_sha256=run_event_sha256(planned),
+        payload_sha256="c" * 64,
+    )
+    deleted = replace(
+        deleting,
+        event_id=UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+        sequence=2,
+        state="deleted",
+        previous_event_sha256=run_event_sha256(deleting),
+        payload_sha256="d" * 64,
+    )
+    receipt = UsageReconciliationReceipt(
+        run_id=prior_run,
+        usage_evidence_sha256=valid_usage().evidence_sha256,
+        lineage_sha256=planned.lineage_sha256,
+        receipt_sha256="e" * 64,
+    )
+    return (planned, deleting, deleted), receipt
+
+
+def test_authorize_run_rejects_reused_run_id():
+    event = replace(_reconciled_prior_chain()[0][0], run_id=valid_run_spec().run_id)
+    decision = _authorize(events=(event,))
+    assert not decision.allowed
+    assert "run_id already has persisted events" in decision.reasons
+
+
+@pytest.mark.parametrize("mutation", ["gap", "bad-link", "foreign-lineage", "illegal-state"])
+def test_authorize_run_rejects_invalid_prior_chain(mutation: str):
+    chain, receipt = _reconciled_prior_chain()
+    events = list(chain)
+    if mutation == "gap":
+        events.pop(1)
+    elif mutation == "bad-link":
+        events[1] = replace(events[1], previous_event_sha256="f" * 64)
+    elif mutation == "foreign-lineage":
+        events[1] = replace(events[1], lineage_sha256="f" * 64)
+    else:
+        events[1] = replace(events[1], state="running")
+    usage = replace(valid_usage(), reconciled_run_receipts=(receipt,))
+    decision = _authorize(events=tuple(events), usage=usage)
+    assert not decision.allowed
+    assert "prior run event chain is invalid" in decision.reasons
+
+
+def test_authorize_run_requires_usage_receipt_bound_to_raw_report():
+    chain, receipt = _reconciled_prior_chain()
+    assert "prior run usage reconciliation receipt is missing" in _authorize(events=chain).reasons
+    wrong = replace(receipt, usage_evidence_sha256="f" * 64)
+    decision = _authorize(
+        events=chain,
+        usage=replace(valid_usage(), reconciled_run_receipts=(wrong,)),
+    )
+    assert "prior run usage reconciliation receipt is missing" in decision.reasons
+    allowed = _authorize(
+        events=chain,
+        usage=replace(valid_usage(), reconciled_run_receipts=(receipt,)),
+    )
+    assert allowed.allowed
+
+
+def test_authorized_run_rejects_forged_allowed_decision():
+    with pytest.raises(TypeError, match="authorize_run"):
+        AuthorizationDecision(
+            allowed=True,
+            reasons=(),
+            estimated_usd=Decimal("0"),
+            usable_credit_usd=Decimal("0"),
+            evidence_hashes=("1" * 64,),
+            run_spec_sha256=run_spec_sha256(valid_run_spec()),
+            authorization_sha256="2" * 64,
+        )
+
+
+def test_authorize_run_requires_provider_sku_and_region_eligibility():
+    pricing = valid_pricing()
+    wrong_sku = replace(
+        pricing,
+        lines=(replace(pricing.lines[0], sku_id="wrong-sku"),) + pricing.lines[1:],
+    )
+    assert "pricing includes an ineligible provider SKU" in _authorize(pricing=wrong_sku).reasons
+    wrong_region = replace(
+        pricing,
+        lines=(replace(pricing.lines[0], region="eu-de"),) + pricing.lines[1:],
+    )
+    assert "pricing SKU region differs from run region" in _authorize(pricing=wrong_region).reasons

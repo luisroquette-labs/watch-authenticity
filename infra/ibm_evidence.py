@@ -175,13 +175,15 @@ def load_credit_evidence(
     raw_plans = record["eligible_service_plans"]
     if not isinstance(raw_plans, list) or not raw_plans:
         raise ValueError("eligible_service_plans must be a non-empty list")
-    plans: list[tuple[str, str]] = []
+    plans: list[tuple[str, str, str, str]] = []
     for item in raw_plans:
         if not isinstance(item, dict):
             raise ValueError("eligible_service_plans items must be objects")
-        _require_exact_keys(item, {"service", "plan"})
+        _require_exact_keys(item, {"service", "plan", "sku_id", "region"})
         service = item["service"]
         plan = item["plan"]
+        sku_id = item["sku_id"]
+        region = item["region"]
         if (
             not isinstance(service, str)
             or service not in _SERVICE_PLANS
@@ -189,7 +191,11 @@ def load_credit_evidence(
             or plan not in _SERVICE_PLANS[service]
         ):
             raise ValueError(f"unknown service plan: {service!r}/{plan!r}")
-        plans.append((service, plan))
+        if not isinstance(sku_id, str) or not sku_id.strip():
+            raise ValueError("eligible SKU ID must be non-empty")
+        if not isinstance(region, str) or not region.strip():
+            raise ValueError("eligible SKU region must be non-empty")
+        plans.append((service, plan, sku_id, region))
     return CreditEvidence(
         account_id=account_id,
         observed_at=observed_at,
@@ -244,7 +250,15 @@ def load_pricing_evidence(
             raise ValueError("each pricing line must be an object")
         _require_exact_keys(
             raw_line,
-            {"service", "plan", "unit", "estimated_quantity", "unit_price_usd"},
+            {
+                "service",
+                "plan",
+                "sku_id",
+                "region",
+                "unit",
+                "estimated_quantity",
+                "unit_price_usd",
+            },
         )
         service = raw_line["service"]
         plan = raw_line["plan"]
@@ -258,6 +272,8 @@ def load_pricing_evidence(
             PriceLine(
                 service=service,
                 plan=plan,
+                sku_id=raw_line["sku_id"],
+                region=raw_line["region"],
                 unit=raw_line["unit"],
                 estimated_quantity=_decimal_string(
                     raw_line["estimated_quantity"], "estimated_quantity"
@@ -448,5 +464,6 @@ def fetch_usage_evidence(
         billing_period_start=billing_period_start,
         observed_usage_usd=total,
         unreconciled_run_ids=pending_run_ids,
+        reconciled_run_receipts=(),
         evidence_sha256=raw_hash,
     )

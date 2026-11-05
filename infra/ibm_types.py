@@ -6,8 +6,13 @@ validated values at the infrastructure boundary.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import re
+import secrets
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import datetime
 from decimal import Decimal
 from urllib.parse import urlsplit
@@ -85,7 +90,7 @@ class CreditEvidence:
     observed_at: datetime
     remaining_usd: Decimal
     expires_at: datetime
-    eligible_service_plans: tuple[tuple[str, str], ...]
+    eligible_service_plans: tuple[tuple[str, str, str, str], ...]
     evidence_sha256: str
 
     def __post_init__(self) -> None:
@@ -98,14 +103,34 @@ class CreditEvidence:
         if not self.eligible_service_plans:
             raise ValueError("eligible_service_plans must be non-empty")
         for item in self.eligible_service_plans:
-            if not isinstance(item, tuple) or len(item) != 2:
-                raise TypeError("eligible_service_plans items must be (service, plan) tuples")
-            service, plan = item
+            if not isinstance(item, tuple) or len(item) != 4:
+                raise TypeError(
+                    "eligible_service_plans items must be "
+                    "(service, plan, sku_id, region) tuples"
+                )
+            service, plan, sku_id, region = item
             _nonempty(service, "eligible_service_plans service")
             _nonempty(plan, "eligible_service_plans plan")
+            _nonempty(sku_id, "eligible_service_plans sku_id")
+            _nonempty(region, "eligible_service_plans region")
         if len(set(self.eligible_service_plans)) != len(self.eligible_service_plans):
             raise ValueError("eligible_service_plans contains duplicate values")
         _hash(self.evidence_sha256, "evidence_sha256")
+
+
+@dataclass(frozen=True)
+class UsageReconciliationReceipt:
+    run_id: UUID
+    usage_evidence_sha256: str
+    lineage_sha256: str
+    receipt_sha256: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.run_id, UUID):
+            raise TypeError("run_id must be UUID")
+        _hash(self.usage_evidence_sha256, "usage_evidence_sha256")
+        _hash(self.lineage_sha256, "lineage_sha256")
+        _hash(self.receipt_sha256, "receipt_sha256")
 
 
 @dataclass(frozen=True)
@@ -115,6 +140,7 @@ class UsageEvidence:
     billing_period_start: datetime
     observed_usage_usd: Decimal
     unreconciled_run_ids: tuple[UUID, ...]
+    reconciled_run_receipts: tuple[UsageReconciliationReceipt, ...]
     evidence_sha256: str
 
     def __post_init__(self) -> None:
@@ -128,6 +154,11 @@ class UsageEvidence:
             raise TypeError("unreconciled_run_ids must contain UUID values")
         if len(set(self.unreconciled_run_ids)) != len(self.unreconciled_run_ids):
             raise ValueError("unreconciled_run_ids contains duplicate values")
+        receipt_run_ids = [receipt.run_id for receipt in self.reconciled_run_receipts]
+        if len(set(receipt_run_ids)) != len(receipt_run_ids):
+            raise ValueError("reconciled_run_receipts contains duplicate run IDs")
+        if set(receipt_run_ids) & set(self.unreconciled_run_ids):
+            raise ValueError("a run cannot be both reconciled and unreconciled")
         _hash(self.evidence_sha256, "evidence_sha256")
 
 
@@ -135,6 +166,8 @@ class UsageEvidence:
 class PriceLine:
     service: str
     plan: str
+    sku_id: str
+    region: str
     unit: str
     estimated_quantity: Decimal
     unit_price_usd: Decimal
@@ -142,6 +175,8 @@ class PriceLine:
     def __post_init__(self) -> None:
         _nonempty(self.service, "service")
         _nonempty(self.plan, "plan")
+        _nonempty(self.sku_id, "sku_id")
+        _nonempty(self.region, "region")
         _nonempty(self.unit, "unit")
         _decimal(self.estimated_quantity, "estimated_quantity")
         _decimal(self.unit_price_usd, "unit_price_usd")
@@ -164,7 +199,7 @@ class PricingEvidence:
         _hash(self.run_spec_sha256, "run_spec_sha256")
         if not self.lines:
             raise ValueError("lines must be non-empty")
-        keys = [(line.service, line.plan, line.unit) for line in self.lines]
+        keys = [(line.service, line.sku_id, line.region, line.unit) for line in self.lines]
         if len(set(keys)) != len(keys):
             raise ValueError("lines contains duplicate service/plan/unit entries")
         _hash(self.evidence_sha256, "evidence_sha256")
@@ -297,7 +332,25 @@ class RunSpec:
             raise ValueError("Public Gateway must be dedicated to and owned by the run")
 
 
-@dataclass(frozen=True)
+_AUTHORIZATION_CAPABILITY = object()
+_AUTHORIZATION_SECRET = secrets.token_bytes(32)
+
+
+def _authorization_signature_payload(decision: AuthorizationDecision) -> bytes:
+    return "\0".join(
+        (
+            str(decision.allowed),
+            *decision.reasons,
+            str(decision.estimated_usd),
+            str(decision.usable_credit_usd),
+            *decision.evidence_hashes,
+            decision.run_spec_sha256,
+            decision.authorization_sha256,
+        )
+    ).encode()
+
+
+@dataclass(frozen=True, init=False)
 class AuthorizationDecision:
     allowed: bool
     reasons: tuple[str, ...]
@@ -305,6 +358,48 @@ class AuthorizationDecision:
     usable_credit_usd: Decimal
     evidence_hashes: tuple[str, ...]
     run_spec_sha256: str
+    authorization_sha256: str
+    _capability: object = dataclass_field(repr=False, compare=False)
+    _signature: str = dataclass_field(repr=False, compare=False)
+
+    def __new__(cls, *_args: object, **_kwargs: object) -> AuthorizationDecision:
+        raise TypeError("AuthorizationDecision must be created by authorize_run")
+
+    @classmethod
+    def _from_guard(
+        cls,
+        *,
+        allowed: bool,
+        reasons: tuple[str, ...],
+        estimated_usd: Decimal,
+        usable_credit_usd: Decimal,
+        evidence_hashes: tuple[str, ...],
+        run_spec_sha256: str,
+        authorization_sha256: str,
+        capability: object,
+    ) -> AuthorizationDecision:
+        if capability is not _AUTHORIZATION_CAPABILITY:
+            raise TypeError("AuthorizationDecision must be created by authorize_run")
+        decision = object.__new__(cls)
+        for name, value in (
+            ("allowed", allowed),
+            ("reasons", reasons),
+            ("estimated_usd", estimated_usd),
+            ("usable_credit_usd", usable_credit_usd),
+            ("evidence_hashes", evidence_hashes),
+            ("run_spec_sha256", run_spec_sha256),
+            ("authorization_sha256", authorization_sha256),
+            ("_capability", capability),
+        ):
+            object.__setattr__(decision, name, value)
+        signature = hmac.new(
+            _AUTHORIZATION_SECRET,
+            _authorization_signature_payload(decision),
+            hashlib.sha256,
+        ).hexdigest()
+        object.__setattr__(decision, "_signature", signature)
+        decision.__post_init__()
+        return decision
 
     def __post_init__(self) -> None:
         if not isinstance(self.allowed, bool):
@@ -324,6 +419,14 @@ class AuthorizationDecision:
         if len(set(self.evidence_hashes)) != len(self.evidence_hashes):
             raise ValueError("evidence_hashes contains duplicate values")
         _hash(self.run_spec_sha256, "run_spec_sha256")
+        _hash(self.authorization_sha256, "authorization_sha256")
+
+
+def _make_authorization_decision(**values: object) -> AuthorizationDecision:
+    return AuthorizationDecision._from_guard(
+        capability=_AUTHORIZATION_CAPABILITY,
+        **values,  # type: ignore[arg-type]
+    )
 
 
 @dataclass(frozen=True, init=False)
@@ -351,6 +454,15 @@ class AuthorizedRun:
     ) -> AuthorizedRun:
         if not decision.allowed:
             raise ValueError("cannot authorize a denied decision")
+        if decision._capability is not _AUTHORIZATION_CAPABILITY:
+            raise ValueError("authorization decision was not issued by authorize_run")
+        expected_signature = hmac.new(
+            _AUTHORIZATION_SECRET,
+            _authorization_signature_payload(decision),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(decision._signature, expected_signature):
+            raise ValueError("authorization decision signature is invalid")
         if evidence_hashes != decision.evidence_hashes:
             raise ValueError("evidence hashes differ from the authorization decision")
         from infra.ibm_evidence import run_spec_sha256
@@ -396,6 +508,64 @@ class RunEvent:
         else:
             _hash(self.previous_event_sha256, "previous_event_sha256")
         _hash(self.payload_sha256, "payload_sha256")
+
+
+def run_event_sha256(event: RunEvent) -> str:
+    """Hash the complete immutable event for previous-event linkage."""
+
+    payload = {
+        "event_id": str(event.event_id),
+        "run_id": str(event.run_id),
+        "sequence": event.sequence,
+        "state": event.state,
+        "observed_at": event.observed_at.isoformat(),
+        "instance_id": event.instance_id,
+        "lineage_sha256": event.lineage_sha256,
+        "previous_event_sha256": event.previous_event_sha256,
+        "payload_sha256": event.payload_sha256,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+_RUN_TRANSITIONS = {
+    "planned": frozenset({"authorized", "deleting", "quarantined"}),
+    "authorized": frozenset({"creating", "deleting", "quarantined"}),
+    "creating": frozenset({"running", "failed", "deleting", "quarantined"}),
+    "running": frozenset({"artifact_sync", "succeeded", "failed", "deleting", "quarantined"}),
+    "artifact_sync": frozenset({"succeeded", "failed", "deleting", "quarantined"}),
+    "succeeded": frozenset({"deleting", "quarantined"}),
+    "failed": frozenset({"deleting", "quarantined"}),
+    "deleting": frozenset({"deleted", "quarantined"}),
+    "quarantined": frozenset({"deleting", "deleted"}),
+    "deleted": frozenset(),
+}
+
+
+def validate_run_event_chain(events: tuple[RunEvent, ...], run_id: UUID) -> None:
+    """Validate one complete, linear run lifecycle chain."""
+
+    if not events or any(event.run_id != run_id for event in events):
+        raise ValueError("event run_id does not match chain")
+    by_sequence: dict[int, RunEvent] = {}
+    for event in events:
+        previous = by_sequence.get(event.sequence)
+        if previous is not None and previous != event:
+            raise ValueError(f"event chain fork at sequence {event.sequence}")
+        by_sequence[event.sequence] = event
+    ordered = tuple(by_sequence[index] for index in sorted(by_sequence))
+    if tuple(event.sequence for event in ordered) != tuple(range(len(ordered))):
+        raise ValueError("event chain sequence is not contiguous from zero")
+    if ordered[0].state != "planned":
+        raise ValueError("event chain must start in planned state")
+    lineage = ordered[0].lineage_sha256
+    for previous, current in zip(ordered, ordered[1:]):
+        if current.lineage_sha256 != lineage:
+            raise ValueError("event chain lineage changed")
+        if current.previous_event_sha256 != run_event_sha256(previous):
+            raise ValueError("event chain previous hash mismatch")
+        if current.state not in _RUN_TRANSITIONS[previous.state]:
+            raise ValueError("event chain state transition is invalid")
 
 
 @dataclass(frozen=True)

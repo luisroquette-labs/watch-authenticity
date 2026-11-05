@@ -5,12 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from infra.ibm_types import ObjectRef, RunEvent, RunSpec
+from infra.ibm_types import ObjectRef, RunEvent, RunSpec, validate_run_event_chain
 
 
 class IntegrityError(RuntimeError):
@@ -112,6 +113,26 @@ def _content_key(key: str, digest: str) -> str:
     return base if base.rsplit("/", 1)[-1] == digest else f"{base}/{digest}"
 
 
+def _verify_remote_bytes(
+    client: Any,
+    bucket: str,
+    key: str,
+    expected_sha256: str,
+    expected_length: int,
+    *,
+    context: str,
+) -> None:
+    handle = tempfile.NamedTemporaryFile(prefix="watch-auth-cos-", delete=False)
+    temporary = Path(handle.name)
+    handle.close()
+    try:
+        client.download_file(bucket, key, str(temporary))
+        if temporary.stat().st_size != expected_length or _sha256(temporary) != expected_sha256:
+            raise IntegrityError(f"{context} hash or length does not match")
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def upload_verified(
     client: Any,
     path: Path,
@@ -127,17 +148,23 @@ def upload_verified(
     final_key = _content_key(key, expected_sha256)
     existing = _head(client, bucket, final_key)
     if existing is not None:
-        try:
-            return _object_ref(
-                bucket,
-                final_key,
-                existing,
-                expected_sha256,
-                local_length,
-                context="existing object",
-            )
-        except IntegrityError as exc:
-            raise IntegrityError("existing object does not match immutable content") from exc
+        ref = _object_ref(
+            bucket,
+            final_key,
+            existing,
+            expected_sha256,
+            local_length,
+            context="existing object",
+        )
+        _verify_remote_bytes(
+            client,
+            bucket,
+            final_key,
+            expected_sha256,
+            local_length,
+            context="existing remote object bytes",
+        )
+        return ref
 
     temporary_key = f"{final_key}.upload-{uuid4()}"
     metadata = {"sha256": expected_sha256, "length": str(local_length)}
@@ -168,7 +195,7 @@ def upload_verified(
         final_head = _head(client, bucket, final_key)
         if final_head is None:
             raise IntegrityError("final object is missing after copy")
-        return _object_ref(
+        ref = _object_ref(
             bucket,
             final_key,
             final_head,
@@ -176,6 +203,15 @@ def upload_verified(
             local_length,
             context="remote object metadata",
         )
+        _verify_remote_bytes(
+            client,
+            bucket,
+            final_key,
+            expected_sha256,
+            local_length,
+            context="remote object bytes",
+        )
+        return ref
     finally:
         client.delete_object(Bucket=bucket, Key=temporary_key)
 
@@ -263,7 +299,7 @@ def append_event(
     existing = _head(client, bucket, key)
     if existing is not None:
         try:
-            return _object_ref(
+            ref = _object_ref(
                 bucket,
                 key,
                 existing,
@@ -271,6 +307,15 @@ def append_event(
                 length,
                 context="existing event",
             )
+            _verify_remote_bytes(
+                client,
+                bucket,
+                key,
+                digest,
+                length,
+                context="existing event bytes",
+            )
+            return ref
         except IntegrityError as exc:
             raise IntegrityError("event key already exists with different content") from exc
 
@@ -284,7 +329,7 @@ def append_event(
     head = _head(client, bucket, key)
     if head is None:
         raise IntegrityError("event is missing after write")
-    return _object_ref(
+    ref = _object_ref(
         bucket,
         key,
         head,
@@ -292,10 +337,19 @@ def append_event(
         length,
         context="event object",
     )
+    _verify_remote_bytes(
+        client,
+        bucket,
+        key,
+        digest,
+        length,
+        context="event object bytes",
+    )
+    return ref
 
 
 def validate_event_chain(events: tuple[RunEvent, ...], spec: RunSpec) -> None:
-    """Reject duplicate sequence branches; later tasks extend full chain checks."""
+    """Validate a complete linear lifecycle chain for one RunSpec."""
 
     sequences: dict[int, RunEvent] = {}
     for event in events:
@@ -305,3 +359,7 @@ def validate_event_chain(events: tuple[RunEvent, ...], spec: RunSpec) -> None:
         if previous is not None and previous != event:
             raise EventChainFork(f"multiple event IDs found at sequence {event.sequence}")
         sequences[event.sequence] = event
+    try:
+        validate_run_event_chain(events, spec.run_id)
+    except ValueError as exc:
+        raise IntegrityError(str(exc)) from exc
