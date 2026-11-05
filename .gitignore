@@ -1,0 +1,23 @@
+
+.specs/scratchpad/*.md
+.specs/analysis/*.md
+.specs/reports/*.md
+
+# Local Python/test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+
+# Local navigation/runtime evidence
+graphify-out/
+.runtime/
+
+# Credentials and local environments
+.env
+.env.*
+!.env.example
+.venv/
+venv/
