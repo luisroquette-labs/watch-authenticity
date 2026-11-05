@@ -38,6 +38,9 @@ class _NotFound(Exception):
 class FakeCOS:
     def __init__(self, *, bucket: str = "private", prefix: str = "runs/abc") -> None:
         self.objects: dict[str, tuple[bytes, dict[str, str]]] = {}
+        self.version_entries: list[dict[str, object]] | None = None
+        self.version_bodies: dict[tuple[str, str], bytes] = {}
+        self.delete_markers: list[dict[str, object]] = []
         self.fail_upload = False
         self.corrupt_final_head = False
         self.corrupt_download = False
@@ -67,9 +70,42 @@ class FakeCOS:
             "IsTruncated": False,
         }
 
-    def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+    def list_object_versions(
+        self,
+        *,
+        Bucket: str,
+        Prefix: str,
+        **_kwargs: object,
+    ) -> dict[str, object]:
         del Bucket
-        return {"Body": io.BytesIO(self.objects[Key][0])}
+        versions = self.version_entries
+        if versions is None:
+            versions = [
+                {"Key": key, "VersionId": f"current:{key}", "IsLatest": True}
+                for key in sorted(self.objects)
+                if key.startswith(Prefix)
+            ]
+        return {
+            "Versions": [item for item in versions if str(item["Key"]).startswith(Prefix)],
+            "DeleteMarkers": [
+                item for item in self.delete_markers if str(item["Key"]).startswith(Prefix)
+            ],
+            "IsTruncated": False,
+        }
+
+    def get_object(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        VersionId: str | None = None,
+    ) -> dict[str, object]:
+        del Bucket
+        if VersionId is not None and not VersionId.startswith("current:"):
+            body = self.version_bodies[(Key, VersionId)]
+        else:
+            body = self.objects[Key][0]
+        return {"Body": io.BytesIO(body)}
 
     def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
         del Bucket
@@ -474,3 +510,80 @@ def test_event_inventory_lists_and_verifies_the_complete_run_prefix():
     append_event(cos, spec.bucket, spec.prefix, planned)
 
     assert load_event_inventory(cos, spec) == (planned,)
+
+
+def test_event_inventory_rejects_delete_markers():
+    spec = valid_run_spec()
+    cos = FakeCOS(bucket=spec.bucket, prefix=spec.prefix)
+    cos.delete_markers = [
+        {
+            "Key": f"{spec.prefix}/events/000000-deleted.json",
+            "VersionId": "delete-1",
+            "IsLatest": True,
+        }
+    ]
+
+    with pytest.raises(EventChainFork, match="delete marker"):
+        load_event_inventory(cos, spec)
+
+
+def test_event_inventory_rejects_multiple_versions_of_one_key():
+    spec = valid_run_spec()
+    cos = FakeCOS(bucket=spec.bucket, prefix=spec.prefix)
+    event = replace(
+        _event(UUID(int=1)),
+        sequence=0,
+        state="planned",
+        instance_id=None,
+        previous_event_sha256=None,
+    )
+    key = append_event(cos, spec.bucket, spec.prefix, event).key
+    cos.version_entries = [
+        {"Key": key, "VersionId": "v2", "IsLatest": True},
+        {"Key": key, "VersionId": "v1", "IsLatest": False},
+    ]
+
+    with pytest.raises(EventChainFork, match="multiple versions"):
+        load_event_inventory(cos, spec)
+
+
+def test_event_inventory_rejects_duplicate_sequence():
+    spec = valid_run_spec()
+    first = replace(
+        _event(UUID(int=1)),
+        sequence=0,
+        state="planned",
+        instance_id=None,
+        previous_event_sha256=None,
+    )
+    second = replace(first, event_id=UUID(int=2), payload_sha256="d" * 64)
+    cos = FakeCOS(bucket=spec.bucket, prefix=spec.prefix)
+    append_event(cos, spec.bucket, spec.prefix, first)
+    append_event(cos, spec.bucket, spec.prefix, second)
+
+    with pytest.raises(EventChainFork, match="sequence 0"):
+        load_event_inventory(cos, spec)
+
+
+def test_event_inventory_rejects_key_payload_mismatch():
+    spec = valid_run_spec()
+    lineage = run_spec_sha256(spec)
+    planned = RunEvent(
+        event_id=UUID(int=1),
+        run_id=spec.run_id,
+        sequence=0,
+        state="planned",
+        observed_at=NOW,
+        instance_id=None,
+        lineage_sha256=lineage,
+        previous_event_sha256=None,
+        payload_sha256="a" * 64,
+    )
+    cos = FakeCOS(bucket=spec.bucket, prefix=spec.prefix)
+    ref = append_event(cos, spec.bucket, spec.prefix, planned)
+    body, metadata = cos.objects.pop(ref.key)
+    wrong_key = ref.key.replace("/000000-", "/000001-")
+    cos.objects[wrong_key] = (body, metadata)
+
+    with pytest.raises(IntegrityError, match="key does not match payload"):
+        load_event_inventory(cos, spec)

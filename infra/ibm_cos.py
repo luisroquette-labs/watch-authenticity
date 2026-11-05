@@ -330,41 +330,65 @@ def _event_bytes(event: RunEvent) -> bytes:
 
 
 def load_event_inventory(client: Any, spec: RunSpec) -> tuple[RunEvent, ...]:
-    """List and verify every persisted event for a run prefix."""
+    """List and verify every version of every event for a run prefix."""
 
     _require_bound_destination(client, spec.bucket, prefix=spec.prefix)
     event_prefix = f"{spec.prefix.strip('/')}/events/"
-    keys: list[str] = []
-    token: str | None = None
+    versions: list[tuple[str, str]] = []
+    key_marker: str | None = None
+    version_marker: str | None = None
     while True:
         kwargs: dict[str, object] = {"Bucket": spec.bucket, "Prefix": event_prefix}
-        if token is not None:
-            kwargs["ContinuationToken"] = token
-        page = client.list_objects_v2(**kwargs)
+        if key_marker is not None:
+            kwargs["KeyMarker"] = key_marker
+        if version_marker is not None:
+            kwargs["VersionIdMarker"] = version_marker
+        page = client.list_object_versions(**kwargs)
         if not isinstance(page, dict):
             raise IntegrityError("COS event listing response must be a mapping")
-        contents = page.get("Contents", [])
-        if not isinstance(contents, list):
-            raise IntegrityError("COS event listing contents are invalid")
-        for item in contents:
-            if not isinstance(item, dict) or not isinstance(item.get("Key"), str):
-                raise IntegrityError("COS event listing key is invalid")
+        listed_versions = page.get("Versions", [])
+        delete_markers = page.get("DeleteMarkers", [])
+        if not isinstance(listed_versions, list) or not isinstance(delete_markers, list):
+            raise IntegrityError("COS event version listing is invalid")
+        if delete_markers:
+            raise EventChainFork("COS event inventory contains a delete marker")
+        for item in listed_versions:
+            if (
+                not isinstance(item, dict)
+                or not isinstance(item.get("Key"), str)
+                or not isinstance(item.get("VersionId"), str)
+                or not item["VersionId"]
+            ):
+                raise IntegrityError("COS event version entry is invalid")
             key = item["Key"]
             if not key.startswith(event_prefix):
                 raise IntegrityError("COS event listing escaped the run prefix")
-            keys.append(key)
+            versions.append((key, item["VersionId"]))
         if not page.get("IsTruncated"):
             break
-        next_token = page.get("NextContinuationToken")
-        if not isinstance(next_token, str) or not next_token or next_token == token:
+        next_key_marker = page.get("NextKeyMarker")
+        next_version_marker = page.get("NextVersionIdMarker")
+        if (
+            not isinstance(next_key_marker, str)
+            or not next_key_marker
+            or not isinstance(next_version_marker, str)
+            or not next_version_marker
+            or (next_key_marker, next_version_marker) == (key_marker, version_marker)
+        ):
             raise IntegrityError("COS event listing pagination is incomplete")
-        token = next_token
+        key_marker = next_key_marker
+        version_marker = next_version_marker
 
+    keys = [key for key, _version_id in versions]
     if len(set(keys)) != len(keys):
-        raise IntegrityError("COS event listing contains duplicate keys")
+        raise EventChainFork("COS event inventory contains multiple versions of one key")
     events: list[RunEvent] = []
-    for key in sorted(keys):
-        response = client.get_object(Bucket=spec.bucket, Key=key)
+    for key, version_id in sorted(versions):
+        response = client.get_object(
+            Bucket=spec.bucket,
+            Key=key,
+            VersionId=version_id,
+        )
         body_stream = response.get("Body") if isinstance(response, dict) else None
         if body_stream is None or not hasattr(body_stream, "read"):
             raise IntegrityError("COS event body is unavailable")
@@ -389,6 +413,11 @@ def load_event_inventory(client: Any, spec: RunSpec) -> tuple[RunEvent, ...]:
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise IntegrityError("COS event payload is invalid") from exc
+        canonical_key = (
+            f"{event_prefix}{event.sequence:06d}-{event.event_id}-{digest}.json"
+        )
+        if key != canonical_key:
+            raise IntegrityError("COS event key does not match payload")
         events.append(event)
     snapshot = tuple(events)
     if snapshot:
@@ -476,8 +505,7 @@ def validate_event_chain(events: tuple[RunEvent, ...], spec: RunSpec) -> None:
             raise IntegrityError("event run_id does not match RunSpec")
         if event.lineage_sha256 != expected_lineage:
             raise IntegrityError("event lineage does not match RunSpec")
-        previous = sequences.get(event.sequence)
-        if previous is not None and previous != event:
+        if event.sequence in sequences:
             raise EventChainFork(f"multiple event IDs found at sequence {event.sequence}")
         sequences[event.sequence] = event
     try:
