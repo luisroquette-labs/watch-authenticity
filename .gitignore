@@ -1,7 +1,7 @@
 
-.specs/scratchpad/*.md
-.specs/analysis/*.md
-.specs/reports/*.md
+.specs/scratchpad/
+.specs/analysis/
+.specs/reports/
 
 # Local Python/test artifacts
 __pycache__/
