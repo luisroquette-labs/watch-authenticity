@@ -22,17 +22,26 @@ Create `labeling/manifest.py`: read/write a versioned manifest where each row is
 
 #### Success Criteria
 
-- [ ] A written row has non-empty source, url, label, grade, phash fields (CK-10)
-- [ ] Grade is assigned via `core.grade_map` only (no inline grade logic — CK-22)
-- [ ] Manifest is versioned (new version does not mutate the prior version in place)
-- [ ] `pytest tests/test_manifest.py` passes
+- [X] A written row has non-empty source, url, label, grade, phash fields (CK-10)
+- [X] Grade is assigned via `core.grade_map` only (no inline grade logic — CK-22)
+- [X] Manifest is versioned (new version does not mutate the prior version in place)
+- [X] `pytest tests/test_manifest.py` passes
 
 #### Subtasks
 
-- [ ] Implement manifest read/write over `core.ManifestRecord` in `labeling/manifest.py`
-- [ ] Route grade assignment through `core.grade_map`
-- [ ] Add version marker handling
-- [ ] Write `tests/test_manifest.py`: `manifest_row(fixture_photo)` has complete fields (CK-10)
+- [X] Implement manifest read/write over `core.ManifestRecord` in `labeling/manifest.py`
+- [X] Route grade assignment through `core.grade_map`
+- [X] Add version marker handling
+- [X] Write `tests/test_manifest.py`: `manifest_row(fixture_photo)` has complete fields (CK-10)
+
+**Implementation note**: the version marker is the manifest file name itself
+(`manifest_v{version}.jsonl` via `manifest_path()`), not a field inside each
+row — a new version is structurally a new file, so it cannot mutate a prior
+version's rows in place. `write_row` is an alias for `append` (both names
+from Expected Output refer to one implementation). `build_fake_row()` is the
+single call site into `core.grade_map`, verified in
+`tests/test_manifest.py::test_build_fake_row_delegates_grade_assignment_to_core_grade_map`
+by patching `core.grade_map` and asserting it fires exactly once.
 
 #### Blockers & Risks
 

@@ -13,7 +13,7 @@
 
 **Goal:** Stand up the greenfield Python project so every later step has pinned dependencies and one canonical preflight command (`ruff` + `mypy` + `pytest`). No CI/preflight convention exists in this repo yet.
 
-Create `requirements.txt` with the exact version pins from SKILL.md:120-124 (`torch==2.5.1`, `torchvision==0.20.1`, `transformers==4.46.0`, `grad-cam==1.5.4`, `ImageHash==4.3.1`, `opencv-python==4.10.0.84`) plus `pytest`, `hypothesis`, `ruff`, `mypy`, `boto3`, `huggingface_hub`, `requests`. Create `pyproject.toml` configuring ruff + mypy + pytest, and a single preflight entry point (`scripts/preflight.sh` or a `pyproject` script) running `ruff check` → `mypy` → `pytest`. Create the package skeleton dirs with `__init__.py` so imports resolve: `core/`, `scrapers/`, `labeling/`, `dataset/`, `adapters/`, `model/`, `calibration/`, `quality_gate/`, `explainability/`, `inference/`, `evaluation/`, `infra/`, `release/`, `tests/`.
+Create `requirements.txt` with the exact vision pins from SKILL.md plus `pytest`, `hypothesis`, `ruff`, `mypy`, IBM VPC/COS SDKs, `huggingface_hub` and `requests`. AWS `boto3` is superseded and must not remain after Step 04b rework. Create `pyproject.toml` configuring ruff + mypy + pytest, and a single preflight entry point (`scripts/preflight.sh` or a `pyproject` script) running `ruff check` → `mypy` → `pytest`. Create the package skeleton dirs with `__init__.py` so imports resolve: `core/`, `scrapers/`, `labeling/`, `dataset/`, `adapters/`, `model/`, `calibration/`, `quality_gate/`, `explainability/`, `inference/`, `evaluation/`, `infra/`, `release/`, `tests/`.
 
 #### Expected Output
 
@@ -24,13 +24,13 @@ Create `requirements.txt` with the exact version pins from SKILL.md:120-124 (`to
 
 #### Success Criteria
 
-- [ ] `requirements.txt` contains every SKILL.md:120-124 pin verbatim plus test/lint/infra deps
+- [ ] `requirements.txt` contains every vision pin plus test/lint and IBM-only infra dependencies; no AWS SDK remains
 - [ ] Preflight command runs `ruff` + `mypy` + `pytest` and exits 0 on an empty/placeholder test
 - [ ] `python -c "import core, dataset, model, evaluation"` resolves (dirs + `__init__.py` exist)
 
 #### Subtasks
 
-- [ ] Write `requirements.txt` with SKILL.md pins + pytest/hypothesis/ruff/mypy/boto3/huggingface_hub/requests
+- [ ] Write `requirements.txt` with vision pins + pytest/hypothesis/ruff/mypy/IBM VPC and COS SDKs/huggingface_hub/requests
 - [ ] Write `pyproject.toml` with ruff + mypy + pytest config
 - [ ] Write `scripts/preflight.sh` chaining ruff → mypy → pytest
 - [ ] Create all package dirs with `__init__.py` and an empty `tests/` package

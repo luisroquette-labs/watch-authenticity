@@ -7,9 +7,9 @@
 **Phase:** Phase 2
 **Model:** sonnet
 **Agent:** sdd:developer
-**Depends on:** `04a-manifest`
-**Parallel with:** `05a-scrapers`, `05c-augment-splits`
-**Note:** None
+**Depends on:** None
+**Parallel with:** `04a-manifest`, `04b-infra`, `05a-scrapers`, `05c-augment-splits`
+**Note:** Operates on raw images only (pHash + crop) — no manifest read, no `core.*` call. Grouped into Phase 2 only for review timing.
 
 **Goal:** Keep source-style confounds and duplicates out of the training set, and isolate each guided angle so heads see the watch part, not the background (CK-11, CK-21) — the crop is a first-line defense against the source-bias risk (item 13).
 
@@ -23,19 +23,31 @@ Create `dataset/dedup.py`: perceptual-hash (pHash via `ImageHash`) near-duplicat
 
 #### Success Criteria
 
-- [ ] `dedup_filter([imgA, imgA_near_duplicate])` drops the duplicate by pHash distance below threshold (CK-11)
-- [ ] `studio_photo_filter(white_background_catalog_fixture)` flags the image for exclusion (CK-11)
-- [ ] Property: `hash_distance(a,b)==hash_distance(b,a)` (symmetry) (CK-11)
-- [ ] `crop_angle(full_frame, angle="rehaut")` returns a region smaller than the full frame centered on the expected sub-region (CK-21)
-- [ ] Hamming/threshold constants are commented as empirically-tuned-per-dataset, not universal
-- [ ] `pytest tests/test_dedup.py tests/test_crop.py` passes
+- [X] `dedup_filter([imgA, imgA_near_duplicate])` drops the duplicate by pHash distance below threshold (CK-11)
+- [X] `studio_photo_filter(white_background_catalog_fixture)` flags the image for exclusion (CK-11)
+- [X] Property: `hash_distance(a,b)==hash_distance(b,a)` (symmetry) (CK-11)
+- [X] `crop_angle(full_frame, angle="rehaut")` returns a region smaller than the full frame centered on the expected sub-region (CK-21)
+- [X] Hamming/threshold constants are commented as empirically-tuned-per-dataset, not universal
+- [X] `pytest tests/test_dedup.py tests/test_crop.py` passes
 
 #### Subtasks
 
-- [ ] Implement `dedup_filter` + `studio_photo_filter` in `dataset/dedup.py`
-- [ ] Implement `crop_angle` in `dataset/crop.py`
-- [ ] Write dedup unit + symmetry property tests (CK-11)
-- [ ] Write crop unit test (CK-21)
+- [X] Implement `dedup_filter` + `studio_photo_filter` in `dataset/dedup.py`
+- [X] Implement `crop_angle` in `dataset/crop.py`
+- [X] Write dedup unit + symmetry property tests (CK-11)
+- [X] Write crop unit test (CK-21)
+
+**Implementation note:** `ImageHash==4.3.1` (pinned in `requirements.txt`) was
+not yet installed in this environment's Python 3.14 user site-packages;
+installed it via `python3 -m pip install "ImageHash==4.3.1"` before running
+tests. `crop_angle`/`dedup_filter`/`studio_photo_filter` all standardize on
+a `PIL.Image`-like input (`.size`/`.crop()`/`.convert()`) — this step's two
+files don't need `opencv` directly, only the shared `dataset/` dependency
+column in the architecture table does collectively (likely for
+`augment.py`/`splits.py` in the parallel `05c` step). Per-angle crop
+fractions in `dataset/crop.py` are first-pass estimates (commented
+`ponytail:`), not measured framing data, since the guided-capture app that
+will produce these photos doesn't exist yet (Requirements item 11).
 
 #### Blockers & Risks
 

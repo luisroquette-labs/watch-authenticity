@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+if [ -x .venv/bin/ruff ]; then
+    PATH="$PWD/.venv/bin:$PATH"
+fi
+
 echo "=== Phase 1: Code formatting check (ruff) ==="
 ruff check .
 

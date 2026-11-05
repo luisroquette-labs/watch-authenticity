@@ -1,9 +1,9 @@
 ---
 name: Watch Authenticity CV Training
-description: Train a calibrated, explainable fake/genuine classifier for luxury watches (Rolex Submariner MVP) from a frozen DINOv2 backbone, scraped marketplace photos, on AWS GPU infra.
-topics: dinov2, vision-transformer, linear-probe, temperature-scaling, calibration, grad-cam, explainability, perceptual-hash, laplacian-blur-detection, web-scraping-legality, aws-ec2-gpu, counterfeit-detection
+description: Train a calibrated, explainable fake/genuine classifier for luxury watches (Rolex Submariner MVP) from a frozen DINOv2 backbone, scraped marketplace photos, on IBM Cloud GPU infra.
+topics: dinov2, vision-transformer, linear-probe, temperature-scaling, calibration, grad-cam, explainability, perceptual-hash, laplacian-blur-detection, web-scraping-legality, ibm-cloud-vpc-gpu, counterfeit-detection
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-05
 scratchpad: .specs/scratchpad/67f8e09e.md
 ---
 
@@ -43,7 +43,9 @@ Covers the full technical stack for training a per-angle, multi-class (genuine +
 | LAION-5B precedent | Ships URLs only, not image bytes — court-tested "weights/index open, raw images not redistributed" pattern | Wikipedia / deeplearning.ai "The Batch" |
 | Reddit Data API Terms (rev. 2026-07-20) | **Explicitly bans using User Content to train ML models without written permission** — Reddit has sued Anthropic and Perplexity over this | https://support.reddithelp.com (Data API Terms / Responsible Builder Policy) |
 | Mercado Livre Developer ToS | Explicitly prohibits scraping/robots outside official API | https://developers.mercadolivre.com.br/pt_br/termos-e-condicoes |
-| AWS EC2 G5 instance page | g5.xlarge official specs (1x A10G 24GB, 4 vCPU, 16GiB) | https://aws.amazon.com/ec2/instance-types/g5/ |
+| IBM Cloud VPC profiles | `gx3-16x80x1l4`: 1x NVIDIA L4 24GB, 16 vCPU, 80GiB | https://cloud.ibm.com/docs/vpc?topic=vpc-profiles |
+| IBM Cloud Object Storage | Dataset, manifest, checkpoint and report object store | https://cloud.ibm.com/docs/cloud-object-storage?topic=cloud-object-storage-getting-started-cloud-object-storage |
+| IBM Cloud Container Registry | Private immutable training images | https://cloud.ibm.com/docs/Registry?topic=Registry-registry_overview |
 | Hoken Tech / TrustWatch | Precedent: single dial-photo authentication, 8 brands — 96.2% accuracy is 3rd-party-sourced, NOT shown on vendor's own page | https://hokentech.tech |
 
 ---
@@ -59,7 +61,7 @@ Covers the full technical stack for training a per-angle, multi-class (genuine +
 | OpenCV `cv2.Laplacian` | Blur/sharpness gate | Stdlib-adjacent, stable | Threshold not universal (practitioner range 100-1000) — false-positives on flat/polished metal (watch casebacks); pair with BRISQUE if false-reject rate is high |
 
 ### Recommended Stack
-DINOv2 ViT-B/14 (frozen, Apache 2.0) → per-angle linear-probe heads → rule-based angle aggregation (task already specifies, no second model) → temperature-scaling calibration (reimplemented, not the abandoned package) → jacobgil Grad-CAM for heatmaps → AWS g6.xlarge (L4, ~20% cheaper than spec'd g5.xlarge, same 24GB VRAM, irrelevant bandwidth deficit for a frozen-backbone forward-pass-dominated workload).
+DINOv2 ViT-B/14 (frozen, Apache 2.0) → per-angle linear-probe heads → rule-based angle aggregation (task already specifies, no second model) → temperature-scaling calibration (reimplemented, not the abandoned package) → jacobgil Grad-CAM for heatmaps → IBM Cloud VPC `gx3-16x80x1l4` (1x L4 24GB), with dataset/artifacts in IBM COS and the immutable training image in IBM Container Registry.
 
 ---
 
@@ -98,7 +100,8 @@ cam = GradCAM(model=model, target_layers=target_layers)
 | Scraping r/rolex for genuine photos without Reddit's written permission | **Critical — Reddit's Data API Terms explicitly ban ML-training use of User Content without written permission from Reddit AND rightsholder; Reddit has sued Anthropic and Perplexity over this exact pattern** | Get the dono's explicit sign-off before scraping Reddit; treat as a separate, higher-risk decision from Watchuseek/forums, not bundled in |
 | Hardcoding a Laplacian-variance or perceptual-hash Hamming-distance threshold as "the standard number" | Medium — no literature-backed constant exists for either | State both as empirically-tuned-per-dataset in code comments and manifest, not as fixed universal truths |
 | Citing TrustWatch's "96.2% accuracy" as vendor-confirmed | Low (reputational, not technical) if ever stated publicly | The figure is 3rd-party-directory-sourced, not shown on Hoken Tech's own product page — caveat it if cited externally |
-| Assuming g5.xlarge is the cheapest adequate instance | Low (cost only) | g6.xlarge (L4, 24GB) is ~20% cheaper and has identical VRAM for this frozen-backbone workload; its lower memory bandwidth doesn't matter here |
+| Reusing the superseded AWS adapter | High (cash overage + split ownership) | Replace it; IBM VPC L4 is the only training provider and there is no automatic paid fallback |
+| Treating promotional credit as a hard billing cap | High | Require fresh balance/expiry/SKU evidence, conservative estimate, reserve, TTL, teardown and usage reconciliation before the next run |
 
 ---
 
@@ -107,7 +110,7 @@ cam = GradCAM(model=model, target_layers=target_layers)
 1. **Backbone**: DINOv2 ViT-B/14, frozen, Apache 2.0 — verified license and verified strong frozen-feature transfer (84.5% linear-probe benchmark). No direct academic precedent exists for watch/counterfeit specifically — confirmed by search, matches task's own claim.
 2. **Calibration**: reimplement Guo et al. 2017 temperature scaling standalone; do not pip-depend on the unmaintained `gpleiss/temperature_scaling`. Report calibration error split by seen-factory vs. unseen-factory holdout, since temperature scaling does not fix shift-induced miscalibration.
 3. **Explainability**: `jacobgil/pytorch-grad-cam` targeting `model.blocks[-1].norm1`; smoke-test against the actual DINOv2 checkpoint before trusting it in production — compatibility is architecturally plausible but not vendor-confirmed for DINOv2 specifically.
-4. **Infra**: AWS g6.xlarge (L4, 24GB, ~$0.805/hr) as a cheaper drop-in for the task-specified g5.xlarge (A10G, 24GB, ~$1.006/hr) — same VRAM, irrelevant bandwidth deficit for this forward-pass-dominated frozen-backbone workload. Confirm current pricing at deploy time (sourced from 3rd-party trackers, not AWS's own price-list API).
+4. **Infra**: IBM Cloud VPC `gx3-16x80x1l4` (L4, 24GB) funded by the applied Partner Plus credit. Use IBM COS, Container Registry, IAM/trusted identity and Logs/Monitoring for the responsibilities they directly own. Fail closed when balance/expiry/SKU evidence is missing or stale; promotional credit is not a hard billing stop.
 5. **Dataset legal risk — flag before scraping**: Reddit (r/rolex) requires written permission under Reddit's own Data API Terms to use content for ML training; this is categorically different risk from OLX/Mercado Livre/Chrono24/Watchuseek and needs explicit dono sign-off, not blanket treatment as "another forum." Mercado Livre's ToS also explicitly prohibits scraping outside its official API. The "publish weights, don't publish scraped images" pattern the task already plans is a real, court-tested precedent (LAION), not just a convenient excuse — but note LAION's win leaned partly on non-commercial posture, which weakens if this project's planned future monetization (API/pro version) kicks in.
 6. **Dataset quality gates**: tune the Laplacian-variance blur threshold and perceptual-hash (pHash) Hamming-distance dedup threshold empirically per this dataset — neither has a literature-backed universal constant; watch casebacks' flat polished surfaces are a known false-positive trigger for blur detection specifically.
 
@@ -193,9 +196,10 @@ def sharpness_score(gray_image) -> float:
 | pyimagesearch.com/2015/09/07/blur-detection-with-opencv | Tutorial, cross-verified | 2026-11-03 |
 | support.reddithelp.com Data API Terms | Official ToS (rev. 2026-07-20) | 2026-11-03 |
 | developers.mercadolivre.com.br/pt_br/termos-e-condicoes | Official ToS | 2026-11-03 |
-| aws.amazon.com/ec2/instance-types/g5 | Official AWS page | 2026-11-03 |
+| cloud.ibm.com/docs/vpc?topic=vpc-profiles | Official IBM Cloud VPC profiles | 2026-11-05 |
+| cloud.ibm.com/docs/cloud-object-storage | Official IBM COS docs | 2026-11-05 |
+| cloud.ibm.com/docs/Registry | Official IBM Container Registry docs | 2026-11-05 |
 | hokentech.tech | Vendor site (primary, but 96.2% stat is 3rd-party not vendor-shown) | 2026-11-03 |
-| devzero.io / ec2calc.cloud / economize.cloud (g5/g6 pricing) | 3rd-party trackers, cross-verified | 2026-11-03 (data labeled Oct 2026) |
 
 ---
 
@@ -204,3 +208,4 @@ def sharpness_score(gray_image) -> float:
 | Date | Changes |
 |---|---|
 | 2026-11-03 | Initial creation for task: Train watch authenticity model (Rolex Submariner MVP) |
+| 2026-11-05 | Replaced AWS/S3 with IBM VPC L4, COS, Container Registry, IAM and observability; added fail-closed promotional-credit controls |
