@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import tempfile
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -22,10 +23,24 @@ class EventChainFork(IntegrityError):
     """More than one immutable event exists at the same sequence."""
 
 
+@dataclass(frozen=True)
+class EventInventorySnapshot:
+    """Diagnostic snapshot; Task 8 must fence it before launch authorization."""
+
+    events: tuple[RunEvent, ...]
+    authoritative_for_launch: bool = field(default=False, init=False)
+
+
 def verify_cos_configuration(client: Any, spec: RunSpec) -> None:
     """Fail closed unless the bound bucket is private and immutable."""
 
-    _require_bound_destination(client, spec.bucket, prefix=spec.prefix)
+    setattr(client, "_watch_auth_configuration_verified", False)
+    _require_bound_destination(
+        client,
+        spec.bucket,
+        prefix=spec.prefix,
+        require_verified=False,
+    )
     public = client.get_public_access_block(Bucket=spec.bucket)
     if not isinstance(public, dict):
         raise IntegrityError("COS public-access response must be a mapping")
@@ -43,6 +58,7 @@ def verify_cos_configuration(client: Any, spec: RunSpec) -> None:
     versioning = client.get_bucket_versioning(Bucket=spec.bucket)
     if not isinstance(versioning, dict) or versioning.get("Status") != "Enabled":
         raise IntegrityError("COS bucket versioning is not enabled")
+    setattr(client, "_watch_auth_configuration_verified", True)
 
 
 def create_cos_client(spec: RunSpec) -> Any:
@@ -62,6 +78,7 @@ def create_cos_client(spec: RunSpec) -> Any:
     )
     setattr(client, "_watch_auth_bucket", spec.bucket)
     setattr(client, "_watch_auth_prefix", spec.prefix.strip("/"))
+    setattr(client, "_watch_auth_configuration_verified", False)
     return client
 
 
@@ -70,11 +87,21 @@ def _require_bound_destination(
     bucket: str,
     *,
     prefix: str | None = None,
+    key: str | None = None,
+    require_verified: bool = True,
 ) -> None:
     if getattr(client, "_watch_auth_bucket", None) != bucket:
         raise IntegrityError("COS client is bound to a different bucket")
     if prefix is not None and getattr(client, "_watch_auth_prefix", None) != prefix.strip("/"):
         raise IntegrityError("COS client is bound to a different run prefix")
+    bound_prefix = getattr(client, "_watch_auth_prefix", None)
+    if key is not None and (
+        not isinstance(bound_prefix, str)
+        or not key.strip("/").startswith(f"{bound_prefix}/")
+    ):
+        raise IntegrityError("COS key is bound to a different run prefix")
+    if require_verified and getattr(client, "_watch_auth_configuration_verified", None) is not True:
+        raise IntegrityError("COS configuration is not verified")
 
 
 def _sha256(path: Path) -> str:
@@ -180,7 +207,7 @@ def upload_verified(
 ) -> ObjectRef:
     """Upload through a temporary key and publish only verified content."""
 
-    _require_bound_destination(client, bucket)
+    _require_bound_destination(client, bucket, key=key)
     local_length = path.stat().st_size
     if _sha256(path) != expected_sha256:
         raise IntegrityError("local SHA-256 does not match expected_sha256")
@@ -272,7 +299,7 @@ def download_verified(
 ) -> Path:
     """Download to a temporary path and publish only verified bytes."""
 
-    _require_bound_destination(client, bucket)
+    _require_bound_destination(client, bucket, key=key)
     head = _head(client, bucket, key)
     if head is None:
         raise FileNotFoundError(f"COS object not found: {bucket}/{key}")
@@ -329,8 +356,8 @@ def _event_bytes(event: RunEvent) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def load_event_inventory(client: Any, spec: RunSpec) -> tuple[RunEvent, ...]:
-    """List and verify every version of every event for a run prefix."""
+def load_event_inventory(client: Any, spec: RunSpec) -> EventInventorySnapshot:
+    """List verified versions as a non-authoritative, unfenced snapshot."""
 
     _require_bound_destination(client, spec.bucket, prefix=spec.prefix)
     event_prefix = f"{spec.prefix.strip('/')}/events/"
@@ -413,6 +440,8 @@ def load_event_inventory(client: Any, spec: RunSpec) -> tuple[RunEvent, ...]:
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise IntegrityError("COS event payload is invalid") from exc
+        if body != _event_bytes(event):
+            raise IntegrityError("COS event payload is not canonical JSON")
         canonical_key = (
             f"{event_prefix}{event.sequence:06d}-{event.event_id}-{digest}.json"
         )
@@ -422,7 +451,7 @@ def load_event_inventory(client: Any, spec: RunSpec) -> tuple[RunEvent, ...]:
     snapshot = tuple(events)
     if snapshot:
         validate_event_chain(snapshot, spec)
-    return snapshot
+    return EventInventorySnapshot(events=snapshot)
 
 
 def append_event(

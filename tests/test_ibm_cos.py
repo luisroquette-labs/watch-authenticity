@@ -16,6 +16,7 @@ import pytest
 
 from infra.ibm_cos import (
     EventChainFork,
+    EventInventorySnapshot,
     IntegrityError,
     append_event,
     create_cos_client,
@@ -47,6 +48,7 @@ class FakeCOS:
         self.upload_calls = 0
         self._watch_auth_bucket = bucket
         self._watch_auth_prefix = prefix
+        self._watch_auth_configuration_verified = True
 
     def get_public_access_block(self, *, Bucket: str) -> dict[str, object]:
         assert Bucket == valid_run_spec().bucket
@@ -232,16 +234,19 @@ def test_create_client_uses_trusted_profile_token_manager_only(monkeypatch):
     assert not ({"api_key", "aws_access_key_id", "aws_secret_access_key"} & kwargs.keys())
     assert getattr(created, "_watch_auth_bucket") == spec.bucket
     assert getattr(created, "_watch_auth_prefix") == spec.prefix
+    assert getattr(created, "_watch_auth_configuration_verified") is False
 
 
 def test_cos_configuration_requires_private_access_and_versioning():
     spec = valid_run_spec()
     cos = FakeCOS(bucket=spec.bucket, prefix=spec.prefix)
     verify_cos_configuration(cos, spec)
+    assert cos._watch_auth_configuration_verified is True
 
     cos.get_bucket_versioning = lambda **_kwargs: {"Status": "Suspended"}
     with pytest.raises(IntegrityError, match="versioning"):
         verify_cos_configuration(cos, spec)
+    assert cos._watch_auth_configuration_verified is False
 
 
 def test_upload_uses_digest_key_and_verifies_remote_object(tmp_path: Path):
@@ -250,9 +255,9 @@ def test_upload_uses_digest_key_and_verifies_remote_object(tmp_path: Path):
     digest = _sha256(source)
     cos = FakeCOS()
 
-    ref = upload_verified(cos, source, "private", "objects/dataset", digest)
+    ref = upload_verified(cos, source, "private", "runs/abc/objects/dataset", digest)
 
-    assert ref.key == f"objects/dataset/{digest}"
+    assert ref.key == f"runs/abc/objects/dataset/{digest}"
     assert ref.sha256 == digest
     assert ref.length == source.stat().st_size
     assert all(".upload-" not in key for key in cos.objects)
@@ -263,9 +268,37 @@ def test_cos_operations_reject_destinations_outside_client_binding(tmp_path: Pat
     source.write_bytes(b"artifact")
     cos = FakeCOS()
     with pytest.raises(IntegrityError, match="different bucket"):
-        upload_verified(cos, source, "other", "objects/artifact", _sha256(source))
+        upload_verified(cos, source, "other", "runs/abc/objects/artifact", _sha256(source))
+    with pytest.raises(IntegrityError, match="different run prefix"):
+        upload_verified(cos, source, "private", "runs/other/artifact", _sha256(source))
+    with pytest.raises(IntegrityError, match="different run prefix"):
+        download_verified(
+            cos,
+            "private",
+            "runs/other/artifact",
+            tmp_path / "download",
+            "0" * 64,
+        )
     with pytest.raises(IntegrityError, match="different run prefix"):
         append_event(cos, "private", "runs/other", _event(UUID(int=1)))
+
+
+def test_cos_operations_require_verified_configuration(tmp_path: Path):
+    source = tmp_path / "artifact.bin"
+    source.write_bytes(b"artifact")
+    cos = FakeCOS()
+    cos._watch_auth_configuration_verified = False
+
+    with pytest.raises(IntegrityError, match="configuration is not verified"):
+        upload_verified(
+            cos,
+            source,
+            "private",
+            "runs/abc/objects/artifact",
+            _sha256(source),
+        )
+    with pytest.raises(IntegrityError, match="configuration is not verified"):
+        append_event(cos, "private", "runs/abc", _event(UUID(int=1)))
 
 
 def test_upload_rejects_local_or_remote_checksum_mismatch(tmp_path: Path):
@@ -273,12 +306,14 @@ def test_upload_rejects_local_or_remote_checksum_mismatch(tmp_path: Path):
     source.write_bytes(b"artifact")
     cos = FakeCOS()
     with pytest.raises(IntegrityError, match="local SHA-256"):
-        upload_verified(cos, source, "private", "objects/artifact", "0" * 64)
+        upload_verified(cos, source, "private", "runs/abc/objects/artifact", "0" * 64)
     assert cos.upload_calls == 0
 
     cos.corrupt_final_head = True
     with pytest.raises(IntegrityError, match="remote object metadata"):
-        upload_verified(cos, source, "private", "objects/artifact", _sha256(source))
+        upload_verified(
+            cos, source, "private", "runs/abc/objects/artifact", _sha256(source)
+        )
     assert any(".upload-" not in key for key in cos.objects)
 
 
@@ -286,29 +321,29 @@ def test_upload_is_idempotent_only_for_matching_hash_and_length(tmp_path: Path):
     source = tmp_path / "artifact.bin"
     source.write_bytes(b"artifact")
     digest = _sha256(source)
-    key = f"objects/artifact/{digest}"
+    key = f"runs/abc/objects/artifact/{digest}"
     cos = FakeCOS()
     cos.objects[key] = (source.read_bytes(), {"sha256": digest, "length": "8"})
 
-    ref = upload_verified(cos, source, "private", "objects/artifact", digest)
+    ref = upload_verified(cos, source, "private", "runs/abc/objects/artifact", digest)
     assert ref.key == key
     assert cos.upload_calls == 0
 
     cos.objects[key] = (b"short", {"sha256": digest, "length": "5"})
     with pytest.raises(IntegrityError, match="existing object"):
-        upload_verified(cos, source, "private", "objects/artifact", digest)
+        upload_verified(cos, source, "private", "runs/abc/objects/artifact", digest)
 
 
 def test_upload_rejects_remote_bytes_that_lie_through_metadata(tmp_path: Path):
     source = tmp_path / "artifact.bin"
     source.write_bytes(b"good")
     digest = _sha256(source)
-    key = f"objects/artifact/{digest}"
+    key = f"runs/abc/objects/artifact/{digest}"
     cos = FakeCOS()
     cos.objects[key] = (b"evil", {"sha256": digest, "length": "4"})
 
     with pytest.raises(IntegrityError, match="remote object bytes"):
-        upload_verified(cos, source, "private", "objects/artifact", digest)
+        upload_verified(cos, source, "private", "runs/abc/objects/artifact", digest)
 
 
 def test_interrupted_upload_removes_temporary_object_and_has_no_final(tmp_path: Path):
@@ -318,7 +353,9 @@ def test_interrupted_upload_removes_temporary_object_and_has_no_final(tmp_path: 
     cos.fail_upload = True
 
     with pytest.raises(OSError, match="interrupted"):
-        upload_verified(cos, source, "private", "objects/artifact", _sha256(source))
+        upload_verified(
+            cos, source, "private", "runs/abc/objects/artifact", _sha256(source)
+        )
 
     assert not cos.objects
 
@@ -328,12 +365,17 @@ def test_download_verifies_metadata_length_and_bytes_before_publish(tmp_path: Pa
     body = b"verified"
     digest = hashlib.sha256(body).hexdigest()
     cos = FakeCOS()
-    cos.objects["objects/artifact"] = (
+    cos.objects["runs/abc/objects/artifact"] = (
         body,
         {"sha256": digest, "length": str(len(body))},
     )
 
-    assert download_verified(cos, "private", "objects/artifact", destination, digest) == destination
+    assert (
+        download_verified(
+            cos, "private", "runs/abc/objects/artifact", destination, digest
+        )
+        == destination
+    )
     assert destination.read_bytes() == body
 
 
@@ -342,14 +384,16 @@ def test_corrupt_download_is_deleted_locally(tmp_path: Path):
     body = b"verified"
     digest = hashlib.sha256(body).hexdigest()
     cos = FakeCOS()
-    cos.objects["objects/artifact"] = (
+    cos.objects["runs/abc/objects/artifact"] = (
         body,
         {"sha256": digest, "length": str(len(body))},
     )
     cos.corrupt_download = True
 
     with pytest.raises(IntegrityError, match="downloaded object"):
-        download_verified(cos, "private", "objects/artifact", destination, digest)
+        download_verified(
+            cos, "private", "runs/abc/objects/artifact", destination, digest
+        )
 
     assert not destination.exists()
     assert not list(tmp_path.glob("*.download-*"))
@@ -435,7 +479,9 @@ def test_upload_preserves_final_object_when_post_copy_head_is_ambiguous(tmp_path
     cos = AmbiguousHeadCOS()
 
     with pytest.raises(OSError, match="HEAD unavailable"):
-        upload_verified(cos, source, "private", "objects/artifact", _sha256(source))
+        upload_verified(
+            cos, source, "private", "runs/abc/objects/artifact", _sha256(source)
+        )
 
     assert len(cos.objects) == 1
     assert next(iter(cos.objects)).endswith(_sha256(source))
@@ -509,7 +555,10 @@ def test_event_inventory_lists_and_verifies_the_complete_run_prefix():
     cos = FakeCOS(bucket=spec.bucket, prefix=spec.prefix)
     append_event(cos, spec.bucket, spec.prefix, planned)
 
-    assert load_event_inventory(cos, spec) == (planned,)
+    snapshot = load_event_inventory(cos, spec)
+    assert isinstance(snapshot, EventInventorySnapshot)
+    assert snapshot.events == (planned,)
+    assert snapshot.authoritative_for_launch is False
 
 
 def test_event_inventory_rejects_delete_markers():
@@ -587,3 +636,33 @@ def test_event_inventory_rejects_key_payload_mismatch():
 
     with pytest.raises(IntegrityError, match="key does not match payload"):
         load_event_inventory(cos, spec)
+
+
+def test_event_inventory_rejects_noncanonical_json_bytes():
+    spec = valid_run_spec()
+    planned = replace(
+        _event(UUID(int=1)),
+        sequence=0,
+        state="planned",
+        instance_id=None,
+        previous_event_sha256=None,
+    )
+    source = FakeCOS(bucket=spec.bucket, prefix=spec.prefix)
+    ref = append_event(source, spec.bucket, spec.prefix, planned)
+    canonical = source.objects[ref.key][0]
+    duplicate = (
+        b'{"event_id":"' + str(planned.event_id).encode() + b'",' + canonical[1:]
+    )
+    variants = (
+        canonical[:-1] + b',"shadow_authorization":"x"}',
+        b" " + canonical,
+        duplicate,
+    )
+
+    for body in variants:
+        cos = FakeCOS(bucket=spec.bucket, prefix=spec.prefix)
+        digest = hashlib.sha256(body).hexdigest()
+        key = f"{spec.prefix}/events/000000-{planned.event_id}-{digest}.json"
+        cos.objects[key] = (body, {"sha256": digest, "length": str(len(body))})
+        with pytest.raises(IntegrityError, match="canonical"):
+            load_event_inventory(cos, spec)
