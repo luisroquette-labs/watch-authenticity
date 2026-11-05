@@ -213,6 +213,7 @@ def load_pricing_evidence(
         {
             "schema_version",
             "observed_at",
+            "account_id",
             "currency",
             "run_spec_sha256",
             "lines",
@@ -226,6 +227,11 @@ def load_pricing_evidence(
     _fresh(observed_at, now)
     if record["currency"] != "USD":
         raise ValueError("pricing currency must be USD")
+    account_id = record["account_id"]
+    if not isinstance(account_id, str) or not account_id.strip():
+        raise ValueError("pricing account_id must be non-empty")
+    if account_id != spec.account_id:
+        raise ValueError("pricing evidence account differs from run account")
     expected_spec_hash = run_spec_sha256(spec)
     if record["run_spec_sha256"] != expected_spec_hash:
         raise ValueError("pricing evidence is bound to a different run spec")
@@ -260,6 +266,7 @@ def load_pricing_evidence(
             )
         )
     return PricingEvidence(
+        account_id=account_id,
         observed_at=observed_at,
         currency="USD",
         run_spec_sha256=expected_spec_hash,
@@ -280,6 +287,7 @@ def load_post_promo_plan(
         {
             "schema_version",
             "observed_at",
+            "account_id",
             "promo_expires_at",
             "entries",
             "authorization_capture_sha256",
@@ -290,6 +298,9 @@ def load_post_promo_plan(
     )
     observed_at = _parse_datetime(record["observed_at"], "observed_at")
     _fresh(observed_at, now)
+    account_id = record["account_id"]
+    if not isinstance(account_id, str) or not account_id.strip():
+        raise ValueError("post-promo account_id must be non-empty")
     promo_expires_at = _parse_datetime(record["promo_expires_at"], "promo_expires_at")
     latest_deadline = promo_expires_at - timedelta(hours=48)
     raw_entries = record["entries"]
@@ -322,6 +333,7 @@ def load_post_promo_plan(
     if {entry.service for entry in entries} != _PERSISTENT_SERVICES:
         raise ValueError("post-promo plan must cover exactly the persistent metered services")
     return PostPromoPlan(
+        account_id=account_id,
         observed_at=observed_at,
         promo_expires_at=promo_expires_at,
         entries=tuple(entries),
@@ -361,7 +373,7 @@ def fetch_usage_evidence(
         raise ValueError("billing_period must use YYYY-MM") from exc
     if billing_period_start.strftime("%Y-%m") != billing_period:
         raise ValueError("billing_period must use YYYY-MM")
-    if billing_period != now.strftime("%Y-%m"):
+    if billing_period != now.astimezone(timezone.utc).strftime("%Y-%m"):
         raise ValueError("billing_period must be the current month")
 
     pages: list[dict[str, Any]] = []

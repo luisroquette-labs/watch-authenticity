@@ -186,6 +186,43 @@ def test_authorized_run_only_accepts_allowed_decision_and_freezes_values():
     with pytest.raises(ValueError, match="run spec"):
         AuthorizedRun.from_decision(other_spec, decision, decision.evidence_hashes)
 
+    with pytest.raises(TypeError):
+        AuthorizedRun(
+            spec=valid_run_spec(),
+            estimated_usd=decision.estimated_usd,
+            evidence_hashes=decision.evidence_hashes,
+        )
+    with pytest.raises(TypeError, match="from_decision"):
+        AuthorizedRun()
+
+
+def test_run_spec_requires_account_and_positive_metering_dimensions():
+    with pytest.raises(ValueError, match="account_id"):
+        replace(valid_run_spec(), account_id="")
+    for field in (
+        "boot_volume_gb",
+        "cos_storage_gb_month",
+        "cos_operations",
+        "registry_storage_gb_month",
+        "code_engine_job_hours",
+        "logs_monitoring_gb",
+    ):
+        with pytest.raises(ValueError, match=field):
+            replace(valid_run_spec(), **{field: Decimal("0")})
+
+
+def test_run_spec_rejects_metering_dimensions_below_conservative_floor():
+    for field, value in (
+        ("boot_volume_gb", Decimal("99.99")),
+        ("cos_storage_gb_month", Decimal("49.99")),
+        ("cos_operations", Decimal("999")),
+        ("registry_storage_gb_month", Decimal("9.99")),
+        ("code_engine_job_hours", Decimal("0.99")),
+        ("logs_monitoring_gb", Decimal("0.99")),
+    ):
+        with pytest.raises(ValueError, match=field):
+            replace(valid_run_spec(), **{field: value})
+
 
 def test_authorization_decision_keeps_allowed_and_reasons_consistent():
     decision = AuthorizationDecision(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -76,6 +76,7 @@ def _pricing_record() -> dict[str, Any]:
     return {
         "schema_version": 1,
         "observed_at": NOW.isoformat(),
+        "account_id": "account-1",
         "currency": "USD",
         "run_spec_sha256": run_spec_sha256(valid_run_spec()),
         "lines": [
@@ -95,6 +96,7 @@ def _post_promo_record() -> dict[str, Any]:
     return {
         "schema_version": 1,
         "observed_at": NOW.isoformat(),
+        "account_id": "account-1",
         "promo_expires_at": (NOW + timedelta(days=90)).isoformat(),
         "entries": [
             {
@@ -176,6 +178,7 @@ def test_pricing_loader_requires_exact_spec_and_quote_hash(tmp_path: Path):
     pricing = load_pricing_evidence(record, capture, valid_run_spec(), now=NOW)
 
     assert pricing.currency == "USD"
+    assert pricing.account_id == "account-1"
     assert pricing.run_spec_sha256 == run_spec_sha256(valid_run_spec())
     assert len(pricing.lines) == 8
 
@@ -207,6 +210,7 @@ def test_post_promo_loader_requires_exact_services_and_safe_deadlines(tmp_path: 
     record, capture = _artifact_and_record(tmp_path, "authorization", payload)
     plan = load_post_promo_plan(record, capture, now=NOW)
     assert plan.observed_at == NOW
+    assert plan.account_id == "account-1"
     assert plan.promo_expires_at == NOW + timedelta(days=90)
     assert len(plan.evidence_sha256) == 64
     assert {entry.service for entry in plan.entries} == {
@@ -326,3 +330,39 @@ def test_usage_loader_requires_current_month_and_accepts_missing_pending():
     assert fetch_usage_evidence(client, "account-1", "2026-11", (), now=NOW).account_id == "account-1"
     with pytest.raises(ValueError, match="current month"):
         fetch_usage_evidence(client, "account-1", "2026-10", (), now=NOW)
+
+
+def test_usage_loader_uses_utc_month_at_timezone_boundary():
+    client = Mock()
+    resource = _usage_resource("instance-1", month="2026-12")
+    client.get_resource_usage_account.return_value = _Response(
+        {"limit": 1, "count": 1, "resources": [resource]}
+    )
+    instant_utc = datetime(2026, 12, 1, 0, 30, tzinfo=timezone.utc)
+    instant_local = instant_utc.astimezone(timezone(timedelta(hours=-3)))
+
+    usage = fetch_usage_evidence(client, "account-1", "2026-12", (), now=instant_local)
+
+    assert usage.billing_period_start == datetime(2026, 12, 1, tzinfo=timezone.utc)
+    with pytest.raises(ValueError, match="current month"):
+        fetch_usage_evidence(client, "account-1", "2026-11", (), now=instant_local)
+
+
+def test_financial_loaders_preserve_account_binding(tmp_path: Path):
+    pricing_payload = _pricing_record()
+    pricing_payload["account_id"] = "account-2"
+    pricing_record, pricing_capture = _artifact_and_record(
+        tmp_path / "pricing", "quote", pricing_payload
+    )
+    with pytest.raises(ValueError, match="account"):
+        load_pricing_evidence(
+            pricing_record, pricing_capture, valid_run_spec(), now=NOW
+        )
+
+    post_payload = _post_promo_record()
+    post_payload["account_id"] = "account-2"
+    post_record, post_capture = _artifact_and_record(
+        tmp_path / "post", "authorization", post_payload
+    )
+    plan = load_post_promo_plan(post_record, post_capture, now=NOW)
+    assert plan.account_id == "account-2"

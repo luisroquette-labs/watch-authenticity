@@ -149,6 +149,7 @@ class PriceLine:
 
 @dataclass(frozen=True)
 class PricingEvidence:
+    account_id: str
     observed_at: datetime
     currency: str
     run_spec_sha256: str
@@ -156,6 +157,7 @@ class PricingEvidence:
     evidence_sha256: str
 
     def __post_init__(self) -> None:
+        _nonempty(self.account_id, "account_id")
         _aware(self.observed_at, "observed_at")
         if self.currency != "USD":
             raise ValueError("currency must be USD")
@@ -182,6 +184,7 @@ class PostPromoEntry:
 
 @dataclass(frozen=True)
 class PostPromoPlan:
+    account_id: str
     observed_at: datetime
     promo_expires_at: datetime
     entries: tuple[PostPromoEntry, ...]
@@ -189,6 +192,7 @@ class PostPromoPlan:
     evidence_sha256: str
 
     def __post_init__(self) -> None:
+        _nonempty(self.account_id, "account_id")
         _aware(self.observed_at, "observed_at")
         _aware(self.promo_expires_at, "promo_expires_at")
         if self.promo_expires_at <= self.observed_at:
@@ -205,6 +209,7 @@ class PostPromoPlan:
 @dataclass(frozen=True)
 class RunSpec:
     run_id: UUID
+    account_id: str
     code_sha: str
     image_digest: str
     manifest_sha256: str
@@ -214,6 +219,12 @@ class RunSpec:
     zone: str
     cos_endpoint: str
     max_hours: Decimal
+    boot_volume_gb: Decimal
+    cos_storage_gb_month: Decimal
+    cos_operations: Decimal
+    registry_storage_gb_month: Decimal
+    code_engine_job_hours: Decimal
+    logs_monitoring_gb: Decimal
     bucket: str
     prefix: str
     cos_service_instance_id: str
@@ -227,6 +238,7 @@ class RunSpec:
     def __post_init__(self) -> None:
         if not isinstance(self.run_id, UUID):
             raise TypeError("run_id must be UUID")
+        _nonempty(self.account_id, "account_id")
         if not isinstance(self.code_sha, str) or _GIT_SHA.fullmatch(self.code_sha) is None:
             raise ValueError("code_sha must be a lowercase 40-character Git SHA")
         if not isinstance(self.image_digest, str) or _OCI_DIGEST.fullmatch(self.image_digest) is None:
@@ -261,6 +273,17 @@ class RunSpec:
         _decimal(self.max_hours, "max_hours", allow_zero=False)
         if self.max_hours > Decimal("24"):
             raise ValueError("max_hours must be at most 24")
+        for dimension_field, dimension_value, minimum in (
+            ("boot_volume_gb", self.boot_volume_gb, Decimal("100")),
+            ("cos_storage_gb_month", self.cos_storage_gb_month, Decimal("50")),
+            ("cos_operations", self.cos_operations, Decimal("1000")),
+            ("registry_storage_gb_month", self.registry_storage_gb_month, Decimal("10")),
+            ("code_engine_job_hours", self.code_engine_job_hours, Decimal("1")),
+            ("logs_monitoring_gb", self.logs_monitoring_gb, Decimal("1")),
+        ):
+            _decimal(dimension_value, dimension_field, allow_zero=False)
+            if dimension_value < minimum:
+                raise ValueError(f"{dimension_field} must be at least {minimum}")
         _crn(self.cos_service_instance_id, "cos_service_instance_id")
         for field, value in (
             ("network_id", self.network_id),
@@ -303,13 +326,16 @@ class AuthorizationDecision:
         _hash(self.run_spec_sha256, "run_spec_sha256")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class AuthorizedRun:
     spec: RunSpec
     estimated_usd: Decimal
     evidence_hashes: tuple[str, ...]
 
-    def __post_init__(self) -> None:
+    def __new__(cls) -> AuthorizedRun:
+        raise TypeError("AuthorizedRun must be created with from_decision")
+
+    def _validate(self) -> None:
         _decimal(self.estimated_usd, "estimated_usd")
         if not self.evidence_hashes:
             raise ValueError("evidence_hashes must be non-empty")
@@ -331,7 +357,12 @@ class AuthorizedRun:
 
         if run_spec_sha256(spec) != decision.run_spec_sha256:
             raise ValueError("run spec differs from the authorization decision")
-        return cls(spec=spec, estimated_usd=decision.estimated_usd, evidence_hashes=evidence_hashes)
+        authorized = object.__new__(cls)
+        object.__setattr__(authorized, "spec", spec)
+        object.__setattr__(authorized, "estimated_usd", decision.estimated_usd)
+        object.__setattr__(authorized, "evidence_hashes", evidence_hashes)
+        authorized._validate()
+        return authorized
 
 
 @dataclass(frozen=True)

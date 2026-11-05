@@ -23,6 +23,7 @@ NOW = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)
 def valid_run_spec() -> RunSpec:
     return RunSpec(
         run_id=UUID("11111111-1111-4111-8111-111111111111"),
+        account_id="account-1",
         code_sha="a" * 40,
         image_digest="private.us-south.icr.io/watch/train@sha256:" + "b" * 64,
         manifest_sha256="c" * 64,
@@ -32,6 +33,12 @@ def valid_run_spec() -> RunSpec:
         zone="us-south-1",
         cos_endpoint="https://s3.direct.us-south.cloud-object-storage.appdomain.cloud",
         max_hours=Decimal("6"),
+        boot_volume_gb=Decimal("100"),
+        cos_storage_gb_month=Decimal("50"),
+        cos_operations=Decimal("1000"),
+        registry_storage_gb_month=Decimal("10"),
+        code_engine_job_hours=Decimal("1"),
+        logs_monitoring_gb=Decimal("1"),
         bucket="watch-auth-private",
         prefix="runs/11111111-1111-4111-8111-111111111111",
         cos_service_instance_id="crn:v1:bluemix:public:cloud-object-storage:global:a/abc:cos::",
@@ -78,6 +85,7 @@ def valid_usage(now: datetime = NOW) -> UsageEvidence:
 def valid_pricing(now: datetime = NOW, spec: RunSpec | None = None) -> PricingEvidence:
     spec = spec or valid_run_spec()
     return PricingEvidence(
+        account_id=spec.account_id,
         observed_at=now,
         currency="USD",
         run_spec_sha256=run_spec_sha256(spec),
@@ -103,6 +111,7 @@ def valid_pricing(now: datetime = NOW, spec: RunSpec | None = None) -> PricingEv
 
 def valid_post_promo_plan(now: datetime = NOW) -> PostPromoPlan:
     return PostPromoPlan(
+        account_id="account-1",
         observed_at=now,
         promo_expires_at=now + timedelta(days=90),
         entries=(

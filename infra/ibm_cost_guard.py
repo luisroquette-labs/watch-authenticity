@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -66,6 +66,14 @@ def _latest_prior_events(events: tuple[RunEvent, ...], spec: RunSpec) -> dict[UU
     return latest
 
 
+def _prior_event_chain_is_forked(events: tuple[RunEvent, ...], spec: RunSpec) -> bool:
+    branches: dict[tuple[UUID, int], set[RunEvent]] = {}
+    for event in events:
+        if event.run_id != spec.run_id:
+            branches.setdefault((event.run_id, event.sequence), set()).add(event)
+    return any(len(values) > 1 for values in branches.values())
+
+
 def authorize_run(
     credit: CreditEvidence,
     usage: UsageEvidence,
@@ -88,12 +96,18 @@ def authorize_run(
     reasons.extend(_timestamp_reasons("post-promo", post_promo.observed_at, now))
     if credit.observed_at < usage.observed_at:
         reasons.append("credit evidence predates usage evidence")
-    if credit.account_id != usage.account_id:
-        reasons.append("credit and usage accounts differ")
-    if (usage.billing_period_start.year, usage.billing_period_start.month) != (
-        now.year,
-        now.month,
-    ):
+    evidence_accounts = {
+        credit.account_id,
+        usage.account_id,
+        pricing.account_id,
+        post_promo.account_id,
+    }
+    if evidence_accounts != {spec.account_id}:
+        reasons.append("financial evidence accounts differ from run account")
+    current_month_start = now.astimezone(timezone.utc).replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+    if usage.billing_period_start.astimezone(timezone.utc) != current_month_start:
         reasons.append("usage billing period is not the current month")
 
     services = [line.service for line in pricing.lines]
@@ -123,13 +137,27 @@ def authorize_run(
         if line.estimated_quantity <= 0:
             reasons.append(f"estimated quantity must be positive for {line.service}")
     quantities = {line.service: line.estimated_quantity for line in pricing.lines}
-    if quantities.get("vpc-vsi", Decimal("0")) < spec.max_hours:
-        reasons.append("vpc-vsi estimate does not cover max_hours")
-    if quantities.get("vpc-public-gateway", Decimal("0")) < spec.max_hours:
-        reasons.append("vpc-public-gateway estimate does not cover max_hours")
+    minimum_quantities = {
+        "vpc-vsi": spec.max_hours,
+        "vpc-boot-volume": spec.boot_volume_gb * spec.max_hours,
+        "vpc-public-gateway": spec.max_hours,
+        "cos-storage": spec.cos_storage_gb_month,
+        "cos-operations": spec.cos_operations,
+        "container-registry-storage": spec.registry_storage_gb_month,
+        "code-engine": spec.code_engine_job_hours,
+        "logs-monitoring": spec.logs_monitoring_gb,
+    }
+    for service, minimum in minimum_quantities.items():
+        if quantities.get(service, Decimal("0")) < minimum:
+            if service in {"vpc-vsi", "vpc-public-gateway"}:
+                reasons.append(f"{service} estimate does not cover max_hours")
+            else:
+                reasons.append(f"{service} estimate does not cover RunSpec minimum")
 
     if usage.unreconciled_run_ids:
         reasons.append("prior run usage is unreconciled")
+    if _prior_event_chain_is_forked(events, spec):
+        reasons.append("prior run event chain is forked")
     if any(event.state != "deleted" for event in _latest_prior_events(events, spec).values()):
         reasons.append("prior run has no terminal deletion event")
 

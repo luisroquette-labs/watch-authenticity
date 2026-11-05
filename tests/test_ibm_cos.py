@@ -186,7 +186,7 @@ def test_upload_rejects_local_or_remote_checksum_mismatch(tmp_path: Path):
     cos.corrupt_final_head = True
     with pytest.raises(IntegrityError, match="remote object metadata"):
         upload_verified(cos, source, "private", "objects/artifact", _sha256(source))
-    assert not cos.objects
+    assert any(".upload-" not in key for key in cos.objects)
 
 
 def test_upload_is_idempotent_only_for_matching_hash_and_length(tmp_path: Path):
@@ -316,3 +316,36 @@ def test_concurrent_same_uuid_different_payloads_are_preserved_and_detected_as_f
     assert len(cos.objects) == 2
     with pytest.raises(EventChainFork, match="sequence 3"):
         validate_event_chain((first, second), valid_run_spec())
+
+
+def test_upload_preserves_final_object_when_post_copy_head_is_ambiguous(tmp_path: Path):
+    class AmbiguousHeadCOS(FakeCOS):
+        def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+            if Key in self.objects and ".upload-" not in Key:
+                raise OSError("HEAD unavailable")
+            return super().head_object(Bucket=Bucket, Key=Key)
+
+    source = tmp_path / "artifact.bin"
+    source.write_bytes(b"artifact")
+    cos = AmbiguousHeadCOS()
+
+    with pytest.raises(OSError, match="HEAD unavailable"):
+        upload_verified(cos, source, "private", "objects/artifact", _sha256(source))
+
+    assert len(cos.objects) == 1
+    assert next(iter(cos.objects)).endswith(_sha256(source))
+
+
+def test_append_event_preserves_written_object_when_head_is_ambiguous():
+    class AmbiguousHeadCOS(FakeCOS):
+        def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+            if Key in self.objects:
+                raise OSError("HEAD unavailable")
+            return super().head_object(Bucket=Bucket, Key=Key)
+
+    cos = AmbiguousHeadCOS()
+
+    with pytest.raises(OSError, match="HEAD unavailable"):
+        append_event(cos, "private", "runs/abc", _event(UUID(int=1)))
+
+    assert len(cos.objects) == 1

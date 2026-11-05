@@ -141,7 +141,6 @@ def upload_verified(
 
     temporary_key = f"{final_key}.upload-{uuid4()}"
     metadata = {"sha256": expected_sha256, "length": str(local_length)}
-    final_written = False
     try:
         client.upload_file(
             str(path),
@@ -166,7 +165,6 @@ def upload_verified(
             CopySource={"Bucket": bucket, "Key": temporary_key},
             MetadataDirective="COPY",
         )
-        final_written = True
         final_head = _head(client, bucket, final_key)
         if final_head is None:
             raise IntegrityError("final object is missing after copy")
@@ -178,10 +176,6 @@ def upload_verified(
             local_length,
             context="remote object metadata",
         )
-    except BaseException:
-        if final_written:
-            client.delete_object(Bucket=bucket, Key=final_key)
-        raise
     finally:
         client.delete_object(Bucket=bucket, Key=temporary_key)
 
@@ -280,31 +274,24 @@ def append_event(
         except IntegrityError as exc:
             raise IntegrityError("event key already exists with different content") from exc
 
-    written = False
-    try:
-        client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=body,
-            Metadata={"sha256": digest, "length": str(length)},
-            ContentType="application/json",
-        )
-        written = True
-        head = _head(client, bucket, key)
-        if head is None:
-            raise IntegrityError("event is missing after write")
-        return _object_ref(
-            bucket,
-            key,
-            head,
-            digest,
-            length,
-            context="event object",
-        )
-    except BaseException:
-        if written:
-            client.delete_object(Bucket=bucket, Key=key)
-        raise
+    client.put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=body,
+        Metadata={"sha256": digest, "length": str(length)},
+        ContentType="application/json",
+    )
+    head = _head(client, bucket, key)
+    if head is None:
+        raise IntegrityError("event is missing after write")
+    return _object_ref(
+        bucket,
+        key,
+        head,
+        digest,
+        length,
+        context="event object",
+    )
 
 
 def validate_event_chain(events: tuple[RunEvent, ...], spec: RunSpec) -> None:

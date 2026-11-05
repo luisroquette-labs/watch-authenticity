@@ -1,7 +1,7 @@
 """Fail-closed tests for IBM promotional-credit authorization."""
 
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -251,13 +251,41 @@ def test_authorize_run_requires_timezone_aware_now():
 def test_authorize_run_binds_credit_usage_account_and_current_billing_month():
     mismatch = _authorize(usage=replace(valid_usage(), account_id="account-2"))
     assert not mismatch.allowed
-    assert "credit and usage accounts differ" in mismatch.reasons
+    assert "financial evidence accounts differ from run account" in mismatch.reasons
 
     old_period = _authorize(
         usage=replace(valid_usage(), billing_period_start=NOW.replace(month=10, day=1))
     )
     assert not old_period.allowed
     assert "usage billing period is not the current month" in old_period.reasons
+
+
+def test_authorize_run_binds_every_financial_artifact_to_run_account():
+    for name, override in (
+        ("credit", replace(valid_credit(), account_id="account-2")),
+        ("usage", replace(valid_usage(), account_id="account-2")),
+        ("pricing", replace(valid_pricing(), account_id="account-2")),
+        ("post_promo", replace(valid_post_promo_plan(), account_id="account-2")),
+    ):
+        decision = _authorize(**{name: override})
+        assert not decision.allowed
+        assert "financial evidence accounts differ from run account" in decision.reasons
+
+
+def test_authorize_run_compares_billing_period_in_utc():
+    instant_utc = datetime(2026, 12, 1, 0, 30, tzinfo=timezone.utc)
+    instant_local = instant_utc.astimezone(timezone(timedelta(hours=-3)))
+    spec = valid_run_spec()
+    decision = authorize_run(
+        valid_credit(instant_utc),
+        valid_usage(instant_utc),
+        valid_pricing(instant_utc, spec),
+        valid_post_promo_plan(instant_utc),
+        spec,
+        (),
+        now=instant_local,
+    )
+    assert decision.allowed
 
 
 def test_authorize_run_revalidates_post_promo_evidence_and_expiry_binding():
@@ -294,3 +322,52 @@ def test_authorize_run_rejects_zero_quantities_wrong_units_and_short_runtime_lin
         lines=(replace(pricing.lines[0], estimated_quantity=Decimal("5.99")),) + pricing.lines[1:],
     )
     assert "vpc-vsi estimate does not cover max_hours" in _authorize(pricing=short_vsi).reasons
+
+
+def test_authorize_run_rejects_every_underestimated_metered_dimension():
+    pricing = valid_pricing()
+    minimums = {
+        "vpc-boot-volume": "vpc-boot-volume",
+        "cos-storage": "cos-storage",
+        "cos-operations": "cos-operations",
+        "container-registry-storage": "container-registry-storage",
+        "code-engine": "code-engine",
+        "logs-monitoring": "logs-monitoring",
+    }
+    for service, message in minimums.items():
+        lines = tuple(
+            replace(line, estimated_quantity=Decimal("0.000000001"))
+            if line.service == service
+            else line
+            for line in pricing.lines
+        )
+        decision = _authorize(pricing=replace(pricing, lines=lines))
+        assert not decision.allowed
+        assert any(message in reason for reason in decision.reasons)
+
+
+def test_authorize_run_blocks_any_prior_event_fork_even_if_one_branch_deleted():
+    prior_run = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    deleted = RunEvent(
+        event_id=UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        run_id=prior_run,
+        sequence=0,
+        state="deleted",
+        observed_at=NOW,
+        instance_id=None,
+        lineage_sha256="a" * 64,
+        previous_event_sha256=None,
+        payload_sha256="b" * 64,
+    )
+    running = replace(
+        deleted,
+        event_id=UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+        state="running",
+        instance_id="vsi-1",
+        payload_sha256="c" * 64,
+    )
+
+    decision = _authorize(events=(deleted, running))
+
+    assert not decision.allowed
+    assert "prior run event chain is forked" in decision.reasons
