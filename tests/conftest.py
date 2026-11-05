@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
+from infra.ibm_evidence import run_spec_sha256
 from infra.ibm_types import (
     CreditEvidence,
     PostPromoEntry,
@@ -62,11 +63,12 @@ def valid_usage(now: datetime = NOW) -> UsageEvidence:
     )
 
 
-def valid_pricing(now: datetime = NOW) -> PricingEvidence:
+def valid_pricing(now: datetime = NOW, spec: RunSpec | None = None) -> PricingEvidence:
+    spec = spec or valid_run_spec()
     return PricingEvidence(
         observed_at=now,
         currency="USD",
-        run_spec_sha256="3" * 64,
+        run_spec_sha256=run_spec_sha256(spec),
         lines=(
             PriceLine(
                 service="vpc-vsi",
@@ -75,6 +77,13 @@ def valid_pricing(now: datetime = NOW) -> PricingEvidence:
                 estimated_quantity=Decimal("6"),
                 unit_price_usd=Decimal("2.00"),
             ),
+            PriceLine("vpc-boot-volume", "standard", "gb-hour", Decimal("600"), Decimal("0.001")),
+            PriceLine("vpc-public-gateway", "standard", "gateway-hour", Decimal("6"), Decimal("0.10")),
+            PriceLine("cos-storage", "standard", "gb-month", Decimal("50"), Decimal("0.02")),
+            PriceLine("cos-operations", "standard", "request", Decimal("1000"), Decimal("0.00001")),
+            PriceLine("container-registry-storage", "standard", "gb-month", Decimal("10"), Decimal("0.00")),
+            PriceLine("code-engine", "standard", "job-hour", Decimal("1"), Decimal("0.00")),
+            PriceLine("logs-monitoring", "standard", "gb", Decimal("1"), Decimal("0.00")),
         ),
         evidence_sha256="4" * 64,
     )
