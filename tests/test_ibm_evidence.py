@@ -132,6 +132,7 @@ def test_credit_loader_binds_runtime_record_to_authoritative_capture(tmp_path: P
         for item in credit.eligible_service_plans
     )
     assert len(credit.evidence_sha256) == 64
+    assert not credit.provider_verified
 
 
 def test_credit_loader_rejects_versioned_evidence_path(tmp_path: Path):
@@ -198,6 +199,7 @@ def test_pricing_loader_requires_exact_spec_and_quote_hash(tmp_path: Path):
     assert pricing.account_id == "account-1"
     assert pricing.run_spec_sha256 == run_spec_sha256(valid_run_spec())
     assert len(pricing.lines) == 8
+    assert not pricing.provider_verified
 
 
 def test_pricing_loader_rejects_wrong_spec_unknown_plan_and_float_money(tmp_path: Path):
@@ -291,9 +293,11 @@ def test_usage_loader_fetches_every_page_and_hashes_raw_response():
     usage = fetch_usage_evidence(client, "account-1", "2026-11", pending, now=NOW)
 
     assert usage.observed_usage_usd == Decimal("2.50")
+    assert usage.resource_count == 2
     assert usage.account_id == "account-1"
     assert usage.billing_period_start.isoformat() == "2026-11-01T00:00:00+00:00"
     assert usage.unreconciled_run_ids == pending
+    assert usage.provider_verified
     assert len(usage.evidence_sha256) == 64
     assert client.get_resource_usage_account.call_count == 2
     assert client.get_resource_usage_account.call_args_list[1].kwargs["start"] == "page-2"

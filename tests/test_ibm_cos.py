@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -19,9 +20,12 @@ from infra.ibm_cos import (
     append_event,
     create_cos_client,
     download_verified,
+    load_event_inventory,
     upload_verified,
     validate_event_chain,
+    verify_cos_configuration,
 )
+from infra.ibm_evidence import run_spec_sha256
 from infra.ibm_types import RunEvent
 from tests.conftest import NOW, valid_run_spec
 
@@ -32,12 +36,40 @@ class _NotFound(Exception):
 
 
 class FakeCOS:
-    def __init__(self) -> None:
+    def __init__(self, *, bucket: str = "private", prefix: str = "runs/abc") -> None:
         self.objects: dict[str, tuple[bytes, dict[str, str]]] = {}
         self.fail_upload = False
         self.corrupt_final_head = False
         self.corrupt_download = False
         self.upload_calls = 0
+        self._watch_auth_bucket = bucket
+        self._watch_auth_prefix = prefix
+
+    def get_public_access_block(self, *, Bucket: str) -> dict[str, object]:
+        assert Bucket == valid_run_spec().bucket
+        return {
+            "PublicAccessBlockConfiguration": {
+                "BlockPublicAcls": True,
+                "IgnorePublicAcls": True,
+                "BlockPublicPolicy": True,
+                "RestrictPublicBuckets": True,
+            }
+        }
+
+    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:
+        assert Bucket == valid_run_spec().bucket
+        return {"Status": "Enabled"}
+
+    def list_objects_v2(self, *, Bucket: str, Prefix: str, **_kwargs: object) -> dict[str, object]:
+        del Bucket
+        return {
+            "Contents": [{"Key": key} for key in sorted(self.objects) if key.startswith(Prefix)],
+            "IsTruncated": False,
+        }
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        del Bucket
+        return {"Body": io.BytesIO(self.objects[Key][0])}
 
     def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
         del Bucket
@@ -114,7 +146,7 @@ def _event(event_id: UUID, sequence: int = 3) -> RunEvent:
         state="running",
         observed_at=NOW,
         instance_id="vsi-1",
-        lineage_sha256="a" * 64,
+        lineage_sha256=run_spec_sha256(valid_run_spec()),
         previous_event_sha256="b" * 64,
         payload_sha256="c" * 64,
     )
@@ -133,10 +165,13 @@ def test_create_client_uses_trusted_profile_token_manager_only(monkeypatch):
         def __init__(self, *, signature_version: str) -> None:
             calls["signature"] = signature_version
 
+    class Client:
+        pass
+
     def client(service: str, **kwargs: object) -> object:
         calls["service"] = service
         calls["kwargs"] = kwargs
-        return object()
+        return Client()
 
     boto = ModuleType("ibm_boto3")
     boto.client = client
@@ -149,7 +184,7 @@ def test_create_client_uses_trusted_profile_token_manager_only(monkeypatch):
     monkeypatch.setitem(sys.modules, "ibm_botocore.client", botocore_client)
 
     spec = valid_run_spec()
-    create_cos_client(spec)
+    created = create_cos_client(spec)
 
     assert calls["profile"] == spec.trusted_profile_id
     assert calls["signature"] == "oauth"
@@ -159,6 +194,18 @@ def test_create_client_uses_trusted_profile_token_manager_only(monkeypatch):
     assert kwargs["ibm_service_instance_id"] == spec.cos_service_instance_id
     assert kwargs["endpoint_url"] == spec.cos_endpoint
     assert not ({"api_key", "aws_access_key_id", "aws_secret_access_key"} & kwargs.keys())
+    assert getattr(created, "_watch_auth_bucket") == spec.bucket
+    assert getattr(created, "_watch_auth_prefix") == spec.prefix
+
+
+def test_cos_configuration_requires_private_access_and_versioning():
+    spec = valid_run_spec()
+    cos = FakeCOS(bucket=spec.bucket, prefix=spec.prefix)
+    verify_cos_configuration(cos, spec)
+
+    cos.get_bucket_versioning = lambda **_kwargs: {"Status": "Suspended"}
+    with pytest.raises(IntegrityError, match="versioning"):
+        verify_cos_configuration(cos, spec)
 
 
 def test_upload_uses_digest_key_and_verifies_remote_object(tmp_path: Path):
@@ -173,6 +220,16 @@ def test_upload_uses_digest_key_and_verifies_remote_object(tmp_path: Path):
     assert ref.sha256 == digest
     assert ref.length == source.stat().st_size
     assert all(".upload-" not in key for key in cos.objects)
+
+
+def test_cos_operations_reject_destinations_outside_client_binding(tmp_path: Path):
+    source = tmp_path / "artifact.bin"
+    source.write_bytes(b"artifact")
+    cos = FakeCOS()
+    with pytest.raises(IntegrityError, match="different bucket"):
+        upload_verified(cos, source, "other", "objects/artifact", _sha256(source))
+    with pytest.raises(IntegrityError, match="different run prefix"):
+        append_event(cos, "private", "runs/other", _event(UUID(int=1)))
 
 
 def test_upload_rejects_local_or_remote_checksum_mismatch(tmp_path: Path):
@@ -397,3 +454,23 @@ def test_validate_event_chain_checks_contiguous_hashes_lineage_and_transitions()
     ):
         with pytest.raises(IntegrityError):
             validate_event_chain(broken, spec)
+
+
+def test_event_inventory_lists_and_verifies_the_complete_run_prefix():
+    spec = valid_run_spec()
+    lineage = run_spec_sha256(spec)
+    planned = RunEvent(
+        event_id=UUID(int=1),
+        run_id=spec.run_id,
+        sequence=0,
+        state="planned",
+        observed_at=NOW,
+        instance_id=None,
+        lineage_sha256=lineage,
+        previous_event_sha256=None,
+        payload_sha256="a" * 64,
+    )
+    cos = FakeCOS(bucket=spec.bucket, prefix=spec.prefix)
+    append_event(cos, spec.bucket, spec.prefix, planned)
+
+    assert load_event_inventory(cos, spec) == (planned,)

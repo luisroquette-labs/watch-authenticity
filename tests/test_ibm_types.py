@@ -164,28 +164,15 @@ def test_resource_instance_and_object_refs_validate_boundaries():
         replace(object_ref, length=-1)
 
 
-def test_authorized_run_only_accepts_allowed_decision_and_freezes_values():
+def test_authorized_run_is_blocked_until_atomic_launch_store_exists():
     from infra.ibm_cost_guard import authorize_run
 
     decision = authorize_run(
         valid_credit(), valid_usage(), valid_pricing(), valid_post_promo_plan(),
         valid_run_spec(), (), now=NOW,
     )
-    run = AuthorizedRun.from_decision(valid_run_spec(), decision, decision.evidence_hashes)
-    assert run.estimated_usd == decision.estimated_usd
-    with pytest.raises(FrozenInstanceError):
-        run.estimated_usd = Decimal("1")
-
-    denied = authorize_run(
-        replace(valid_credit(), remaining_usd=Decimal("0")), valid_usage(),
-        valid_pricing(), valid_post_promo_plan(), valid_run_spec(), (), now=NOW,
-    )
-    with pytest.raises(ValueError, match="denied"):
-        AuthorizedRun.from_decision(valid_run_spec(), denied, denied.evidence_hashes)
-
-    other_spec = replace(valid_run_spec(), max_hours=Decimal("7"))
-    with pytest.raises(ValueError, match="run spec"):
-        AuthorizedRun.from_decision(other_spec, decision, decision.evidence_hashes)
+    with pytest.raises(RuntimeError, match="atomic nonce consumption"):
+        AuthorizedRun.from_decision(valid_run_spec(), decision, decision.evidence_hashes)
 
     with pytest.raises(TypeError):
         AuthorizedRun(
@@ -196,22 +183,7 @@ def test_authorized_run_only_accepts_allowed_decision_and_freezes_values():
     with pytest.raises(TypeError, match="from_decision"):
         AuthorizedRun()
 
-    tampered = object.__new__(AuthorizationDecision)
-    for field in (
-        "allowed",
-        "reasons",
-        "estimated_usd",
-        "usable_credit_usd",
-        "evidence_hashes",
-        "run_spec_sha256",
-        "authorization_sha256",
-        "_capability",
-        "_signature",
-    ):
-        object.__setattr__(tampered, field, getattr(decision, field))
-    object.__setattr__(tampered, "estimated_usd", Decimal("0"))
-    with pytest.raises(ValueError, match="signature"):
-        AuthorizedRun.from_decision(valid_run_spec(), tampered, tampered.evidence_hashes)
+    assert decision.expires_at == decision.issued_at + timedelta(minutes=5)
 
 
 def test_run_spec_requires_account_and_positive_metering_dimensions():
@@ -242,16 +214,35 @@ def test_run_spec_rejects_metering_dimensions_below_conservative_floor():
             replace(valid_run_spec(), **{field: value})
 
 
+def test_run_spec_binds_private_versioned_cos_to_account_and_run():
+    with pytest.raises(ValueError, match="CRN must belong"):
+        replace(
+            valid_run_spec(),
+            cos_service_instance_id=(
+                "crn:v1:bluemix:public:cloud-object-storage:global:a/other:cos::"
+            ),
+        )
+    with pytest.raises(ValueError, match="immutable run prefix"):
+        replace(valid_run_spec(), prefix="runs/another")
+    with pytest.raises(ValueError, match="block public"):
+        replace(valid_run_spec(), cos_private_access_only=False)
+    with pytest.raises(ValueError, match="versioning"):
+        replace(valid_run_spec(), cos_versioning_enabled=False)
+
+
 def test_authorization_decision_keeps_allowed_and_reasons_consistent():
-    with pytest.raises(TypeError, match="authorize_run"):
+    with pytest.raises(ValueError, match="cannot contain refusal"):
         AuthorizationDecision(
             allowed=True,
-            reasons=(),
+            reasons=("forged",),
             estimated_usd=Decimal("0"),
             usable_credit_usd=Decimal("0"),
             evidence_hashes=("1" * 64,),
             run_spec_sha256=run_spec_sha256(valid_run_spec()),
             authorization_sha256="2" * 64,
+            issued_at=NOW,
+            expires_at=NOW + timedelta(minutes=5),
+            nonce=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
         )
 
 

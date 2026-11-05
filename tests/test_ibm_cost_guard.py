@@ -12,7 +12,6 @@ from infra.ibm_evidence import run_spec_sha256
 from infra.ibm_types import (
     AuthorizationDecision,
     RunEvent,
-    UsageReconciliationReceipt,
     run_event_sha256,
 )
 from tests.conftest import (
@@ -151,6 +150,22 @@ def test_authorize_run_rejects_unreconciled_prior_run_even_if_deleted():
     decision = _authorize(usage=usage, events=(event,))
     assert not decision.allowed
     assert "prior run usage is unreconciled" in decision.reasons
+
+
+def test_authorize_run_rejects_provider_usage_even_if_caller_omits_run_ids():
+    decision = _authorize(
+        usage=replace(
+            valid_usage(),
+            resource_count=1,
+            observed_usage_usd=Decimal("0.01"),
+            unreconciled_run_ids=(),
+        )
+    )
+    assert not decision.allowed
+    assert (
+        "existing IBM usage requires authoritative Task 7 reconciliation"
+        in decision.reasons
+    )
 
 
 def test_authorize_run_rejects_nonterminal_prior_event():
@@ -380,7 +395,7 @@ def test_authorize_run_blocks_any_prior_event_fork_even_if_one_branch_deleted():
     assert "prior run event chain is forked" in decision.reasons
 
 
-def _reconciled_prior_chain() -> tuple[tuple[RunEvent, ...], UsageReconciliationReceipt]:
+def _reconciled_prior_chain() -> tuple[RunEvent, ...]:
     prior_run = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
     planned = RunEvent(
         event_id=UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
@@ -409,17 +424,11 @@ def _reconciled_prior_chain() -> tuple[tuple[RunEvent, ...], UsageReconciliation
         previous_event_sha256=run_event_sha256(deleting),
         payload_sha256="d" * 64,
     )
-    receipt = UsageReconciliationReceipt(
-        run_id=prior_run,
-        usage_evidence_sha256=valid_usage().evidence_sha256,
-        lineage_sha256=planned.lineage_sha256,
-        receipt_sha256="e" * 64,
-    )
-    return (planned, deleting, deleted), receipt
+    return planned, deleting, deleted
 
 
 def test_authorize_run_rejects_reused_run_id():
-    event = replace(_reconciled_prior_chain()[0][0], run_id=valid_run_spec().run_id)
+    event = replace(_reconciled_prior_chain()[0], run_id=valid_run_spec().run_id)
     decision = _authorize(events=(event,))
     assert not decision.allowed
     assert "run_id already has persisted events" in decision.reasons
@@ -427,7 +436,7 @@ def test_authorize_run_rejects_reused_run_id():
 
 @pytest.mark.parametrize("mutation", ["gap", "bad-link", "foreign-lineage", "illegal-state"])
 def test_authorize_run_rejects_invalid_prior_chain(mutation: str):
-    chain, receipt = _reconciled_prior_chain()
+    chain = _reconciled_prior_chain()
     events = list(chain)
     if mutation == "gap":
         events.pop(1)
@@ -437,39 +446,37 @@ def test_authorize_run_rejects_invalid_prior_chain(mutation: str):
         events[1] = replace(events[1], lineage_sha256="f" * 64)
     else:
         events[1] = replace(events[1], state="running")
-    usage = replace(valid_usage(), reconciled_run_receipts=(receipt,))
-    decision = _authorize(events=tuple(events), usage=usage)
+    decision = _authorize(events=tuple(events))
     assert not decision.allowed
     assert "prior run event chain is invalid" in decision.reasons
 
 
-def test_authorize_run_requires_usage_receipt_bound_to_raw_report():
-    chain, receipt = _reconciled_prior_chain()
-    assert "prior run usage reconciliation receipt is missing" in _authorize(events=chain).reasons
-    wrong = replace(receipt, usage_evidence_sha256="f" * 64)
-    decision = _authorize(
-        events=chain,
-        usage=replace(valid_usage(), reconciled_run_receipts=(wrong,)),
-    )
-    assert "prior run usage reconciliation receipt is missing" in decision.reasons
-    allowed = _authorize(
-        events=chain,
-        usage=replace(valid_usage(), reconciled_run_receipts=(receipt,)),
-    )
-    assert allowed.allowed
+def test_prior_run_is_denied_until_authoritative_task7_reconciliation():
+    chain = _reconciled_prior_chain()
+    expected = "prior run history requires authoritative Task 7 usage reconciliation"
+    assert expected in _authorize(events=chain).reasons
+    decision = _authorize(events=chain)
+    assert not decision.allowed
+    assert expected in decision.reasons
 
 
 def test_authorized_run_rejects_forged_allowed_decision():
-    with pytest.raises(TypeError, match="authorize_run"):
-        AuthorizationDecision(
-            allowed=True,
-            reasons=(),
-            estimated_usd=Decimal("0"),
-            usable_credit_usd=Decimal("0"),
-            evidence_hashes=("1" * 64,),
-            run_spec_sha256=run_spec_sha256(valid_run_spec()),
-            authorization_sha256="2" * 64,
-        )
+    forged = AuthorizationDecision(
+        allowed=True,
+        reasons=(),
+        estimated_usd=Decimal("0"),
+        usable_credit_usd=Decimal("0"),
+        evidence_hashes=("1" * 64,),
+        run_spec_sha256=run_spec_sha256(valid_run_spec()),
+        authorization_sha256="2" * 64,
+        issued_at=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+        nonce=UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+    )
+    from infra.ibm_types import AuthorizedRun
+
+    with pytest.raises(RuntimeError, match="atomic nonce consumption"):
+        AuthorizedRun.from_decision(valid_run_spec(), forged, forged.evidence_hashes)
 
 
 def test_authorize_run_requires_provider_sku_and_region_eligibility():
@@ -484,3 +491,17 @@ def test_authorize_run_requires_provider_sku_and_region_eligibility():
         lines=(replace(pricing.lines[0], region="eu-de"),) + pricing.lines[1:],
     )
     assert "pricing SKU region differs from run region" in _authorize(pricing=wrong_region).reasons
+
+
+def test_authorize_run_rejects_manual_or_unverified_provider_captures():
+    decision = _authorize(
+        credit=replace(valid_credit(), provider_verified=False),
+        pricing=replace(valid_pricing(), provider_verified=False),
+        usage=replace(valid_usage(), provider_verified=False),
+    )
+    assert not decision.allowed
+    assert {
+        "credit evidence is not provider-verified",
+        "pricing evidence is not provider-verified",
+        "usage evidence is not provider-verified",
+    }.issubset(decision.reasons)

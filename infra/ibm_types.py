@@ -7,13 +7,10 @@ validated values at the infrastructure boundary.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import re
-import secrets
 from dataclasses import dataclass
-from dataclasses import field as dataclass_field
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -92,6 +89,7 @@ class CreditEvidence:
     expires_at: datetime
     eligible_service_plans: tuple[tuple[str, str, str, str], ...]
     evidence_sha256: str
+    provider_verified: bool
 
     def __post_init__(self) -> None:
         _nonempty(self.account_id, "account_id")
@@ -116,21 +114,8 @@ class CreditEvidence:
         if len(set(self.eligible_service_plans)) != len(self.eligible_service_plans):
             raise ValueError("eligible_service_plans contains duplicate values")
         _hash(self.evidence_sha256, "evidence_sha256")
-
-
-@dataclass(frozen=True)
-class UsageReconciliationReceipt:
-    run_id: UUID
-    usage_evidence_sha256: str
-    lineage_sha256: str
-    receipt_sha256: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.run_id, UUID):
-            raise TypeError("run_id must be UUID")
-        _hash(self.usage_evidence_sha256, "usage_evidence_sha256")
-        _hash(self.lineage_sha256, "lineage_sha256")
-        _hash(self.receipt_sha256, "receipt_sha256")
+        if not isinstance(self.provider_verified, bool):
+            raise TypeError("provider_verified must be bool")
 
 
 @dataclass(frozen=True)
@@ -139,9 +124,10 @@ class UsageEvidence:
     observed_at: datetime
     billing_period_start: datetime
     observed_usage_usd: Decimal
+    resource_count: int
     unreconciled_run_ids: tuple[UUID, ...]
-    reconciled_run_receipts: tuple[UsageReconciliationReceipt, ...]
     evidence_sha256: str
+    provider_verified: bool
 
     def __post_init__(self) -> None:
         _nonempty(self.account_id, "account_id")
@@ -150,16 +136,19 @@ class UsageEvidence:
         if self.billing_period_start > self.observed_at:
             raise ValueError("billing_period_start cannot follow observed_at")
         _decimal(self.observed_usage_usd, "observed_usage_usd")
+        if (
+            not isinstance(self.resource_count, int)
+            or isinstance(self.resource_count, bool)
+            or self.resource_count < 0
+        ):
+            raise ValueError("resource_count must be a non-negative integer")
         if any(not isinstance(run_id, UUID) for run_id in self.unreconciled_run_ids):
             raise TypeError("unreconciled_run_ids must contain UUID values")
         if len(set(self.unreconciled_run_ids)) != len(self.unreconciled_run_ids):
             raise ValueError("unreconciled_run_ids contains duplicate values")
-        receipt_run_ids = [receipt.run_id for receipt in self.reconciled_run_receipts]
-        if len(set(receipt_run_ids)) != len(receipt_run_ids):
-            raise ValueError("reconciled_run_receipts contains duplicate run IDs")
-        if set(receipt_run_ids) & set(self.unreconciled_run_ids):
-            raise ValueError("a run cannot be both reconciled and unreconciled")
         _hash(self.evidence_sha256, "evidence_sha256")
+        if not isinstance(self.provider_verified, bool):
+            raise TypeError("provider_verified must be bool")
 
 
 @dataclass(frozen=True)
@@ -190,6 +179,7 @@ class PricingEvidence:
     run_spec_sha256: str
     lines: tuple[PriceLine, ...]
     evidence_sha256: str
+    provider_verified: bool
 
     def __post_init__(self) -> None:
         _nonempty(self.account_id, "account_id")
@@ -203,6 +193,8 @@ class PricingEvidence:
         if len(set(keys)) != len(keys):
             raise ValueError("lines contains duplicate service/plan/unit entries")
         _hash(self.evidence_sha256, "evidence_sha256")
+        if not isinstance(self.provider_verified, bool):
+            raise TypeError("provider_verified must be bool")
 
 
 @dataclass(frozen=True)
@@ -269,6 +261,8 @@ class RunSpec:
     security_group_id: str
     trusted_profile_id: str
     public_gateway_owned_by_run: bool
+    cos_private_access_only: bool
+    cos_versioning_enabled: bool
 
     def __post_init__(self) -> None:
         if not isinstance(self.run_id, UUID):
@@ -320,6 +314,14 @@ class RunSpec:
             if dimension_value < minimum:
                 raise ValueError(f"{dimension_field} must be at least {minimum}")
         _crn(self.cos_service_instance_id, "cos_service_instance_id")
+        if f":a/{self.account_id}:" not in self.cos_service_instance_id:
+            raise ValueError("COS service instance CRN must belong to run account")
+        if self.prefix.strip("/") != f"runs/{self.run_id}":
+            raise ValueError("prefix must be the immutable run prefix")
+        if self.cos_private_access_only is not True:
+            raise ValueError("COS bucket must block public access")
+        if self.cos_versioning_enabled is not True:
+            raise ValueError("COS bucket versioning must be enabled")
         for field, value in (
             ("network_id", self.network_id),
             ("subnet_id", self.subnet_id),
@@ -332,26 +334,14 @@ class RunSpec:
             raise ValueError("Public Gateway must be dedicated to and owned by the run")
 
 
-_AUTHORIZATION_CAPABILITY = object()
-_AUTHORIZATION_SECRET = secrets.token_bytes(32)
-
-
-def _authorization_signature_payload(decision: AuthorizationDecision) -> bytes:
-    return "\0".join(
-        (
-            str(decision.allowed),
-            *decision.reasons,
-            str(decision.estimated_usd),
-            str(decision.usable_credit_usd),
-            *decision.evidence_hashes,
-            decision.run_spec_sha256,
-            decision.authorization_sha256,
-        )
-    ).encode()
-
-
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True)
 class AuthorizationDecision:
+    """Auditable gate result, never a launch capability.
+
+    Local Python code is trusted. Provider responses and persisted evidence are
+    not. Task 8 must re-authorize and atomically consume ``nonce`` at launch.
+    """
+
     allowed: bool
     reasons: tuple[str, ...]
     estimated_usd: Decimal
@@ -359,47 +349,9 @@ class AuthorizationDecision:
     evidence_hashes: tuple[str, ...]
     run_spec_sha256: str
     authorization_sha256: str
-    _capability: object = dataclass_field(repr=False, compare=False)
-    _signature: str = dataclass_field(repr=False, compare=False)
-
-    def __new__(cls, *_args: object, **_kwargs: object) -> AuthorizationDecision:
-        raise TypeError("AuthorizationDecision must be created by authorize_run")
-
-    @classmethod
-    def _from_guard(
-        cls,
-        *,
-        allowed: bool,
-        reasons: tuple[str, ...],
-        estimated_usd: Decimal,
-        usable_credit_usd: Decimal,
-        evidence_hashes: tuple[str, ...],
-        run_spec_sha256: str,
-        authorization_sha256: str,
-        capability: object,
-    ) -> AuthorizationDecision:
-        if capability is not _AUTHORIZATION_CAPABILITY:
-            raise TypeError("AuthorizationDecision must be created by authorize_run")
-        decision = object.__new__(cls)
-        for name, value in (
-            ("allowed", allowed),
-            ("reasons", reasons),
-            ("estimated_usd", estimated_usd),
-            ("usable_credit_usd", usable_credit_usd),
-            ("evidence_hashes", evidence_hashes),
-            ("run_spec_sha256", run_spec_sha256),
-            ("authorization_sha256", authorization_sha256),
-            ("_capability", capability),
-        ):
-            object.__setattr__(decision, name, value)
-        signature = hmac.new(
-            _AUTHORIZATION_SECRET,
-            _authorization_signature_payload(decision),
-            hashlib.sha256,
-        ).hexdigest()
-        object.__setattr__(decision, "_signature", signature)
-        decision.__post_init__()
-        return decision
+    issued_at: datetime
+    expires_at: datetime
+    nonce: UUID
 
     def __post_init__(self) -> None:
         if not isinstance(self.allowed, bool):
@@ -420,13 +372,12 @@ class AuthorizationDecision:
             raise ValueError("evidence_hashes contains duplicate values")
         _hash(self.run_spec_sha256, "run_spec_sha256")
         _hash(self.authorization_sha256, "authorization_sha256")
-
-
-def _make_authorization_decision(**values: object) -> AuthorizationDecision:
-    return AuthorizationDecision._from_guard(
-        capability=_AUTHORIZATION_CAPABILITY,
-        **values,  # type: ignore[arg-type]
-    )
+        _aware(self.issued_at, "issued_at")
+        _aware(self.expires_at, "expires_at")
+        if self.expires_at != self.issued_at + timedelta(minutes=5):
+            raise ValueError("authorization decision must expire after exactly five minutes")
+        if not isinstance(self.nonce, UUID):
+            raise TypeError("nonce must be UUID")
 
 
 @dataclass(frozen=True, init=False)
@@ -452,29 +403,10 @@ class AuthorizedRun:
         decision: AuthorizationDecision,
         evidence_hashes: tuple[str, ...],
     ) -> AuthorizedRun:
-        if not decision.allowed:
-            raise ValueError("cannot authorize a denied decision")
-        if decision._capability is not _AUTHORIZATION_CAPABILITY:
-            raise ValueError("authorization decision was not issued by authorize_run")
-        expected_signature = hmac.new(
-            _AUTHORIZATION_SECRET,
-            _authorization_signature_payload(decision),
-            hashlib.sha256,
-        ).hexdigest()
-        if not hmac.compare_digest(decision._signature, expected_signature):
-            raise ValueError("authorization decision signature is invalid")
-        if evidence_hashes != decision.evidence_hashes:
-            raise ValueError("evidence hashes differ from the authorization decision")
-        from infra.ibm_evidence import run_spec_sha256
-
-        if run_spec_sha256(spec) != decision.run_spec_sha256:
-            raise ValueError("run spec differs from the authorization decision")
-        authorized = object.__new__(cls)
-        object.__setattr__(authorized, "spec", spec)
-        object.__setattr__(authorized, "estimated_usd", decision.estimated_usd)
-        object.__setattr__(authorized, "evidence_hashes", evidence_hashes)
-        authorized._validate()
-        return authorized
+        del spec, decision, evidence_hashes
+        raise RuntimeError(
+            "launch authorization requires Task 8 atomic nonce consumption"
+        )
 
 
 @dataclass(frozen=True)
@@ -532,12 +464,12 @@ _RUN_TRANSITIONS = {
     "planned": frozenset({"authorized", "deleting", "quarantined"}),
     "authorized": frozenset({"creating", "deleting", "quarantined"}),
     "creating": frozenset({"running", "failed", "deleting", "quarantined"}),
-    "running": frozenset({"artifact_sync", "succeeded", "failed", "deleting", "quarantined"}),
+    "running": frozenset({"artifact_sync", "failed", "deleting", "quarantined"}),
     "artifact_sync": frozenset({"succeeded", "failed", "deleting", "quarantined"}),
     "succeeded": frozenset({"deleting", "quarantined"}),
     "failed": frozenset({"deleting", "quarantined"}),
     "deleting": frozenset({"deleted", "quarantined"}),
-    "quarantined": frozenset({"deleting", "deleted"}),
+    "quarantined": frozenset({"deleting"}),
     "deleted": frozenset(),
 }
 

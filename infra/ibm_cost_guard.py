@@ -6,7 +6,7 @@ import hashlib
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from infra.ibm_evidence import run_spec_sha256
 from infra.ibm_types import (
@@ -17,7 +17,6 @@ from infra.ibm_types import (
     RunEvent,
     RunSpec,
     UsageEvidence,
-    _make_authorization_decision,
     run_event_sha256,
     validate_run_event_chain,
 )
@@ -93,6 +92,12 @@ def authorize_run(
     reasons.extend(_timestamp_reasons("pricing", pricing.observed_at, now))
     reasons.extend(_timestamp_reasons("usage", usage.observed_at, now))
     reasons.extend(_timestamp_reasons("post-promo", post_promo.observed_at, now))
+    if not credit.provider_verified:
+        reasons.append("credit evidence is not provider-verified")
+    if not pricing.provider_verified:
+        reasons.append("pricing evidence is not provider-verified")
+    if not usage.provider_verified:
+        reasons.append("usage evidence is not provider-verified")
     if credit.observed_at < usage.observed_at:
         reasons.append("credit evidence predates usage evidence")
     evidence_accounts = {
@@ -160,10 +165,15 @@ def authorize_run(
 
     if usage.unreconciled_run_ids:
         reasons.append("prior run usage is unreconciled")
+    if usage.resource_count:
+        reasons.append("existing IBM usage requires authoritative Task 7 reconciliation")
     groups = _event_groups(events)
     if spec.run_id in groups:
         reasons.append("run_id already has persisted events")
-    receipts = {receipt.run_id: receipt for receipt in usage.reconciled_run_receipts}
+    if groups:
+        reasons.append(
+            "prior run history requires authoritative Task 7 usage reconciliation"
+        )
     for run_id, chain in groups.items():
         if run_id == spec.run_id:
             continue
@@ -177,13 +187,6 @@ def authorize_run(
         terminal = max(chain, key=lambda event: event.sequence)
         if terminal.state != "deleted":
             reasons.append("prior run has no terminal deletion event")
-        receipt = receipts.get(run_id)
-        if (
-            receipt is None
-            or receipt.usage_evidence_sha256 != usage.evidence_sha256
-            or receipt.lineage_sha256 != terminal.lineage_sha256
-        ):
-            reasons.append("prior run usage reconciliation receipt is missing")
 
     persistent_entries = {entry.service: entry for entry in post_promo.entries}
     if set(persistent_entries) != PERSISTENT_METERED_SERVICES:
@@ -217,24 +220,27 @@ def authorize_run(
         pricing.evidence_sha256,
         post_promo.owner_authorization_sha256,
         post_promo.evidence_sha256,
-        *(receipt.receipt_sha256 for receipt in usage.reconciled_run_receipts),
     )
     if len(set(evidence_hashes_with_duplicates)) != len(evidence_hashes_with_duplicates):
         reasons.append("evidence hashes are not distinct")
     evidence_hashes = tuple(dict.fromkeys(evidence_hashes_with_duplicates))
     spec_hash = run_spec_sha256(spec)
+    nonce = uuid4()
+    expires_at = now + timedelta(minutes=5)
     authorization_material = "\0".join(
         (
             spec_hash,
             *evidence_hashes,
             *(run_event_sha256(event) for event in events),
             now.isoformat(),
+            expires_at.isoformat(),
+            str(nonce),
             str(estimated),
             str(usable),
             *(reasons or ("allowed",)),
         )
     ).encode()
-    return _make_authorization_decision(
+    return AuthorizationDecision(
         allowed=not reasons,
         reasons=tuple(reasons),
         estimated_usd=estimated,
@@ -242,4 +248,7 @@ def authorize_run(
         evidence_hashes=evidence_hashes,
         run_spec_sha256=spec_hash,
         authorization_sha256=hashlib.sha256(authorization_material).hexdigest(),
+        issued_at=now,
+        expires_at=expires_at,
+        nonce=nonce,
     )

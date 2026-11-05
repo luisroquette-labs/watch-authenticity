@@ -45,13 +45,17 @@ def valid_run_spec() -> RunSpec:
         logs_monitoring_gb=Decimal("1"),
         bucket="watch-auth-private",
         prefix="runs/11111111-1111-4111-8111-111111111111",
-        cos_service_instance_id="crn:v1:bluemix:public:cloud-object-storage:global:a/abc:cos::",
+        cos_service_instance_id=(
+            "crn:v1:bluemix:public:cloud-object-storage:global:a/account-1:cos::"
+        ),
         network_id="r006-22222222-2222-4222-8222-222222222222",
         subnet_id="0717-33333333-3333-4333-8333-333333333333",
         public_gateway_id="r006-44444444-4444-4444-8444-444444444444",
         security_group_id="r006-55555555-5555-4555-8555-555555555555",
         trusted_profile_id="66666666-6666-4666-8666-666666666666",
         public_gateway_owned_by_run=True,
+        cos_private_access_only=True,
+        cos_versioning_enabled=True,
     )
 
 
@@ -72,6 +76,7 @@ def valid_credit(now: datetime = NOW) -> CreditEvidence:
             ("logs-monitoring", "standard", _sku("logs-monitoring"), "us-south"),
         ),
         evidence_sha256="1" * 64,
+        provider_verified=True,
     )
 
 
@@ -81,9 +86,10 @@ def valid_usage(now: datetime = NOW) -> UsageEvidence:
         observed_at=now,
         billing_period_start=now.replace(day=1, hour=0, minute=0, second=0, microsecond=0),
         observed_usage_usd=Decimal("0.00"),
+        resource_count=0,
         unreconciled_run_ids=(),
-        reconciled_run_receipts=(),
         evidence_sha256="2" * 64,
+        provider_verified=True,
     )
 
 
@@ -113,6 +119,7 @@ def valid_pricing(now: datetime = NOW, spec: RunSpec | None = None) -> PricingEv
             PriceLine("logs-monitoring", "standard", _sku("logs-monitoring"), "us-south", "gb", Decimal("1"), Decimal("0.00")),
         ),
         evidence_sha256="4" * 64,
+        provider_verified=True,
     )
 
 

@@ -203,6 +203,7 @@ def load_credit_evidence(
         expires_at=_parse_datetime(record["expires_at"], "expires_at"),
         eligible_service_plans=tuple(plans),
         evidence_sha256=_bound_evidence_hash(raw, artifact_hash),
+        provider_verified=False,
     )
 
 
@@ -288,6 +289,7 @@ def load_pricing_evidence(
         run_spec_sha256=expected_spec_hash,
         lines=tuple(lines),
         evidence_sha256=_bound_evidence_hash(raw, artifact_hash),
+        provider_verified=False,
     )
 
 
@@ -463,7 +465,8 @@ def fetch_usage_evidence(
         observed_at=now,
         billing_period_start=billing_period_start,
         observed_usage_usd=total,
+        resource_count=len(resource_ids),
         unreconciled_run_ids=pending_run_ids,
-        reconciled_run_receipts=(),
         evidence_sha256=raw_hash,
+        provider_verified=True,
     )
