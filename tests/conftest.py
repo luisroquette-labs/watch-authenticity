@@ -30,6 +30,7 @@ def valid_run_spec() -> RunSpec:
         profile="gx3-16x80x1l4",
         region="us-south",
         zone="us-south-1",
+        cos_endpoint="https://s3.direct.us-south.cloud-object-storage.appdomain.cloud",
         max_hours=Decimal("6"),
         bucket="watch-auth-private",
         prefix="runs/11111111-1111-4111-8111-111111111111",
@@ -45,18 +46,29 @@ def valid_run_spec() -> RunSpec:
 
 def valid_credit(now: datetime = NOW) -> CreditEvidence:
     return CreditEvidence(
+        account_id="account-1",
         observed_at=now,
         remaining_usd=Decimal("18000.00"),
         expires_at=now + timedelta(days=90),
-        eligible_service_plans=("gx3-16x80x1l4", "standard"),
+        eligible_service_plans=(
+            ("vpc-vsi", "gx3-16x80x1l4"),
+            ("vpc-boot-volume", "standard"),
+            ("vpc-public-gateway", "standard"),
+            ("cos-storage", "standard"),
+            ("cos-operations", "standard"),
+            ("container-registry-storage", "standard"),
+            ("code-engine", "standard"),
+            ("logs-monitoring", "standard"),
+        ),
         evidence_sha256="1" * 64,
     )
 
 
 def valid_usage(now: datetime = NOW) -> UsageEvidence:
     return UsageEvidence(
+        account_id="account-1",
         observed_at=now,
-        billing_period_start=now - timedelta(days=4),
+        billing_period_start=now.replace(day=1, hour=0, minute=0, second=0, microsecond=0),
         observed_usage_usd=Decimal("0.00"),
         unreconciled_run_ids=(),
         evidence_sha256="2" * 64,
@@ -91,12 +103,15 @@ def valid_pricing(now: datetime = NOW, spec: RunSpec | None = None) -> PricingEv
 
 def valid_post_promo_plan(now: datetime = NOW) -> PostPromoPlan:
     return PostPromoPlan(
+        observed_at=now,
+        promo_expires_at=now + timedelta(days=90),
         entries=(
             PostPromoEntry("cos-storage", "5" * 64, now + timedelta(days=30)),
             PostPromoEntry("container-registry-storage", "6" * 64, now + timedelta(days=30)),
             PostPromoEntry("logs-monitoring", "7" * 64, now + timedelta(days=30)),
         ),
         owner_authorization_sha256="8" * 64,
+        evidence_sha256="9" * 64,
     )
 
 

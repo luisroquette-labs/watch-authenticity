@@ -43,9 +43,22 @@ def _credit_record() -> dict[str, Any]:
         "schema_version": 1,
         "observed_at": NOW.isoformat(),
         "currency": "USD",
+        "account_id": "account-1",
         "remaining_usd": "18000.00",
         "expires_at": (NOW + timedelta(days=90)).isoformat(),
-        "eligible_service_plans": ["gx3-16x80x1l4", "standard"],
+        "eligible_service_plans": [
+            {"service": service, "plan": plan}
+            for service, plan in (
+                ("vpc-vsi", "gx3-16x80x1l4"),
+                ("vpc-boot-volume", "standard"),
+                ("vpc-public-gateway", "standard"),
+                ("cos-storage", "standard"),
+                ("cos-operations", "standard"),
+                ("container-registry-storage", "standard"),
+                ("code-engine", "standard"),
+                ("logs-monitoring", "standard"),
+            )
+        ],
     }
 
 
@@ -104,7 +117,8 @@ def test_credit_loader_binds_runtime_record_to_authoritative_capture(tmp_path: P
     credit = load_credit_evidence(record, capture, now=NOW)
 
     assert credit.remaining_usd == Decimal("18000.00")
-    assert credit.eligible_service_plans == ("gx3-16x80x1l4", "standard")
+    assert credit.account_id == "account-1"
+    assert ("vpc-vsi", "gx3-16x80x1l4") in credit.eligible_service_plans
     assert len(credit.evidence_sha256) == 64
 
 
@@ -143,7 +157,11 @@ def test_credit_loader_rejects_future_non_usd_and_unknown_plan(tmp_path: Path):
     for field, value, message in (
         ("observed_at", (NOW + timedelta(seconds=1)).isoformat(), "future"),
         ("currency", "BRL", "USD"),
-        ("eligible_service_plans", ["mystery-plan"], "unknown service plan"),
+        (
+            "eligible_service_plans",
+            [{"service": "vpc-vsi", "plan": "mystery-plan"}],
+            "unknown service plan",
+        ),
     ):
         payload = _credit_record()
         payload[field] = value
@@ -188,6 +206,9 @@ def test_post_promo_loader_requires_exact_services_and_safe_deadlines(tmp_path: 
     payload = _post_promo_record()
     record, capture = _artifact_and_record(tmp_path, "authorization", payload)
     plan = load_post_promo_plan(record, capture, now=NOW)
+    assert plan.observed_at == NOW
+    assert plan.promo_expires_at == NOW + timedelta(days=90)
+    assert len(plan.evidence_sha256) == 64
     assert {entry.service for entry in plan.entries} == {
         "cos-storage",
         "container-registry-storage",
@@ -249,6 +270,7 @@ def test_usage_loader_fetches_every_page_and_hashes_raw_response():
     usage = fetch_usage_evidence(client, "account-1", "2026-11", pending, now=NOW)
 
     assert usage.observed_usage_usd == Decimal("2.50")
+    assert usage.account_id == "account-1"
     assert usage.billing_period_start.isoformat() == "2026-11-01T00:00:00+00:00"
     assert usage.unreconciled_run_ids == pending
     assert len(usage.evidence_sha256) == 64
@@ -292,3 +314,15 @@ def test_usage_loader_rejects_untrustworthy_provider_response(
     client.get_resource_usage_account.return_value = _Response(result)
     with pytest.raises(ValueError, match=message):
         fetch_usage_evidence(client, "account-1", "2026-11", (), now=NOW)
+
+
+def test_usage_loader_requires_current_month_and_accepts_missing_pending():
+    client = Mock()
+    resource = _usage_resource("instance-1")
+    resource.pop("pending")
+    client.get_resource_usage_account.return_value = _Response(
+        {"limit": 1, "count": 1, "resources": [resource]}
+    )
+    assert fetch_usage_evidence(client, "account-1", "2026-11", (), now=NOW).account_id == "account-1"
+    with pytest.raises(ValueError, match="current month"):
+        fetch_usage_evidence(client, "account-1", "2026-10", (), now=NOW)

@@ -31,6 +31,7 @@ def create_cos_client(spec: RunSpec) -> Any:
     auth = VPCInstanceAuthenticator(iam_profile_id=spec.trusted_profile_id)
     return ibm_boto3.client(
         "s3",
+        endpoint_url=spec.cos_endpoint,
         ibm_service_instance_id=spec.cos_service_instance_id,
         token_manager=auth.token_manager,
         config=Config(signature_version="oauth"),
@@ -261,9 +262,9 @@ def append_event(
     event_prefix = prefix.strip("/")
     if not event_prefix:
         raise ValueError("prefix must be non-empty")
-    key = f"{event_prefix}/events/{event.sequence:06d}-{event.event_id}.json"
     body = _event_bytes(event)
     digest = hashlib.sha256(body).hexdigest()
+    key = f"{event_prefix}/events/{event.sequence:06d}-{event.event_id}-{digest}.json"
     length = len(body)
     existing = _head(client, bucket, key)
     if existing is not None:
@@ -309,11 +310,11 @@ def append_event(
 def validate_event_chain(events: tuple[RunEvent, ...], spec: RunSpec) -> None:
     """Reject duplicate sequence branches; later tasks extend full chain checks."""
 
-    sequences: dict[int, UUID] = {}
+    sequences: dict[int, RunEvent] = {}
     for event in events:
         if event.run_id != spec.run_id:
             raise IntegrityError("event run_id does not match RunSpec")
         previous = sequences.get(event.sequence)
-        if previous is not None and previous != event.event_id:
+        if previous is not None and previous != event:
             raise EventChainFork(f"multiple event IDs found at sequence {event.sequence}")
-        sequences[event.sequence] = event.event_id
+        sequences[event.sequence] = event

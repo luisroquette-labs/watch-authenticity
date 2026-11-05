@@ -154,6 +154,7 @@ def load_credit_evidence(
         {
             "schema_version",
             "observed_at",
+            "account_id",
             "currency",
             "remaining_usd",
             "expires_at",
@@ -168,14 +169,29 @@ def load_credit_evidence(
     _fresh(observed_at, now)
     if record["currency"] != "USD":
         raise ValueError("credit currency must be USD")
-    plans = record["eligible_service_plans"]
-    if not isinstance(plans, list) or not plans or not all(isinstance(plan, str) for plan in plans):
-        raise ValueError("eligible_service_plans must be a non-empty string list")
-    known_plans = frozenset(plan for plans_for_service in _SERVICE_PLANS.values() for plan in plans_for_service)
-    unknown = set(plans) - known_plans
-    if unknown:
-        raise ValueError(f"unknown service plan: {sorted(unknown)}")
+    account_id = record["account_id"]
+    if not isinstance(account_id, str) or not account_id.strip():
+        raise ValueError("account_id must be non-empty")
+    raw_plans = record["eligible_service_plans"]
+    if not isinstance(raw_plans, list) or not raw_plans:
+        raise ValueError("eligible_service_plans must be a non-empty list")
+    plans: list[tuple[str, str]] = []
+    for item in raw_plans:
+        if not isinstance(item, dict):
+            raise ValueError("eligible_service_plans items must be objects")
+        _require_exact_keys(item, {"service", "plan"})
+        service = item["service"]
+        plan = item["plan"]
+        if (
+            not isinstance(service, str)
+            or service not in _SERVICE_PLANS
+            or not isinstance(plan, str)
+            or plan not in _SERVICE_PLANS[service]
+        ):
+            raise ValueError(f"unknown service plan: {service!r}/{plan!r}")
+        plans.append((service, plan))
     return CreditEvidence(
+        account_id=account_id,
         observed_at=observed_at,
         remaining_usd=_decimal_string(record["remaining_usd"], "remaining_usd"),
         expires_at=_parse_datetime(record["expires_at"], "expires_at"),
@@ -258,7 +274,7 @@ def load_post_promo_plan(
     *,
     now: datetime,
 ) -> PostPromoPlan:
-    record, _ = _load_record(record_path)
+    record, raw = _load_record(record_path)
     _require_exact_keys(
         record,
         {
@@ -306,8 +322,11 @@ def load_post_promo_plan(
     if {entry.service for entry in entries} != _PERSISTENT_SERVICES:
         raise ValueError("post-promo plan must cover exactly the persistent metered services")
     return PostPromoPlan(
+        observed_at=observed_at,
+        promo_expires_at=promo_expires_at,
         entries=tuple(entries),
         owner_authorization_sha256=authorization_hash,
+        evidence_sha256=_bound_evidence_hash(raw, authorization_hash),
     )
 
 
@@ -342,6 +361,8 @@ def fetch_usage_evidence(
         raise ValueError("billing_period must use YYYY-MM") from exc
     if billing_period_start.strftime("%Y-%m") != billing_period:
         raise ValueError("billing_period must use YYYY-MM")
+    if billing_period != now.strftime("%Y-%m"):
+        raise ValueError("billing_period must be the current month")
 
     pages: list[dict[str, Any]] = []
     resource_ids: set[str] = set()
@@ -370,8 +391,11 @@ def fetch_usage_evidence(
                 raise ValueError("usage response currency must be USD")
             if resource.get("month") != billing_period:
                 raise ValueError("usage response billing period mismatch")
-            if resource.get("pending") is not False:
+            pending = resource.get("pending")
+            if pending is True:
                 raise ValueError("incomplete billing period response has pending usage")
+            if pending not in {None, False}:
+                raise ValueError("usage pending flag is invalid")
             resource_id = resource.get("resource_instance_id")
             if not isinstance(resource_id, str) or not resource_id:
                 raise ValueError("usage resource_instance_id is missing")
@@ -407,6 +431,7 @@ def fetch_usage_evidence(
         ).encode()
     ).hexdigest()
     return UsageEvidence(
+        account_id=account_id,
         observed_at=now,
         billing_period_start=billing_period_start,
         observed_usage_usd=total,

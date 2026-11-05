@@ -157,6 +157,7 @@ def test_create_client_uses_trusted_profile_token_manager_only(monkeypatch):
     assert isinstance(kwargs, dict)
     assert kwargs["token_manager"] is token_manager
     assert kwargs["ibm_service_instance_id"] == spec.cos_service_instance_id
+    assert kwargs["endpoint_url"] == spec.cos_endpoint
     assert not ({"api_key", "aws_access_key_id", "aws_secret_access_key"} & kwargs.keys())
 
 
@@ -257,8 +258,10 @@ def test_events_use_immutable_uuid_keys_and_same_sequence_is_fork():
     first_ref = append_event(cos, "private", "runs/abc", first)
     second_ref = append_event(cos, "private", "runs/abc", second)
 
-    assert first_ref.key == f"runs/abc/events/000003-{first.event_id}.json"
-    assert second_ref.key == f"runs/abc/events/000003-{second.event_id}.json"
+    assert first_ref.key.startswith(f"runs/abc/events/000003-{first.event_id}-")
+    assert first_ref.key.endswith(".json")
+    assert second_ref.key.startswith(f"runs/abc/events/000003-{second.event_id}-")
+    assert second_ref.key.endswith(".json")
     assert len(cos.objects) == 2
     stored = json.loads(cos.objects[first_ref.key][0])
     assert stored["event_id"] == str(first.event_id)
@@ -279,20 +282,37 @@ def test_concurrent_event_writers_preserve_both_fork_branches():
             )
         )
 
-    assert {ref.key for ref in refs} == {
-        f"runs/abc/events/000003-{first.event_id}.json",
-        f"runs/abc/events/000003-{second.event_id}.json",
-    }
+    assert len({ref.key for ref in refs}) == 2
+    assert all(ref.key.startswith("runs/abc/events/000003-") for ref in refs)
     assert len(cos.objects) == 2
 
 
 def test_append_event_never_overwrites_an_existing_key():
     cos = FakeCOS()
     event = _event(UUID(int=1))
-    key = f"runs/abc/events/000003-{event.event_id}.json"
+    key = append_event(cos, "private", "runs/abc", event).key
     cos.objects[key] = (b"different", {"sha256": "0" * 64, "length": "9"})
 
     with pytest.raises(IntegrityError, match="event key already exists"):
         append_event(cos, "private", "runs/abc", event)
 
     assert cos.objects[key][0] == b"different"
+
+
+def test_concurrent_same_uuid_different_payloads_are_preserved_and_detected_as_fork():
+    cos = FakeCOS()
+    first = _event(UUID(int=1))
+    second = replace(first, payload_sha256="d" * 64)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        refs = tuple(
+            executor.map(
+                lambda event: append_event(cos, "private", "runs/abc", event),
+                (first, second),
+            )
+        )
+
+    assert len({ref.key for ref in refs}) == 2
+    assert len(cos.objects) == 2
+    with pytest.raises(EventChainFork, match="sequence 3"):
+        validate_event_chain((first, second), valid_run_spec())

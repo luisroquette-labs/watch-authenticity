@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -80,13 +81,15 @@ def _uuid_string(value: str, field: str) -> None:
 
 @dataclass(frozen=True)
 class CreditEvidence:
+    account_id: str
     observed_at: datetime
     remaining_usd: Decimal
     expires_at: datetime
-    eligible_service_plans: tuple[str, ...]
+    eligible_service_plans: tuple[tuple[str, str], ...]
     evidence_sha256: str
 
     def __post_init__(self) -> None:
+        _nonempty(self.account_id, "account_id")
         _aware(self.observed_at, "observed_at")
         _aware(self.expires_at, "expires_at")
         _decimal(self.remaining_usd, "remaining_usd")
@@ -94,8 +97,12 @@ class CreditEvidence:
             raise ValueError("expires_at must be after observed_at")
         if not self.eligible_service_plans:
             raise ValueError("eligible_service_plans must be non-empty")
-        for plan in self.eligible_service_plans:
-            _nonempty(plan, "eligible_service_plans item")
+        for item in self.eligible_service_plans:
+            if not isinstance(item, tuple) or len(item) != 2:
+                raise TypeError("eligible_service_plans items must be (service, plan) tuples")
+            service, plan = item
+            _nonempty(service, "eligible_service_plans service")
+            _nonempty(plan, "eligible_service_plans plan")
         if len(set(self.eligible_service_plans)) != len(self.eligible_service_plans):
             raise ValueError("eligible_service_plans contains duplicate values")
         _hash(self.evidence_sha256, "evidence_sha256")
@@ -103,6 +110,7 @@ class CreditEvidence:
 
 @dataclass(frozen=True)
 class UsageEvidence:
+    account_id: str
     observed_at: datetime
     billing_period_start: datetime
     observed_usage_usd: Decimal
@@ -110,6 +118,7 @@ class UsageEvidence:
     evidence_sha256: str
 
     def __post_init__(self) -> None:
+        _nonempty(self.account_id, "account_id")
         _aware(self.observed_at, "observed_at")
         _aware(self.billing_period_start, "billing_period_start")
         if self.billing_period_start > self.observed_at:
@@ -173,16 +182,24 @@ class PostPromoEntry:
 
 @dataclass(frozen=True)
 class PostPromoPlan:
+    observed_at: datetime
+    promo_expires_at: datetime
     entries: tuple[PostPromoEntry, ...]
     owner_authorization_sha256: str
+    evidence_sha256: str
 
     def __post_init__(self) -> None:
+        _aware(self.observed_at, "observed_at")
+        _aware(self.promo_expires_at, "promo_expires_at")
+        if self.promo_expires_at <= self.observed_at:
+            raise ValueError("promo_expires_at must be after observed_at")
         if not self.entries:
             raise ValueError("entries must be non-empty")
         services = [entry.service for entry in self.entries]
         if len(set(services)) != len(services):
             raise ValueError("entries contains duplicate services")
         _hash(self.owner_authorization_sha256, "owner_authorization_sha256")
+        _hash(self.evidence_sha256, "evidence_sha256")
 
 
 @dataclass(frozen=True)
@@ -195,6 +212,7 @@ class RunSpec:
     profile: str
     region: str
     zone: str
+    cos_endpoint: str
     max_hours: Decimal
     bucket: str
     prefix: str
@@ -224,6 +242,22 @@ class RunSpec:
             ("prefix", self.prefix),
         ):
             _nonempty(value, field)
+        endpoint = urlsplit(self.cos_endpoint)
+        allowed_hosts = {
+            f"s3.direct.{self.region}.cloud-object-storage.appdomain.cloud",
+            f"s3.private.{self.region}.cloud-object-storage.appdomain.cloud",
+        }
+        if (
+            endpoint.scheme != "https"
+            or endpoint.hostname not in allowed_hosts
+            or endpoint.port is not None
+            or endpoint.username is not None
+            or endpoint.password is not None
+            or endpoint.path not in {"", "/"}
+            or endpoint.query
+            or endpoint.fragment
+        ):
+            raise ValueError("COS endpoint must be an IBM private/direct endpoint for the RunSpec region")
         _decimal(self.max_hours, "max_hours", allow_zero=False)
         if self.max_hours > Decimal("24"):
             raise ValueError("max_hours must be at most 24")
@@ -247,6 +281,7 @@ class AuthorizationDecision:
     estimated_usd: Decimal
     usable_credit_usd: Decimal
     evidence_hashes: tuple[str, ...]
+    run_spec_sha256: str
 
     def __post_init__(self) -> None:
         if not isinstance(self.allowed, bool):
@@ -265,6 +300,7 @@ class AuthorizationDecision:
             _hash(value, "evidence_hash")
         if len(set(self.evidence_hashes)) != len(self.evidence_hashes):
             raise ValueError("evidence_hashes contains duplicate values")
+        _hash(self.run_spec_sha256, "run_spec_sha256")
 
 
 @dataclass(frozen=True)
@@ -291,6 +327,10 @@ class AuthorizedRun:
             raise ValueError("cannot authorize a denied decision")
         if evidence_hashes != decision.evidence_hashes:
             raise ValueError("evidence hashes differ from the authorization decision")
+        from infra.ibm_evidence import run_spec_sha256
+
+        if run_spec_sha256(spec) != decision.run_spec_sha256:
+            raise ValueError("run spec differs from the authorization decision")
         return cls(spec=spec, estimated_usd=decision.estimated_usd, evidence_hashes=evidence_hashes)
 
 

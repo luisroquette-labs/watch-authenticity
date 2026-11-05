@@ -8,6 +8,7 @@ from uuid import UUID
 import pytest
 
 from core.types import Label, ModelClass
+from infra.ibm_evidence import run_spec_sha256
 from infra.ibm_types import (
     AuthorizationDecision,
     AuthorizedRun,
@@ -64,6 +65,19 @@ def test_run_spec_rejects_invalid_contract_values(field, value, message):
 def test_run_spec_rejects_invalid_provider_identifier():
     with pytest.raises(ValueError, match="network_id"):
         replace(valid_run_spec(), network_id="not an id")
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://s3.us-south.cloud-object-storage.appdomain.cloud",
+        "https://s3.direct.eu-de.cloud-object-storage.appdomain.cloud",
+        "https://evil.example/s3.direct.us-south.cloud-object-storage.appdomain.cloud",
+    ],
+)
+def test_run_spec_requires_region_bound_private_or_direct_cos_endpoint(endpoint):
+    with pytest.raises(ValueError, match="COS endpoint"):
+        replace(valid_run_spec(), cos_endpoint=endpoint)
 
 
 def test_financial_evidence_rejects_naive_time_and_non_decimal_or_nan():
@@ -157,6 +171,7 @@ def test_authorized_run_only_accepts_allowed_decision_and_freezes_values():
         estimated_usd=Decimal("12.00"),
         usable_credit_usd=Decimal("17500.00"),
         evidence_hashes=("1" * 64, "2" * 64),
+        run_spec_sha256=run_spec_sha256(valid_run_spec()),
     )
     run = AuthorizedRun.from_decision(valid_run_spec(), decision, decision.evidence_hashes)
     assert run.estimated_usd == Decimal("12.00")
@@ -167,6 +182,10 @@ def test_authorized_run_only_accepts_allowed_decision_and_freezes_values():
     with pytest.raises(ValueError, match="denied"):
         AuthorizedRun.from_decision(valid_run_spec(), denied, denied.evidence_hashes)
 
+    other_spec = replace(valid_run_spec(), max_hours=Decimal("7"))
+    with pytest.raises(ValueError, match="run spec"):
+        AuthorizedRun.from_decision(other_spec, decision, decision.evidence_hashes)
+
 
 def test_authorization_decision_keeps_allowed_and_reasons_consistent():
     decision = AuthorizationDecision(
@@ -175,6 +194,7 @@ def test_authorization_decision_keeps_allowed_and_reasons_consistent():
         estimated_usd=Decimal("12.00"),
         usable_credit_usd=Decimal("17500.00"),
         evidence_hashes=("1" * 64,),
+        run_spec_sha256=run_spec_sha256(valid_run_spec()),
     )
     with pytest.raises(ValueError, match="allowed"):
         replace(decision, reasons=("unexpected",))

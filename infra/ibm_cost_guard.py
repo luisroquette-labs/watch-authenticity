@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections import Counter
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -37,6 +35,16 @@ PERSISTENT_METERED_SERVICES = frozenset(
 )
 SAFETY_RESERVE_USD = Decimal("500.00")
 _MAX_EVIDENCE_AGE = timedelta(hours=24)
+_EXPECTED_UNITS = {
+    "vpc-vsi": "instance-hour",
+    "vpc-boot-volume": "gb-hour",
+    "vpc-public-gateway": "gateway-hour",
+    "cos-storage": "gb-month",
+    "cos-operations": "request",
+    "container-registry-storage": "gb-month",
+    "code-engine": "job-hour",
+    "logs-monitoring": "gb",
+}
 
 
 def _timestamp_reasons(name: str, observed_at: datetime, now: datetime) -> list[str]:
@@ -58,23 +66,6 @@ def _latest_prior_events(events: tuple[RunEvent, ...], spec: RunSpec) -> dict[UU
     return latest
 
 
-def _post_promo_sha256(plan: PostPromoPlan) -> str:
-    payload = {
-        "entries": [
-            {
-                "service": entry.service,
-                "export_destination_sha256": entry.export_destination_sha256,
-                "delete_or_downgrade_deadline": entry.delete_or_downgrade_deadline.isoformat(),
-            }
-            for entry in plan.entries
-        ],
-        "owner_authorization_sha256": plan.owner_authorization_sha256,
-    }
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-
-
 def authorize_run(
     credit: CreditEvidence,
     usage: UsageEvidence,
@@ -94,8 +85,16 @@ def authorize_run(
     reasons.extend(_timestamp_reasons("credit", credit.observed_at, now))
     reasons.extend(_timestamp_reasons("pricing", pricing.observed_at, now))
     reasons.extend(_timestamp_reasons("usage", usage.observed_at, now))
+    reasons.extend(_timestamp_reasons("post-promo", post_promo.observed_at, now))
     if credit.observed_at < usage.observed_at:
         reasons.append("credit evidence predates usage evidence")
+    if credit.account_id != usage.account_id:
+        reasons.append("credit and usage accounts differ")
+    if (usage.billing_period_start.year, usage.billing_period_start.month) != (
+        now.year,
+        now.month,
+    ):
+        reasons.append("usage billing period is not the current month")
 
     services = [line.service for line in pricing.lines]
     counts = Counter(services)
@@ -112,10 +111,22 @@ def authorize_run(
         if line.service in REQUIRED_METERED_LINES
     ):
         reasons.append("pricing includes an unknown service plan")
-    if any(line.plan not in credit.eligible_service_plans for line in pricing.lines):
+    eligible_pairs = frozenset(credit.eligible_service_plans)
+    if any((line.service, line.plan) not in eligible_pairs for line in pricing.lines):
         reasons.append("pricing includes an ineligible service plan")
     if pricing.run_spec_sha256 != run_spec_sha256(spec):
         reasons.append("pricing is bound to a different run spec")
+    for line in pricing.lines:
+        expected_unit = _EXPECTED_UNITS.get(line.service)
+        if expected_unit is not None and line.unit != expected_unit:
+            reasons.append(f"pricing unit is invalid for {line.service}")
+        if line.estimated_quantity <= 0:
+            reasons.append(f"estimated quantity must be positive for {line.service}")
+    quantities = {line.service: line.estimated_quantity for line in pricing.lines}
+    if quantities.get("vpc-vsi", Decimal("0")) < spec.max_hours:
+        reasons.append("vpc-vsi estimate does not cover max_hours")
+    if quantities.get("vpc-public-gateway", Decimal("0")) < spec.max_hours:
+        reasons.append("vpc-public-gateway estimate does not cover max_hours")
 
     if usage.unreconciled_run_ids:
         reasons.append("prior run usage is unreconciled")
@@ -126,6 +137,8 @@ def authorize_run(
     if set(persistent_entries) != PERSISTENT_METERED_SERVICES:
         reasons.append("post-promo plan does not cover exactly the persistent metered services")
     deadline = credit.expires_at - timedelta(hours=48)
+    if post_promo.promo_expires_at != credit.expires_at:
+        reasons.append("post-promo plan is bound to a different promo expiry")
     if any(entry.delete_or_downgrade_deadline > deadline for entry in post_promo.entries):
         reasons.append("post-promo deadline is less than 48 hours before promo expiry")
     if any(entry.delete_or_downgrade_deadline < now for entry in post_promo.entries):
@@ -151,7 +164,7 @@ def authorize_run(
         usage.evidence_sha256,
         pricing.evidence_sha256,
         post_promo.owner_authorization_sha256,
-        _post_promo_sha256(post_promo),
+        post_promo.evidence_sha256,
     )
     if len(set(evidence_hashes_with_duplicates)) != len(evidence_hashes_with_duplicates):
         reasons.append("evidence hashes are not distinct")
@@ -162,4 +175,5 @@ def authorize_run(
         estimated_usd=estimated,
         usable_credit_usd=usable,
         evidence_hashes=evidence_hashes,
+        run_spec_sha256=run_spec_sha256(spec),
     )

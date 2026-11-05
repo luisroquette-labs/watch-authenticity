@@ -75,7 +75,12 @@ def test_authorize_run_accepts_24h_boundary_and_rejects_stale_pricing():
 
 
 def test_authorize_run_rejects_ineligible_service_plan():
-    credit = replace(valid_credit(), eligible_service_plans=("standard",))
+    credit = replace(
+        valid_credit(),
+        eligible_service_plans=tuple(
+            pair for pair in valid_credit().eligible_service_plans if pair[0] != "vpc-vsi"
+        ),
+    )
     decision = _authorize(credit=credit)
     assert not decision.allowed
     assert "pricing includes an ineligible service plan" in decision.reasons
@@ -86,6 +91,7 @@ def test_authorize_run_requires_48h_expiry_margin():
     plan = valid_post_promo_plan()
     plan = replace(
         plan,
+        promo_expires_at=exact.expires_at,
         entries=tuple(
             replace(entry, delete_or_downgrade_deadline=NOW + timedelta(hours=1))
             for entry in plan.entries
@@ -93,7 +99,10 @@ def test_authorize_run_requires_48h_expiry_margin():
     )
     assert _authorize(credit=exact, post_promo=plan).allowed
     too_late = replace(exact, expires_at=exact.expires_at - timedelta(seconds=1))
-    decision = _authorize(credit=too_late, post_promo=plan)
+    decision = _authorize(
+        credit=too_late,
+        post_promo=replace(plan, promo_expires_at=too_late.expires_at),
+    )
     assert not decision.allowed
     assert "run would finish less than 48 hours before promo expiry" in decision.reasons
 
@@ -175,7 +184,11 @@ def test_authorize_run_rejects_duplicate_service_lines():
 def test_authorize_run_rejects_unknown_plan_even_when_credit_lists_it():
     pricing = valid_pricing()
     pricing = replace(pricing, lines=(replace(pricing.lines[0], plan="mystery"),) + pricing.lines[1:])
-    credit = replace(valid_credit(), eligible_service_plans=("mystery", "standard"))
+    credit = replace(
+        valid_credit(),
+        eligible_service_plans=(("vpc-vsi", "mystery"),)
+        + valid_credit().eligible_service_plans[1:],
+    )
     decision = _authorize(pricing=pricing, credit=credit)
     assert not decision.allowed
     assert "pricing includes an unknown service plan" in decision.reasons
@@ -202,7 +215,7 @@ def test_authorize_run_returns_every_financial_refusal_reason():
             valid_credit(),
             observed_at=NOW - timedelta(days=2),
             remaining_usd=Decimal("499.99"),
-            eligible_service_plans=("standard",),
+            eligible_service_plans=valid_credit().eligible_service_plans[1:],
         ),
         usage=replace(valid_usage(), unreconciled_run_ids=(pending,)),
         pricing=pricing,
@@ -233,3 +246,51 @@ def test_authorize_run_rejects_future_evidence_without_raising():
 def test_authorize_run_requires_timezone_aware_now():
     with pytest.raises(ValueError, match="timezone-aware"):
         _authorize(now=datetime(2026, 11, 5))
+
+
+def test_authorize_run_binds_credit_usage_account_and_current_billing_month():
+    mismatch = _authorize(usage=replace(valid_usage(), account_id="account-2"))
+    assert not mismatch.allowed
+    assert "credit and usage accounts differ" in mismatch.reasons
+
+    old_period = _authorize(
+        usage=replace(valid_usage(), billing_period_start=NOW.replace(month=10, day=1))
+    )
+    assert not old_period.allowed
+    assert "usage billing period is not the current month" in old_period.reasons
+
+
+def test_authorize_run_revalidates_post_promo_evidence_and_expiry_binding():
+    stale = _authorize(
+        post_promo=replace(valid_post_promo_plan(), observed_at=NOW - timedelta(days=2))
+    )
+    assert not stale.allowed
+    assert "post-promo evidence is stale" in stale.reasons
+
+    wrong_expiry = _authorize(
+        post_promo=replace(
+            valid_post_promo_plan(), promo_expires_at=NOW + timedelta(days=91)
+        )
+    )
+    assert not wrong_expiry.allowed
+    assert "post-promo plan is bound to a different promo expiry" in wrong_expiry.reasons
+
+
+def test_authorize_run_rejects_zero_quantities_wrong_units_and_short_runtime_lines():
+    pricing = valid_pricing()
+    zero = replace(pricing, lines=tuple(replace(line, estimated_quantity=Decimal("0")) for line in pricing.lines))
+    decision = _authorize(pricing=zero)
+    assert not decision.allowed
+    assert any("estimated quantity" in reason for reason in decision.reasons)
+
+    wrong_unit = replace(
+        pricing,
+        lines=(replace(pricing.lines[0], unit="request"),) + pricing.lines[1:],
+    )
+    assert "pricing unit is invalid for vpc-vsi" in _authorize(pricing=wrong_unit).reasons
+
+    short_vsi = replace(
+        pricing,
+        lines=(replace(pricing.lines[0], estimated_quantity=Decimal("5.99")),) + pricing.lines[1:],
+    )
+    assert "vpc-vsi estimate does not cover max_hours" in _authorize(pricing=short_vsi).reasons
