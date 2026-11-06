@@ -42,7 +42,7 @@ def test_authorize_run_allows_complete_fresh_evidence_without_provisioning():
     decision = _authorize()
     assert decision.allowed
     assert decision.reasons == ()
-    assert decision.estimated_usd == Decimal("14.21")
+    assert decision.estimated_usd == Decimal("14.33")
     assert decision.usable_credit_usd == Decimal("17500.00")
     assert decision.evidence_hashes[:4] == ("1" * 64, "2" * 64, "4" * 64, "8" * 64)
     assert len(decision.evidence_hashes) == 5
@@ -51,6 +51,7 @@ def test_authorize_run_allows_complete_fresh_evidence_without_provisioning():
             "vpc-vsi",
             "vpc-boot-volume",
             "vpc-public-gateway",
+            "vpc-floating-ip",
             "cos-storage",
             "cos-operations",
             "container-registry-storage",
@@ -113,7 +114,7 @@ def test_authorize_run_requires_48h_expiry_margin():
 
 
 def test_authorize_run_enforces_exact_500_usd_reserve():
-    estimated = Decimal("14.21")
+    estimated = Decimal("14.33")
     assert _authorize(credit=replace(valid_credit(), remaining_usd=estimated + Decimal("500"))).allowed
     decision = _authorize(
         credit=replace(valid_credit(), remaining_usd=estimated + Decimal("499.99"))
@@ -131,6 +132,21 @@ def test_authorize_run_rejects_missing_required_service_even_when_free():
     decision = _authorize(pricing=pricing)
     assert not decision.allowed
     assert "missing required metered service: code-engine" in decision.reasons
+
+
+def test_authorize_run_rejects_missing_floating_ip_price():
+    pricing = valid_pricing()
+    pricing = replace(
+        pricing,
+        lines=tuple(
+            line for line in pricing.lines if line.service != "vpc-floating-ip"
+        ),
+    )
+
+    decision = _authorize(pricing=pricing)
+
+    assert not decision.allowed
+    assert "missing required metered service: vpc-floating-ip" in decision.reasons
 
 
 def test_authorize_run_rejects_unreconciled_prior_run_even_if_deleted():

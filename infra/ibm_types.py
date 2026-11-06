@@ -7,6 +7,7 @@ validated values at the infrastructure boundary.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import re
 from dataclasses import dataclass
@@ -20,6 +21,9 @@ _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _OCI_DIGEST = re.compile(r"^private\.[a-z0-9-]+\.icr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$")
 _IBM_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 _IBM_CRN = re.compile(r"^crn:v1:[A-Za-z0-9._:/-]+$")
+_RFC1918_NETWORKS = tuple(
+    ipaddress.IPv4Network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
 
 RUN_STATES = frozenset(
     {
@@ -239,6 +243,7 @@ class RunSpec:
     account_id: str
     code_sha: str
     image_digest: str
+    bootstrap_sha256: str
     manifest_sha256: str
     splits_sha256: str
     profile: str
@@ -255,11 +260,16 @@ class RunSpec:
     bucket: str
     prefix: str
     cos_service_instance_id: str
+    resource_group_id: str
     network_id: str
     subnet_id: str
+    primary_ipv4_address: str
+    image_id: str
     public_gateway_id: str
+    public_gateway_floating_ip_id: str
     security_group_id: str
     trusted_profile_id: str
+    subnet_owned_by_run: bool
     public_gateway_owned_by_run: bool
     cos_private_access_only: bool
     cos_versioning_enabled: bool
@@ -272,6 +282,7 @@ class RunSpec:
             raise ValueError("code_sha must be a lowercase 40-character Git SHA")
         if not isinstance(self.image_digest, str) or _OCI_DIGEST.fullmatch(self.image_digest) is None:
             raise ValueError("image_digest must be a private IBM OCI reference pinned with @sha256")
+        _hash(self.bootstrap_sha256, "bootstrap_sha256")
         _hash(self.manifest_sha256, "manifest_sha256")
         _hash(self.splits_sha256, "splits_sha256")
         if self.profile != "gx3-16x80x1l4":
@@ -284,13 +295,10 @@ class RunSpec:
         ):
             _nonempty(value, field)
         endpoint = urlsplit(self.cos_endpoint)
-        allowed_hosts = {
-            f"s3.direct.{self.region}.cloud-object-storage.appdomain.cloud",
-            f"s3.private.{self.region}.cloud-object-storage.appdomain.cloud",
-        }
+        allowed_host = f"s3.direct.{self.region}.cloud-object-storage.appdomain.cloud"
         if (
             endpoint.scheme != "https"
-            or endpoint.hostname not in allowed_hosts
+            or endpoint.hostname != allowed_host
             or endpoint.port is not None
             or endpoint.username is not None
             or endpoint.password is not None
@@ -298,7 +306,7 @@ class RunSpec:
             or endpoint.query
             or endpoint.fragment
         ):
-            raise ValueError("COS endpoint must be an IBM private/direct endpoint for the RunSpec region")
+            raise ValueError("COS endpoint must be the IBM direct endpoint for the RunSpec region")
         _decimal(self.max_hours, "max_hours", allow_zero=False)
         if self.max_hours > Decimal("24"):
             raise ValueError("max_hours must be at most 24")
@@ -313,6 +321,8 @@ class RunSpec:
             _decimal(dimension_value, dimension_field, allow_zero=False)
             if dimension_value < minimum:
                 raise ValueError(f"{dimension_field} must be at least {minimum}")
+        if self.boot_volume_gb != self.boot_volume_gb.to_integral_value():
+            raise ValueError("boot_volume_gb must be a whole number of gigabytes")
         _crn(self.cos_service_instance_id, "cos_service_instance_id")
         if f":a/{self.account_id}:" not in self.cos_service_instance_id:
             raise ValueError("COS service instance CRN must belong to run account")
@@ -323,13 +333,24 @@ class RunSpec:
         if self.cos_versioning_enabled is not True:
             raise ValueError("COS bucket versioning must be enabled")
         for field, value in (
+            ("resource_group_id", self.resource_group_id),
             ("network_id", self.network_id),
             ("subnet_id", self.subnet_id),
+            ("image_id", self.image_id),
             ("public_gateway_id", self.public_gateway_id),
+            ("public_gateway_floating_ip_id", self.public_gateway_floating_ip_id),
             ("security_group_id", self.security_group_id),
         ):
             _identifier(value, field)
+        try:
+            primary_ip = ipaddress.IPv4Address(self.primary_ipv4_address)
+        except ipaddress.AddressValueError as exc:
+            raise ValueError("primary_ipv4_address must be a valid IPv4 address") from exc
+        if not any(primary_ip in network for network in _RFC1918_NETWORKS):
+            raise ValueError("primary_ipv4_address must be an RFC1918 address")
         _uuid_string(self.trusted_profile_id, "trusted_profile_id")
+        if self.subnet_owned_by_run is not True:
+            raise ValueError("subnet must be dedicated to and owned by the run")
         if self.public_gateway_owned_by_run is not True:
             raise ValueError("Public Gateway must be dedicated to and owned by the run")
 

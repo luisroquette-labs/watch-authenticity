@@ -26,6 +26,7 @@ REQUIRED_METERED_LINES = frozenset(
         "vpc-vsi",
         "vpc-boot-volume",
         "vpc-public-gateway",
+        "vpc-floating-ip",
         "cos-storage",
         "cos-operations",
         "container-registry-storage",
@@ -42,6 +43,7 @@ _EXPECTED_UNITS = {
     "vpc-vsi": "instance-hour",
     "vpc-boot-volume": "gb-hour",
     "vpc-public-gateway": "gateway-hour",
+    "vpc-floating-ip": "ip-hour",
     "cos-storage": "gb-month",
     "cos-operations": "request",
     "container-registry-storage": "gb-month",
@@ -150,6 +152,7 @@ def authorize_run(
         "vpc-vsi": spec.max_hours,
         "vpc-boot-volume": spec.boot_volume_gb * spec.max_hours,
         "vpc-public-gateway": spec.max_hours,
+        "vpc-floating-ip": spec.max_hours,
         "cos-storage": spec.cos_storage_gb_month,
         "cos-operations": spec.cos_operations,
         "container-registry-storage": spec.registry_storage_gb_month,
@@ -158,7 +161,7 @@ def authorize_run(
     }
     for service, minimum in minimum_quantities.items():
         if quantities.get(service, Decimal("0")) < minimum:
-            if service in {"vpc-vsi", "vpc-public-gateway"}:
+            if service in {"vpc-vsi", "vpc-public-gateway", "vpc-floating-ip"}:
                 reasons.append(f"{service} estimate does not cover max_hours")
             else:
                 reasons.append(f"{service} estimate does not cover RunSpec minimum")

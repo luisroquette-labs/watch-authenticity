@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -18,6 +19,7 @@ from infra.ibm_types import (
 )
 
 NOW = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)
+_SAFE_USER_DATA = "#!/bin/bash\nset -euo pipefail\n/opt/watch-auth/bootstrap-host\n"
 
 
 def _sku(service: str) -> str:
@@ -30,6 +32,7 @@ def valid_run_spec() -> RunSpec:
         account_id="account-1",
         code_sha="a" * 40,
         image_digest="private.us-south.icr.io/watch/train@sha256:" + "b" * 64,
+        bootstrap_sha256=hashlib.sha256(_SAFE_USER_DATA.encode()).hexdigest(),
         manifest_sha256="c" * 64,
         splits_sha256="d" * 64,
         profile="gx3-16x80x1l4",
@@ -48,11 +51,16 @@ def valid_run_spec() -> RunSpec:
         cos_service_instance_id=(
             "crn:v1:bluemix:public:cloud-object-storage:global:a/account-1:cos::"
         ),
+        resource_group_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         network_id="r006-22222222-2222-4222-8222-222222222222",
         subnet_id="0717-33333333-3333-4333-8333-333333333333",
+        primary_ipv4_address="10.240.0.15",
+        image_id="r006-88888888-8888-4888-8888-888888888888",
         public_gateway_id="r006-44444444-4444-4444-8444-444444444444",
+        public_gateway_floating_ip_id="r006-99999999-9999-4999-8999-999999999999",
         security_group_id="r006-55555555-5555-4555-8555-555555555555",
         trusted_profile_id="66666666-6666-4666-8666-666666666666",
+        subnet_owned_by_run=True,
         public_gateway_owned_by_run=True,
         cos_private_access_only=True,
         cos_versioning_enabled=True,
@@ -69,6 +77,7 @@ def valid_credit(now: datetime = NOW) -> CreditEvidence:
             ("vpc-vsi", "gx3-16x80x1l4", _sku("vpc-vsi"), "us-south"),
             ("vpc-boot-volume", "standard", _sku("vpc-boot-volume"), "us-south"),
             ("vpc-public-gateway", "standard", _sku("vpc-public-gateway"), "us-south"),
+            ("vpc-floating-ip", "standard", _sku("vpc-floating-ip"), "us-south"),
             ("cos-storage", "standard", _sku("cos-storage"), "us-south"),
             ("cos-operations", "standard", _sku("cos-operations"), "us-south"),
             ("container-registry-storage", "standard", _sku("container-registry-storage"), "us-south"),
@@ -112,6 +121,7 @@ def valid_pricing(now: datetime = NOW, spec: RunSpec | None = None) -> PricingEv
             ),
             PriceLine("vpc-boot-volume", "standard", _sku("vpc-boot-volume"), "us-south", "gb-hour", Decimal("600"), Decimal("0.001")),
             PriceLine("vpc-public-gateway", "standard", _sku("vpc-public-gateway"), "us-south", "gateway-hour", Decimal("6"), Decimal("0.10")),
+            PriceLine("vpc-floating-ip", "standard", _sku("vpc-floating-ip"), "us-south", "ip-hour", Decimal("6"), Decimal("0.02")),
             PriceLine("cos-storage", "standard", _sku("cos-storage"), "us-south", "gb-month", Decimal("50"), Decimal("0.02")),
             PriceLine("cos-operations", "standard", _sku("cos-operations"), "us-south", "request", Decimal("1000"), Decimal("0.00001")),
             PriceLine("container-registry-storage", "standard", _sku("container-registry-storage"), "us-south", "gb-month", Decimal("10"), Decimal("0.00")),
@@ -141,11 +151,27 @@ def valid_post_promo_plan(now: datetime = NOW) -> PostPromoPlan:
 def vpc_instance(**overrides: object) -> dict[str, object]:
     instance: dict[str, object] = {
         "id": "r006-77777777-7777-4777-8777-777777777777",
+        "crn": "crn:v1:bluemix:public:is:us-south-1:a/account-1::instance:r006-77777777-7777-4777-8777-777777777777",
         "name": "watch-auth-11111111-1111-4111-8111-111111111111",
         "profile": {"name": "gx3-16x80x1l4"},
         "zone": {"name": "us-south-1"},
         "vpc": {"id": "r006-22222222-2222-4222-8222-222222222222"},
         "image": {"id": "r006-88888888-8888-4888-8888-888888888888"},
+        "resource_group": {"id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},
+        "primary_network_interface": {
+            "id": "0717-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "subnet": {"id": "0717-33333333-3333-4333-8333-333333333333"},
+            "primary_ip": {"address": "10.240.0.15"},
+        },
+        "network_interfaces": [
+            {"id": "0717-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}
+        ],
+        "network_attachments": [],
+        "metadata_service": {"enabled": True, "protocol": "http", "response_hop_limit": 2},
+        "boot_volume_attachment": {
+            "id": "r006-cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            "volume": {"id": "r006-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}
+        },
         "status": "running",
     }
     instance.update(overrides)
@@ -153,4 +179,4 @@ def vpc_instance(**overrides: object) -> dict[str, object]:
 
 
 def safe_user_data() -> str:
-    return "#!/bin/bash\nset -euo pipefail\n/opt/watch-auth/bootstrap-host\n"
+    return _SAFE_USER_DATA

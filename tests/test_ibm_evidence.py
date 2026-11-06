@@ -57,6 +57,7 @@ def _credit_record() -> dict[str, Any]:
                 ("vpc-vsi", "gx3-16x80x1l4"),
                 ("vpc-boot-volume", "standard"),
                 ("vpc-public-gateway", "standard"),
+                ("vpc-floating-ip", "standard"),
                 ("cos-storage", "standard"),
                 ("cos-operations", "standard"),
                 ("container-registry-storage", "standard"),
@@ -72,6 +73,7 @@ def _pricing_record() -> dict[str, Any]:
         ("vpc-vsi", "gx3-16x80x1l4", "instance-hour", "6", "2.00"),
         ("vpc-boot-volume", "standard", "gb-hour", "600", "0.001"),
         ("vpc-public-gateway", "standard", "gateway-hour", "6", "0.10"),
+        ("vpc-floating-ip", "standard", "ip-hour", "6", "0.02"),
         ("cos-storage", "standard", "gb-month", "50", "0.02"),
         ("cos-operations", "standard", "request", "1000", "0.00001"),
         ("container-registry-storage", "standard", "gb-month", "10", "0.00"),
@@ -198,7 +200,7 @@ def test_pricing_loader_requires_exact_spec_and_quote_hash(tmp_path: Path):
     assert pricing.currency == "USD"
     assert pricing.account_id == "account-1"
     assert pricing.run_spec_sha256 == run_spec_sha256(valid_run_spec())
-    assert len(pricing.lines) == 8
+    assert len(pricing.lines) == 9
     assert not pricing.provider_verified
 
 

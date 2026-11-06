@@ -46,6 +46,7 @@ def test_rejection_is_a_manifest_training_label():
     ("field", "value", "message"),
     [
         ("code_sha", "a" * 39, "Git SHA"),
+        ("bootstrap_sha256", "bad", "SHA-256"),
         ("manifest_sha256", "g" * 64, "SHA-256"),
         ("profile", "gx2-8x64x1v100", "gx3-16x80x1l4"),
         ("region", "", "region"),
@@ -67,15 +68,22 @@ def test_run_spec_rejects_invalid_provider_identifier():
         replace(valid_run_spec(), network_id="not an id")
 
 
+@pytest.mark.parametrize("field", ("resource_group_id", "image_id"))
+def test_run_spec_requires_authorized_provider_ids(field):
+    with pytest.raises(ValueError, match=field):
+        replace(valid_run_spec(), **{field: "not an id"})
+
+
 @pytest.mark.parametrize(
     "endpoint",
     [
         "https://s3.us-south.cloud-object-storage.appdomain.cloud",
+        "https://s3.private.us-south.cloud-object-storage.appdomain.cloud",
         "https://s3.direct.eu-de.cloud-object-storage.appdomain.cloud",
         "https://evil.example/s3.direct.us-south.cloud-object-storage.appdomain.cloud",
     ],
 )
-def test_run_spec_requires_region_bound_private_or_direct_cos_endpoint(endpoint):
+def test_run_spec_requires_region_bound_direct_cos_endpoint(endpoint):
     with pytest.raises(ValueError, match="COS endpoint"):
         replace(valid_run_spec(), cos_endpoint=endpoint)
 
@@ -212,6 +220,11 @@ def test_run_spec_rejects_metering_dimensions_below_conservative_floor():
     ):
         with pytest.raises(ValueError, match=field):
             replace(valid_run_spec(), **{field: value})
+
+
+def test_run_spec_requires_integral_boot_volume_capacity():
+    with pytest.raises(ValueError, match="whole number"):
+        replace(valid_run_spec(), boot_volume_gb=Decimal("100.9"))
 
 
 def test_run_spec_binds_private_versioned_cos_to_account_and_run():
