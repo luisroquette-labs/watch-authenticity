@@ -32,6 +32,7 @@ _SERVICE_PLANS = {
     "vpc-vsi": frozenset({"gx3-16x80x1l4"}),
     "vpc-boot-volume": frozenset({"standard"}),
     "vpc-public-gateway": frozenset({"standard"}),
+    "vpc-floating-ip": frozenset({"standard"}),
     "cos-storage": frozenset({"standard"}),
     "cos-operations": frozenset({"standard"}),
     "container-registry-storage": frozenset({"standard"}),
