@@ -24,20 +24,19 @@ from torch import nn
 
 from adapters.backbone import BACKBONE_CHECKPOINT, BACKBONE_EMBED_DIM, load_frozen_backbone
 from core.rules import aggregate_angles
-from core.types import Grade
+from core.types import ModelClass
 from dataset.crop import ANGLE_CROP_FRACTIONS
 
 GUIDED_ANGLES: tuple[str, ...] = tuple(ANGLE_CROP_FRACTIONS)
 
-# genuine (1) + fake grades 1-4 (`len(Grade)`) + rejection (1) — SKILL.md's
-# own "NUM_CLASSES = genuine + grade1-4 + rejection" comment, kept as one
-# computed constant instead of a second hardcoded "6" (CK-22).
-NUM_CLASSES = len(Grade) + 2
+# The canonical vocabulary contains genuine + grades 1-4 + rejection.
+# Deriving the size from `ModelClass` keeps indices and head width together.
+NUM_CLASSES = len(ModelClass)
 
 # Class-index convention the per-angle heads' output follows; `model/
 # rejection.py` (step 07a) and `calibration` (step 07b) read this same
 # position instead of each re-deriving their own layout.
-GENUINE_CLASS_INDEX = 0
+GENUINE_CLASS_INDEX = ModelClass.GENUINE.value
 
 
 class ImageBackbone(Protocol):

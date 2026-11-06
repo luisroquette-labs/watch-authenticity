@@ -30,6 +30,17 @@ class Grade(IntEnum):
     SUPERCLONE = 4
 
 
+class ModelClass(IntEnum):
+    """Canonical output indices for every trainable model head."""
+
+    GENUINE = 0
+    GRADE_1 = 1
+    GRADE_2 = 2
+    GRADE_3 = 3
+    GRADE_4 = 4
+    REJECTION = 5
+
+
 class Label(Enum):
     """Source-trust-derived training label — never a human judgment call.
 
@@ -40,6 +51,7 @@ class Label(Enum):
 
     GENUINE = "genuine"
     FAKE = "fake"
+    REJECTION = "rejection"
     EXCLUDED = "excluded"
 
 

@@ -28,13 +28,13 @@ from typing import Protocol
 
 import torch
 
-from core.types import Rejection
-from model.heads import NUM_CLASSES, build_model
+from core.types import ModelClass, Rejection
+from model.heads import build_model
 
 # The per-angle heads reserve their highest class index for "rejection"
 # (SKILL.md:150's "genuine + grade1-4 + rejection" ordering places it
 # last; `model.heads.GENUINE_CLASS_INDEX` is 0, the opposite end).
-REJECTION_CLASS_INDEX = NUM_CLASSES - 1
+REJECTION_CLASS_INDEX = ModelClass.REJECTION.value
 
 
 class AnglePredictor(Protocol):
