@@ -945,25 +945,51 @@ def ensure_single_instance(
         _persist_intent(spec, prototype)
         try:
             created = _result(vpc.create_instance(prototype))
-        except Exception as exc:
-            code = _status_code(exc)
-            if code is not None and code < 500 and code not in {408, 409, 429}:
-                _clear_intent(spec)
+        except BaseException as exc:
+            if isinstance(exc, Exception):
+                code = _status_code(exc)
+                if code is not None and code < 500 and code not in {408, 409, 429}:
+                    _clear_intent(spec)
+                    raise
+                created = _reconcile_created_instance(
+                    vpc, spec, exc, deadline=deadline
+                )
+            else:
+                try:
+                    _persist_interrupted_create(
+                        vpc, spec, prototype, deadline=deadline
+                    )
+                except BaseException as recovery_error:
+                    raise BaseExceptionGroup(
+                        "create interruption and reconciliation both failed",
+                        [exc, recovery_error],
+                    )
                 raise
-            created = _reconcile_created_instance(
-                vpc, spec, exc, deadline=deadline
+        try:
+            if not _field(created, "id"):
+                created = _reconcile_created_instance(
+                    vpc,
+                    spec,
+                    AmbiguousProvisioning("create response has no instance ID"),
+                    deadline=deadline,
+                )
+            created = _hydrate_created_instance(
+                vpc, spec, prototype, created, deadline=deadline
             )
-        if not _field(created, "id"):
-            created = _reconcile_created_instance(
-                vpc,
-                spec,
-                AmbiguousProvisioning("create response has no instance ID"),
-                deadline=deadline,
-            )
-        created = _hydrate_created_instance(
-            vpc, spec, prototype, created, deadline=deadline
-        )
-        _persist_created_instance(spec, prototype, created)
+            _persist_created_instance(spec, prototype, created)
+        except BaseException as exc:
+            if isinstance(exc, Exception):
+                raise
+            try:
+                _persist_interrupted_create(
+                    vpc, spec, prototype, deadline=deadline
+                )
+            except BaseException as recovery_error:
+                raise BaseExceptionGroup(
+                    "post-create interruption and reconciliation both failed",
+                    [exc, recovery_error],
+                )
+            raise
         mismatch = _mismatches(created, spec)
         if mismatch:
             raise PrototypeMismatch(
@@ -974,6 +1000,64 @@ def ensure_single_instance(
         if len(observed_ids) > 1:
             raise AmbiguousProvisioning("multiple instances appeared after create")
         return _finalize_adoption(vpc, tagger, spec, created)
+
+
+def _persist_interrupted_create(
+    vpc: VpcV1,
+    spec: RunSpec,
+    prototype: dict[str, object],
+    *,
+    deadline: float,
+) -> None:
+    interrupted = _reconcile_created_instance(
+        vpc,
+        spec,
+        RuntimeError("create call was interrupted"),
+        deadline=deadline,
+    )
+    interrupted = _hydrate_created_instance(
+        vpc, spec, prototype, interrupted, deadline=deadline
+    )
+    _persist_created_instance(spec, prototype, interrupted)
+
+
+def recover_accepted_instance(
+    vpc: VpcV1,
+    spec: RunSpec,
+    prototype: dict[str, object],
+    *,
+    deadline: float,
+) -> str:
+    """Use cleanup-reserved time to discover one accepted create safely."""
+
+    expected = build_instance_prototype(spec, str(prototype.get("user_data", "")))
+    if prototype != expected:
+        raise ValueError("prototype differs from the authorized RunSpec")
+    _validate_deadline(deadline)
+    with run_lifecycle_lease(spec, deadline=deadline):
+        if not _has_matching_intent(spec, prototype):
+            raise AmbiguousProvisioning("accepted create has no matching local intent")
+        bounded = _deadline_client(vpc, deadline)
+        created = _reconcile_created_instance(
+            bounded,
+            spec,
+            RuntimeError("accepted create was not visible before create deadline"),
+            deadline=deadline,
+        )
+        created = _hydrate_created_instance(
+            bounded, spec, prototype, created, deadline=deadline
+        )
+        _persist_created_instance(spec, prototype, created)
+        mismatch = _mismatches(created, spec)
+        if mismatch:
+            raise PrototypeMismatch(
+                "recovered instance prototype mismatch: " + ", ".join(mismatch)
+            )
+        matches = _list_named(bounded, spec)
+        observed_ids = {_field(item, "id") for item in matches} | {_field(created, "id")}
+        if len(observed_ids) != 1:
+            raise AmbiguousProvisioning("accepted create recovery is not unique")
+        return _field(created, "id")
 
 
 def _reconcile_created_instance(

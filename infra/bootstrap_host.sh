@@ -9,6 +9,11 @@ readonly COS_BUCKET=__WATCH_AUTH_COS_BUCKET__
 readonly COS_RUN_PREFIX=__WATCH_AUTH_COS_PREFIX__
 readonly COS_SERVICE_INSTANCE_ID=__WATCH_AUTH_COS_SERVICE_INSTANCE_ID__
 readonly TRUSTED_PROFILE_ID=__WATCH_AUTH_TRUSTED_PROFILE_ID__
+readonly CODE_SHA=__WATCH_AUTH_CODE_SHA__
+readonly MANIFEST_SHA256=__WATCH_AUTH_MANIFEST_SHA256__
+readonly SPLITS_SHA256=__WATCH_AUTH_SPLITS_SHA256__
+readonly COS_ENDPOINT=__WATCH_AUTH_COS_ENDPOINT__
+readonly RUN_SPEC_TRANSPORT_SHA256=__WATCH_AUTH_RUN_SPEC_TRANSPORT_SHA256__
 readonly NVIDIA_KEY_FINGERPRINT="C95B321B61E88C1809C4F759DDCAE044F796ECB0"
 readonly NVIDIA_DRIVER_PACKAGE="nvidia-driver-550=550.163.01-0ubuntu0.22.04.2"
 readonly NVIDIA_TOOLKIT_PACKAGE="nvidia-container-toolkit=1.20.1-1"
@@ -280,9 +285,10 @@ pull_training_image() (
 launch_training_container() {
     if docker container inspect watch-auth-training >/dev/null 2>&1; then
         [[ $(docker inspect -f '{{index .Config.Labels "watch-auth.image-digest"}}' watch-auth-training) == "${TRAIN_IMAGE_DIGEST}" ]]
-        [[ $(docker inspect -f '{{.State.Running}}' watch-auth-training) == true ]]
-        [[ $(docker inspect -f '{{.State.Health.Status}}' watch-auth-training) == healthy ]]
-        return
+        if [[ $(docker inspect -f '{{.State.Running}}' watch-auth-training) == false ]]; then
+            [[ $(docker inspect -f '{{.State.ExitCode}}' watch-auth-training) == 0 ]]
+            return
+        fi
     fi
     docker run --detach --name watch-auth-training \
         --label "watch-auth.image-digest=${TRAIN_IMAGE_DIGEST}" \
@@ -297,10 +303,25 @@ launch_training_container() {
         --env NO_PROXY=169.254.169.254 \
         --env "RUN_ID=${RUN_ID}" \
         --env "RUN_SPEC_COS_URI=cos://${COS_BUCKET}/${COS_RUN_PREFIX}/run-spec.json" \
+        --env "WATCH_AUTH_REGION=${IBM_REGION}" \
+        --env "WATCH_AUTH_COS_ENDPOINT=${COS_ENDPOINT}" \
+        --env "WATCH_AUTH_COS_BUCKET=${COS_BUCKET}" \
+        --env "WATCH_AUTH_COS_PREFIX=${COS_RUN_PREFIX}" \
+        --env "WATCH_AUTH_COS_SERVICE_INSTANCE_ID=${COS_SERVICE_INSTANCE_ID}" \
+        --env "WATCH_AUTH_TRUSTED_PROFILE_ID=${TRUSTED_PROFILE_ID}" \
+        --env "WATCH_AUTH_CODE_SHA=${CODE_SHA}" \
+        --env "WATCH_AUTH_IMAGE_DIGEST=${TRAIN_IMAGE_DIGEST}" \
+        --env "WATCH_AUTH_MANIFEST_SHA256=${MANIFEST_SHA256}" \
+        --env "WATCH_AUTH_SPLITS_SHA256=${SPLITS_SHA256}" \
+        --env "WATCH_AUTH_RUN_SPEC_TRANSPORT_SHA256=${RUN_SPEC_TRANSPORT_SHA256}" \
         --add-host=host.docker.internal:host-gateway \
         "${TRAIN_IMAGE_DIGEST}" >/dev/null
     for _ in $(seq 1 20); do
         [[ $(docker inspect -f '{{.State.Health.Status}}' watch-auth-training) == healthy ]] && return
+        if [[ $(docker inspect -f '{{.State.Running}}' watch-auth-training) == false ]]; then
+            [[ $(docker inspect -f '{{.State.ExitCode}}' watch-auth-training) == 0 ]]
+            return
+        fi
         sleep 3
     done
     return 1
@@ -334,7 +355,7 @@ stage2() {
         --arg run_id "${RUN_ID}" \
         --arg image_digest "${TRAIN_IMAGE_DIGEST}" \
         --arg gpu "$(nvidia-smi --query-gpu=name --format=csv,noheader)" \
-        '{run_id:$run_id,image_digest:$image_digest,gpu:$gpu,network_proof:"passed",container_health:"healthy"}' \
+        '{run_id:$run_id,image_digest:$image_digest,gpu:$gpu,network_proof:"passed",worker_launch:"accepted"}' \
         >"${PROOF_PATH}"
     chmod 0600 "${PROOF_PATH}"
     local proof_hash

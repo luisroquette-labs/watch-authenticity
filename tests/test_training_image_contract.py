@@ -66,6 +66,10 @@ def test_training_lock_pins_cuda_126_torch_and_hashes_every_requirement():
     assert "torchvision-0.25.0%2Bcu126-cp312-cp312-manylinux_2_28_x86_64.whl" in lock
     assert "2a7a569206f07965eff69b28e147676540bb0ba6e1a39410802b6e4708cb8356" in lock
     assert "5831326b6710366b44c0124ce197b416b7b896efa27340c235081cc7f52870e5" in lock
+    assert "ibm-cos-sdk==2.16.2" in lock
+    assert "ibm-cos-sdk-core==2.16.2" in lock
+    assert "ibm-cos-sdk-s3transfer==2.16.2" in lock
+    assert "ibm-cloud-sdk-core==3.27.2" in lock
     assert requirement_lines
     assert all(("==" in line or " @ " in line) and "\\" in line for line in requirement_lines)
     assert lock.count("--hash=sha256:") >= len(requirement_lines)
@@ -170,5 +174,14 @@ def test_bootstrap_proves_network_gpu_and_launches_hardened_container():
         bootstrap,
         re.DOTALL,
     )
+    assert "State.ExitCode" in bootstrap
+    assert 'worker_launch:"accepted"' in bootstrap
     assert 'readonly STATE_DIR="/var/lib/watch-auth"' in bootstrap
     assert 'readonly PROOF_PATH="${STATE_DIR}/bootstrap-proof.json"' in bootstrap
+
+
+def test_training_image_runs_the_real_worker():
+    containerfile = _text(CONTAINERFILE)
+
+    assert 'CMD ["python3", "-m", "training.worker"]' in containerfile
+    assert "time.sleep(86400)" not in containerfile
