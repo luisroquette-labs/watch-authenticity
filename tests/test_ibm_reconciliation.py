@@ -14,14 +14,14 @@ from infra.ibm_evidence import fetch_usage_evidence, run_spec_sha256
 from infra.ibm_train import (
     _publish_authorization_evidence,
     authorize_training,
-    consume_authorization,
     publish_run_spec,
 )
 from infra.ibm_types import RunEvent, run_event_sha256
 from infra.ibm_watchdog import _persist_cleanup_context, run_watchdog_once
 from tests.conftest import NOW, valid_credit, valid_post_promo_plan, valid_pricing
+from tests.test_ibm_canary import canary_clients
 from tests.test_ibm_cos import FakeCOS
-from tests.test_ibm_train import _decision, _proof, _spec
+from tests.test_ibm_train import _consume_with_provider, _decision, _proof, _spec
 from tests.test_ibm_watchdog import _context
 
 
@@ -47,7 +47,7 @@ def _prepared(tmp_path):
     spec = _spec()
     decision = _decision(spec)
     store = tmp_path / "auth"
-    run = consume_authorization(
+    run = _consume_with_provider(
         spec, decision, decision.evidence_hashes,
         watchdog_proof=_proof(spec), now=NOW, store=store,
     )
@@ -97,10 +97,11 @@ def _next_run(spec, cos, store, now, resources=None):
         result.get_result.return_value = {"resources": selected, "count": len(selected)}
         return result
     usage_client.get_resource_usage_account.side_effect = response
+    proof = _proof(candidate, observed_at=now, canary_deleted_at=now - timedelta(minutes=1), expires_at=now + timedelta(hours=24))
     return authorize_training(
         cos, usage_client, candidate, valid_credit(now), valid_pricing(now, candidate),
         valid_post_promo_plan(now),
-        watchdog_proof=_proof(candidate, observed_at=now, canary_deleted_at=now - timedelta(minutes=1), expires_at=now + timedelta(hours=24)),
+        watchdog_proof=proof, canary_clients=canary_clients(proof),
         now=now, store=store,
     )
 
