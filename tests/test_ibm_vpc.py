@@ -1697,6 +1697,57 @@ def test_instance_receipt_failure_does_not_block_other_cleanup(monkeypatch):
     client.delete_floating_ip.assert_called_once()
 
 
+@pytest.mark.parametrize("volume_fails", [False, True])
+def test_cos_cleanup_context_failure_preserves_local_ledger_and_continues_teardown(volume_fails):
+    from infra.ibm_watchdog import _persist_cleanup_context
+    from tests.test_ibm_cos import FakeCOS
+
+    spec = valid_run_spec()
+    cos_error = OSError("COS context write unavailable")
+    volume_error = _Forbidden()
+
+    class UnavailableCOS(FakeCOS):
+        def put_object(self, **_kwargs):
+            assert ibm_vpc._load_cleanup(spec, _instance_id()) == (
+                "r006-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                spec.public_gateway_id,
+                spec.public_gateway_floating_ip_id,
+            )
+            raise cos_error
+
+    cos = UnavailableCOS(bucket=spec.bucket, prefix=spec.prefix)
+    client = _client()
+    client.get_instance.side_effect = [
+        _Response(vpc_instance()), _Response(vpc_instance()), _NotFound(),
+    ]
+    client.get_volume.side_effect = [
+        _Response(_volume()), _Response(_volume()), _Response(_volume()), _NotFound(),
+    ]
+    client.get_public_gateway.side_effect = [
+        _Response(_gateway()), _Response(_gateway()), _Response(_gateway()), _NotFound(),
+    ]
+    if volume_fails:
+        client.delete_volume.side_effect = volume_error
+        client.get_volume.side_effect = None
+        client.get_volume.return_value = _Response(_volume())
+
+    with pytest.raises(CleanupFailures if volume_fails else OSError) as caught:
+        delete_and_wait(
+            client, spec, _instance_id(), deadline=_deadline(), tagger=_tagger(),
+            cleanup_context_sink=lambda context: _persist_cleanup_context(cos, spec, context),
+        )
+
+    client.delete_instance.assert_called_once_with(_instance_id())
+    client.delete_volume.assert_called_once()
+    client.delete_subnet.assert_called_once_with(spec.subnet_id)
+    client.delete_public_gateway.assert_called_once_with(spec.public_gateway_id)
+    client.delete_floating_ip.assert_called_once_with(spec.public_gateway_floating_ip_id)
+    if volume_fails:
+        assert caught.value.errors == (cos_error, volume_error)
+    else:
+        assert caught.value is cos_error
+
+
 def test_instance_delete_failure_blocks_dependent_cleanup():
     _seed_intent()
     spec = valid_run_spec()

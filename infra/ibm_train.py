@@ -11,7 +11,7 @@ import tempfile
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -23,15 +23,27 @@ from infra.ibm_cos import (
     IntegrityError,
     append_event,
     load_event_inventory,
+    load_immutable_json,
+    put_immutable_json,
     validate_event_chain,
     verify_cos_configuration,
 )
-from infra.ibm_evidence import run_spec_sha256
+from infra.ibm_cost_guard import authorize_run
+from infra.ibm_evidence import (
+    fetch_usage_evidence,
+    run_spec_sha256,
+    stable_usage_observations,
+    usage_observation,
+)
 from infra.ibm_types import (
     AuthorizationDecision,
     AuthorizedRun,
+    CreditEvidence,
+    PostPromoPlan,
+    PricingEvidence,
     RunEvent,
     RunSpec,
+    UsageEvidence,
     WatchdogCanaryProof,
     run_event_sha256,
     run_spec_transport_document,
@@ -138,6 +150,87 @@ def _atomic_record(path: Path, body: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
+@contextmanager
+def _cos_run_scope(cos: Any, spec: RunSpec):
+    bindings = {name: getattr(cos, name, None) for name in (
+        "_watch_auth_spec", "_watch_auth_bucket", "_watch_auth_prefix",
+        "_watch_auth_configuration_verified",
+    )}
+    try:
+        cos._watch_auth_spec = spec
+        cos._watch_auth_bucket = spec.bucket
+        cos._watch_auth_prefix = spec.prefix
+        verify_cos_configuration(cos, spec)
+        yield
+    finally:
+        for name, value in bindings.items():
+            setattr(cos, name, value)
+
+
+def authorize_training(
+    cos: Any,
+    usage_client: Any,
+    spec: RunSpec,
+    credit: CreditEvidence,
+    pricing: PricingEvidence,
+    post_promo: PostPromoPlan,
+    *,
+    watchdog_proof: WatchdogCanaryProof,
+    now: datetime,
+    store: Path | None = None,
+) -> AuthorizedRun:
+    """Read prior terminal receipts before granting the next account launch capability."""
+
+    from infra.ibm_watchdog import _load_run_spec, _run_spec_keys
+
+    usage = fetch_usage_evidence(
+        usage_client, spec.account_id, now.astimezone(timezone.utc).strftime("%Y-%m"), (), now=now,
+    )
+    prior_ids: list[UUID] = []
+    events: list[RunEvent] = []
+    receipts: list[str] = []
+    for key in _run_spec_keys(cos, spec.bucket, "runs"):
+        prior = _load_run_spec(cos, spec.bucket, key)
+        if (
+            prior.account_id != spec.account_id or prior.bucket != spec.bucket
+            or prior.region != spec.region or prior.resource_group_id != spec.resource_group_id
+            or prior.run_id == spec.run_id or prior.run_id in prior_ids
+        ):
+            raise IntegrityError("prior run inventory is ambiguous or outside controller scope")
+        with _cos_run_scope(cos, prior):
+            authorization = load_immutable_json(cos, prior, f"{prior.prefix}/evidence/authorization-consumed.json")
+            if authorization is None:
+                raise IntegrityError("prior launch authorization is missing")
+            receipt = _validated_usage_receipt(cos, prior, authorization)
+            context = load_immutable_json(cos, prior, f"{prior.prefix}/watchdog/cleanup-context.json")
+            if context is None:
+                raise IntegrityError("provider resource inventory disappeared")
+            latest = load_immutable_json(cos, prior, receipt["observation_keys"][1])
+            if latest is None:
+                raise IntegrityError("provider usage observation disappeared")
+            period = latest["resources"][0]["month"]
+            prior_usage = usage if period == usage.billing_period_start.strftime("%Y-%m") else fetch_usage_evidence(
+                usage_client, spec.account_id, period, (prior.run_id,), now=now,
+            )
+            current = usage_observation(prior, prior_usage, context)
+            if current is None or current["resources"] != latest["resources"]:
+                raise IntegrityError("prior provider usage changed after reconciliation")
+            events.extend(load_event_inventory(cos, prior).events)
+            receipts.append(hashlib.sha256(_canonical(receipt)).hexdigest())
+            prior_ids.append(prior.run_id)
+    usage = replace(
+        usage, reconciled_run_ids=tuple(prior_ids),
+        evidence_sha256=hashlib.sha256(_canonical({
+            "provider_usage": usage.evidence_sha256, "receipts": sorted(receipts),
+        })).hexdigest(),
+    )
+    decision = authorize_run(credit, usage, pricing, post_promo, spec, tuple(events), now=now)
+    return consume_authorization(
+        spec, decision, decision.evidence_hashes, watchdog_proof=watchdog_proof,
+        now=now, store=store, cos=cos,
+    )
+
+
 def consume_authorization(
     spec: RunSpec,
     decision: AuthorizationDecision,
@@ -146,6 +239,7 @@ def consume_authorization(
     watchdog_proof: WatchdogCanaryProof | None,
     now: datetime,
     store: Path | None = None,
+    cos: Any | None = None,
 ) -> AuthorizedRun:
     """Atomically turn one fresh decision nonce into one launch capability."""
 
@@ -180,6 +274,13 @@ def consume_authorization(
     lock_path = store / f"account-{account_key}.lock"
     pending_path = store / f"account-{account_key}.pending.json"
     path = store / f"nonce-{decision.nonce}.json"
+    if pending_path.exists() and cos is not None:
+        pending = json.loads(pending_path.read_bytes())
+        previous_spec = parse_run_spec(pending.get("run_spec"))
+        if previous_spec.account_id != spec.account_id or previous_spec.bucket != spec.bucket:
+            raise IntegrityError("pending authorization escapes controller account or bucket")
+        with _cos_run_scope(cos, previous_spec):
+            reconcile_pending_authorization(cos, previous_spec, store=store)
     with lock_path.open("a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         if pending_path.exists():
@@ -217,6 +318,99 @@ def consume_authorization(
         str(path),
         str(pending_path),
     )
+
+
+def _validated_usage_receipt(cos: Any, spec: RunSpec, consumed: dict[str, Any]) -> dict[str, Any]:
+    receipt = load_immutable_json(cos, spec, f"{spec.prefix}/evidence/usage-reconciliation.json")
+    if receipt is None:
+        raise IntegrityError("terminal usage reconciliation is missing")
+    if (
+        receipt.get("account_id") != spec.account_id
+        or receipt.get("run_id") != str(spec.run_id)
+        or receipt.get("provider_verified") is not True
+        or receipt.get("unreconciled_run_ids") != []
+        or receipt.get("reconciled_run_ids") != [str(spec.run_id)]
+        or receipt.get("run_spec_sha256") != run_spec_sha256(spec)
+        or receipt.get("consumption_sha256") != consumed.get("consumption_sha256")
+        or receipt.get("authorization_sha256") != consumed.get("authorization_sha256")
+    ):
+        raise IntegrityError("usage reconciliation is not terminal for this run")
+    events = load_event_inventory(cos, spec).events
+    validate_event_chain(events, spec)
+    if (
+        not events or events[-1].state != "deleted"
+        or receipt.get("terminal_event_sha256") != run_event_sha256(events[-1])
+    ):
+        raise IntegrityError("usage reconciliation differs from terminal event")
+    keys = receipt.get("observation_keys")
+    if (
+        not isinstance(keys, list) or len(keys) != 2
+        or any(not isinstance(key, str) or not key.startswith(
+            f"{spec.prefix}/evidence/usage-observations/"
+        ) for key in keys)
+    ):
+        raise IntegrityError("usage reconciliation observation binding is invalid")
+    first, later = (load_immutable_json(cos, spec, key) for key in keys)
+    if first is None or later is None or not stable_usage_observations(first, later, spec):
+        raise IntegrityError("provider usage has not stabilized")
+    if receipt.get("evidence_sha256") != later.get("evidence_sha256"):
+        raise IntegrityError("usage receipt differs from provider observation")
+    context = load_immutable_json(cos, spec, f"{spec.prefix}/watchdog/cleanup-context.json")
+    if context is None:
+        raise IntegrityError("provider resource inventory is missing")
+    for observation in (first, later):
+        observed_at = datetime.fromisoformat(observation["observed_at"])
+        if observed_at <= events[-1].observed_at:
+            raise IntegrityError("usage observation predates terminal deletion")
+        resources = observation["resources"]
+        usage = UsageEvidence(
+            account_id=spec.account_id, observed_at=observed_at,
+            billing_period_start=datetime.strptime(resources[0]["month"], "%Y-%m").replace(tzinfo=timezone.utc),
+            observed_usage_usd=Decimal("0"), resource_count=len(resources),
+            unreconciled_run_ids=(spec.run_id,), reconciled_run_ids=(),
+            evidence_sha256=observation["evidence_sha256"], provider_verified=True,
+            resource_records=tuple(_canonical(resource).decode() for resource in resources),
+        )
+        if usage_observation(spec, usage, context) != observation:
+            raise IntegrityError("usage observation lacks run resource and SKU binding")
+    return receipt
+
+
+def reconcile_pending_authorization(
+    cos: Any,
+    spec: RunSpec,
+    *,
+    store: Path | None = None,
+) -> None:
+    """Release the account fence only from a durable provider-usage receipt."""
+
+    store = (store or _AUTHORIZATION_DIR).resolve()
+    account_key = hashlib.sha256(spec.account_id.encode()).hexdigest()
+    lock_path = store / f"account-{account_key}.lock"
+    pending_path = store / f"account-{account_key}.pending.json"
+    with lock_path.open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        pending = pending_path.read_bytes()
+        try:
+            consumed = json.loads(pending)
+        except json.JSONDecodeError as exc:
+            raise IntegrityError("pending authorization is not JSON") from exc
+        if (
+            not isinstance(consumed, dict)
+            or consumed.get("run_id") != str(spec.run_id)
+            or consumed.get("run_spec_sha256") != run_spec_sha256(spec)
+        ):
+            raise IntegrityError("pending authorization differs from RunSpec")
+        receipt = _validated_usage_receipt(cos, spec, consumed)
+        receipt_body = _canonical(receipt)
+        marker = store / f"account-{account_key}.reconciled-{spec.run_id}.json"
+        _atomic_record(marker, receipt_body)
+        pending_path.unlink()
+        directory = os.open(store, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
 
 def _watchdog_proof_document(proof: WatchdogCanaryProof) -> dict[str, object]:
@@ -270,6 +464,7 @@ def _consumption_payload(
         "nonce": str(nonce),
         "run_id": str(spec.run_id),
         "run_spec_sha256": run_spec_sha256(spec),
+        "run_spec": run_spec_transport_document(spec),
         "watchdog_proof": _watchdog_proof_document(watchdog_proof),
     }
 
@@ -314,29 +509,32 @@ def _response_bytes(response: object) -> bytes:
 
 
 def _put_immutable(client: Any, spec: RunSpec, key: str, body: bytes) -> None:
-    digest = hashlib.sha256(body).hexdigest()
-    try:
-        client.put_object(
-            Bucket=spec.bucket,
-            Key=key,
-            Body=body,
-            Metadata={"sha256": digest, "length": str(len(body))},
-            ContentType="application/json",
-            IfNoneMatch="*",
-        )
-    except Exception as exc:
-        response = getattr(exc, "response", {})
-        error = response.get("Error", {}) if isinstance(response, dict) else {}
-        if str(error.get("Code")) not in {"PreconditionFailed", "412"}:
-            raise
-    stored = _response_bytes(client.get_object(Bucket=spec.bucket, Key=key))
-    if stored != body:
-        raise IntegrityError(f"immutable COS object differs: {key}")
+    put_immutable_json(client, spec, key, body)
 
 
 def publish_run_spec(client: Any, spec: RunSpec) -> None:
     body = _canonical(run_spec_transport_document(spec))
     _put_immutable(client, spec, f"{spec.prefix}/run-spec.json", body)
+
+
+def _publish_authorization_evidence(client: Any, run: AuthorizedRun) -> None:
+    spec = run.spec
+    body = _canonical(
+        {
+            "account_id": spec.account_id,
+            "authorization_sha256": run.authorization_sha256,
+            "consumption_sha256": run.consumption_sha256,
+            "estimated_usd": str(run.estimated_usd),
+            "run_id": str(spec.run_id),
+            "run_spec_sha256": run.run_spec_sha256,
+        }
+    )
+    _put_immutable(
+        client,
+        spec,
+        f"{spec.prefix}/evidence/authorization-consumed.json",
+        body,
+    )
 
 
 def _event_payload(state: str, details: object | None = None) -> str:
@@ -384,23 +582,10 @@ def _receipt_key(spec: RunSpec) -> str:
 def wait_for_training_receipt(client: Any, spec: RunSpec, *, deadline: float) -> dict[str, object]:
     with _hard_deadline(deadline):
         while time.monotonic() < deadline:
-            try:
-                body = _response_bytes(
-                    client.get_object(Bucket=spec.bucket, Key=_receipt_key(spec))
-                )
-            except Exception as exc:
-                response = getattr(exc, "response", {})
-                error = response.get("Error", {}) if isinstance(response, dict) else {}
-                if str(error.get("Code")) not in {"404", "NoSuchKey", "NotFound"}:
-                    raise
+            receipt = load_immutable_json(client, spec, _receipt_key(spec))
+            if receipt is None:
                 time.sleep(min(5.0, max(0.0, deadline - time.monotonic())))
                 continue
-            try:
-                receipt = json.loads(body)
-            except json.JSONDecodeError as exc:
-                raise IntegrityError("training receipt is not JSON") from exc
-            if _canonical(receipt) != body:
-                raise IntegrityError("training receipt is not canonical JSON")
             if not isinstance(receipt, dict) or receipt.get("run_id") != str(spec.run_id):
                 raise IntegrityError("training receipt run mismatch")
             if receipt.get("run_spec_sha256") != run_spec_sha256(spec):
@@ -537,6 +722,8 @@ def launch_training(
         verify_cos_configuration(clients.cos, spec)
     with _hard_deadline(_evidence_deadline(operation_deadline)):
         publish_run_spec(clients.cos, spec)
+    with _hard_deadline(_evidence_deadline(operation_deadline)):
+        _publish_authorization_evidence(clients.cos, run)
     _append_state(
         clients.cos,
         spec,
@@ -681,6 +868,10 @@ def launch_training(
                     instance_id,
                     deadline=min(time.monotonic() + _DELETE_TIMEOUT_SECONDS, total_deadline),
                     tagger=clients.tagger,
+                    cleanup_context_sink=lambda context: _put_immutable(
+                        clients.cos, spec, f"{spec.prefix}/watchdog/cleanup-context.json",
+                        _canonical(context),
+                    ),
                 )
                 terminal = _append_state(
                     clients.cos,

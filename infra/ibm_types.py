@@ -145,8 +145,10 @@ class UsageEvidence:
     observed_usage_usd: Decimal
     resource_count: int
     unreconciled_run_ids: tuple[UUID, ...]
+    reconciled_run_ids: tuple[UUID, ...]
     evidence_sha256: str
     provider_verified: bool
+    resource_records: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _nonempty(self.account_id, "account_id")
@@ -165,6 +167,12 @@ class UsageEvidence:
             raise TypeError("unreconciled_run_ids must contain UUID values")
         if len(set(self.unreconciled_run_ids)) != len(self.unreconciled_run_ids):
             raise ValueError("unreconciled_run_ids contains duplicate values")
+        if any(not isinstance(run_id, UUID) for run_id in self.reconciled_run_ids):
+            raise TypeError("reconciled_run_ids must contain UUID values")
+        if len(set(self.reconciled_run_ids)) != len(self.reconciled_run_ids):
+            raise ValueError("reconciled_run_ids contains duplicate values")
+        if set(self.unreconciled_run_ids) & set(self.reconciled_run_ids):
+            raise ValueError("a run cannot be both reconciled and unreconciled")
         _hash(self.evidence_sha256, "evidence_sha256")
         if not isinstance(self.provider_verified, bool):
             raise TypeError("provider_verified must be bool")

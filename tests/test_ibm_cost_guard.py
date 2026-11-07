@@ -168,7 +168,7 @@ def test_authorize_run_rejects_unreconciled_prior_run_even_if_deleted():
     assert "prior run usage is unreconciled" in decision.reasons
 
 
-def test_authorize_run_rejects_provider_usage_even_if_caller_omits_run_ids():
+def test_authorize_run_rejects_provider_usage_without_terminal_reconciliation():
     decision = _authorize(
         usage=replace(
             valid_usage(),
@@ -467,13 +467,16 @@ def test_authorize_run_rejects_invalid_prior_chain(mutation: str):
     assert "prior run event chain is invalid" in decision.reasons
 
 
-def test_prior_run_is_denied_until_authoritative_task7_reconciliation():
+def test_reconciled_deleted_prior_run_does_not_block_next_run():
     chain = _reconciled_prior_chain()
-    expected = "prior run history requires authoritative Task 7 usage reconciliation"
-    assert expected in _authorize(events=chain).reasons
-    decision = _authorize(events=chain)
-    assert not decision.allowed
-    assert expected in decision.reasons
+    decision = _authorize(
+        events=chain,
+        usage=replace(
+            valid_usage(),
+            reconciled_run_ids=(chain[0].run_id,),
+        ),
+    )
+    assert decision.allowed
 
 
 def test_authorized_run_rejects_forged_allowed_decision():

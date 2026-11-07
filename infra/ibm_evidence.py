@@ -392,11 +392,12 @@ def fetch_usage_evidence(
         raise ValueError("billing_period must use YYYY-MM") from exc
     if billing_period_start.strftime("%Y-%m") != billing_period:
         raise ValueError("billing_period must use YYYY-MM")
-    if billing_period != now.astimezone(timezone.utc).strftime("%Y-%m"):
-        raise ValueError("billing_period must be the current month")
+    if billing_period_start > now.astimezone(timezone.utc):
+        raise ValueError("billing_period cannot be in the future")
 
     pages: list[dict[str, Any]] = []
     resource_ids: set[str] = set()
+    resource_records: list[str] = []
     total = Decimal("0")
     start: str | None = None
     seen_offsets: set[str] = set()
@@ -425,7 +426,7 @@ def fetch_usage_evidence(
             pending = resource.get("pending")
             if pending is True:
                 raise ValueError("incomplete billing period response has pending usage")
-            if pending not in {None, False}:
+            if pending is not None and not isinstance(pending, bool):
                 raise ValueError("usage pending flag is invalid")
             resource_id = resource.get("resource_instance_id")
             if not isinstance(resource_id, str) or not resource_id:
@@ -433,6 +434,9 @@ def fetch_usage_evidence(
             if resource_id in resource_ids:
                 raise ValueError("duplicate usage resource")
             resource_ids.add(resource_id)
+            # IBM's optional pending flag describes classic infrastructure, not VPC.
+            normalized = {**resource, "pending": False}
+            resource_records.append(json.dumps(normalized, sort_keys=True, separators=(",", ":")))
             metrics = resource.get("usage")
             if not isinstance(metrics, list):
                 raise ValueError("usage metrics are missing")
@@ -456,7 +460,11 @@ def fetch_usage_evidence(
 
     raw_hash = hashlib.sha256(
         json.dumps(
-            {"account_id": account_id, "billing_period": billing_period, "pages": pages},
+            {
+                "account_id": account_id,
+                "billing_period": billing_period,
+                "pages": pages,
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -468,6 +476,89 @@ def fetch_usage_evidence(
         observed_usage_usd=total,
         resource_count=len(resource_ids),
         unreconciled_run_ids=pending_run_ids,
+        reconciled_run_ids=(),
         evidence_sha256=raw_hash,
         provider_verified=True,
+        resource_records=tuple(sorted(resource_records)),
     )
+
+
+def usage_observation(
+    spec: RunSpec, usage: UsageEvidence, context: dict[str, object]
+) -> dict[str, object] | None:
+    """Require actual metered, provider-deleted resources before starting the lag window."""
+
+    if usage.account_id != spec.account_id or not usage.provider_verified:
+        raise ValueError("usage observation is not provider verified for this account")
+    required = {
+        context[name]
+        for name in ("instance_id", "volume_id", "public_gateway_id", "public_gateway_floating_ip_id")
+    }
+    if len(required) != 4 or any(not isinstance(value, str) or not value for value in required):
+        raise ValueError("run metered resource inventory is incomplete")
+    records: dict[str, dict[str, Any]] = {}
+    for raw in usage.resource_records:
+        resource = json.loads(raw)
+        provider_id = resource["resource_instance_id"]
+        resource_id = provider_id.rsplit(":", 1)[-1]
+        if resource_id not in required:
+            continue
+        if resource_id in records:
+            raise ValueError("duplicate metered resource identity")
+        if (
+            resource.get("account_id") != spec.account_id
+            or resource.get("region") != spec.region
+            or resource.get("currency_code") != "USD"
+            or resource.get("month") != usage.billing_period_start.strftime("%Y-%m")
+            or resource.get("pending") is not False
+            or not all(isinstance(resource.get(name), str) and resource[name]
+                       for name in ("resource_id", "plan_id", "pricing_plan_id"))
+        ):
+            return None
+        try:
+            deleted_at = _parse_datetime(resource.get("deleted_at"), "deleted_at")
+        except (TypeError, ValueError):
+            return None
+        if deleted_at > usage.observed_at:
+            return None
+        metrics = resource.get("usage")
+        if not isinstance(metrics, list) or not metrics:
+            return None
+        for metric in metrics:
+            if (
+                not isinstance(metric, dict)
+                or not isinstance(metric.get("metric"), str)
+                or not metric["metric"]
+                or _usage_decimal(metric.get("quantity"), "usage quantity") <= 0
+            ):
+                return None
+            _usage_decimal(metric.get("cost"), "usage cost")
+        records[resource_id] = resource
+    if set(records) != required:
+        return None
+    return {
+        "account_id": spec.account_id,
+        "run_id": str(spec.run_id),
+        "run_spec_sha256": run_spec_sha256(spec),
+        "observed_at": usage.observed_at.isoformat(),
+        "evidence_sha256": usage.evidence_sha256,
+        "resources": [records[key] for key in sorted(records)],
+    }
+
+
+def stable_usage_observations(
+    first: dict[str, Any], later: dict[str, Any], spec: RunSpec
+) -> bool:
+    """Two complete provider observations must remain unchanged across a full lag day."""
+
+    for observation in (first, later):
+        if (
+            observation.get("account_id") != spec.account_id
+            or observation.get("run_id") != str(spec.run_id)
+            or observation.get("run_spec_sha256") != run_spec_sha256(spec)
+            or not observation.get("resources")
+        ):
+            return False
+    first_at = _parse_datetime(first.get("observed_at"), "observed_at")
+    later_at = _parse_datetime(later.get("observed_at"), "observed_at")
+    return later_at - first_at >= timedelta(hours=24) and first["resources"] == later["resources"]

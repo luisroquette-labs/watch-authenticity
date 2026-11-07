@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -21,6 +22,87 @@ class IntegrityError(RuntimeError):
 
 class EventChainFork(IntegrityError):
     """More than one immutable event exists at the same sequence."""
+
+
+def immutable_json_key(key: str, body: bytes) -> str:
+    digest = hashlib.sha256(body).hexdigest()
+    if re.search(r"[/-][0-9a-f]{64}\.json$", key):
+        if not key.endswith(f"{digest}.json"):
+            raise IntegrityError("immutable JSON key digest differs from body")
+        return key
+    return f"{key.removesuffix('.json')}-{digest}.json"
+
+
+def _json_bytes(response: object) -> bytes:
+    body = response.get("Body") if isinstance(response, dict) else None
+    reader = getattr(body, "read", None)
+    raw = reader() if callable(reader) else body
+    if not isinstance(raw, bytes):
+        raise IntegrityError("immutable JSON body is unavailable")
+    return raw
+
+
+def put_immutable_json(client: Any, spec: RunSpec, key: str, body: bytes) -> str:
+    """Use content addressing and verified readback; IBM PutObject has no IfNoneMatch."""
+
+    _require_bound_destination(client, spec.bucket, key=key)
+    key = immutable_json_key(key, body)
+    try:
+        existing = _json_bytes(client.get_object(Bucket=spec.bucket, Key=key))
+    except Exception as exc:
+        if not _not_found(exc):
+            raise
+    else:
+        if existing != body:
+            raise IntegrityError(f"immutable COS object differs: {key}")
+        return key
+    client.put_object(
+        Bucket=spec.bucket,
+        Key=key,
+        Body=body,
+        Metadata={"sha256": hashlib.sha256(body).hexdigest(), "length": str(len(body))},
+        ContentType="application/json",
+    )
+    if _json_bytes(client.get_object(Bucket=spec.bucket, Key=key)) != body:
+        raise IntegrityError(f"immutable COS object differs: {key}")
+    return key
+
+
+def load_immutable_json(client: Any, spec: RunSpec, key: str) -> dict[str, Any] | None:
+    _require_bound_destination(client, spec.bucket, key=key)
+    if not re.search(r"[/-][0-9a-f]{64}\.json$", key):
+        page = client.list_objects_v2(
+            Bucket=spec.bucket, Prefix=key.removesuffix(".json") + "-"
+        )
+        if not isinstance(page, dict) or page.get("IsTruncated"):
+            raise IntegrityError("immutable JSON listing is incomplete")
+        contents = page.get("Contents", [])
+        if not isinstance(contents, list) or len(contents) > 1:
+            raise IntegrityError("immutable JSON has conflicting objects")
+        if not contents:
+            return None
+        prefix = key.removesuffix(".json") + "-"
+        listed_key = contents[0].get("Key") if isinstance(contents[0], dict) else None
+        if not isinstance(listed_key, str) or not listed_key.startswith(prefix):
+            raise IntegrityError("immutable JSON key is missing")
+        key = listed_key
+    try:
+        body = _json_bytes(client.get_object(Bucket=spec.bucket, Key=key))
+    except Exception as exc:
+        if _not_found(exc):
+            return None
+        raise
+    if immutable_json_key(key, body) != key:
+        raise IntegrityError("immutable JSON key is not content addressed")
+    try:
+        document = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise IntegrityError("immutable COS document is not JSON") from exc
+    if not isinstance(document, dict) or body != json.dumps(
+        document, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode():
+        raise IntegrityError("immutable COS document is not canonical JSON")
+    return document
 
 
 @dataclass(frozen=True)
@@ -78,6 +160,7 @@ def create_cos_client(spec: RunSpec) -> Any:
     )
     setattr(client, "_watch_auth_bucket", spec.bucket)
     setattr(client, "_watch_auth_prefix", spec.prefix.strip("/"))
+    setattr(client, "_watch_auth_spec", spec)
     setattr(client, "_watch_auth_configuration_verified", False)
     return client
 
@@ -116,6 +199,9 @@ def _not_found(exc: Exception) -> bool:
     response = getattr(exc, "response", None)
     if not isinstance(response, dict):
         return False
+    metadata = response.get("ResponseMetadata")
+    if isinstance(metadata, dict) and metadata.get("HTTPStatusCode") == 404:
+        return True
     error = response.get("Error")
     return isinstance(error, dict) and str(error.get("Code")) in {
         "404",

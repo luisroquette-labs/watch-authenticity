@@ -343,7 +343,7 @@ def test_usage_loader_rejects_untrustworthy_provider_response(
         fetch_usage_evidence(client, "account-1", "2026-11", (), now=NOW)
 
 
-def test_usage_loader_requires_current_month_and_accepts_missing_pending():
+def test_usage_loader_rejects_future_month_and_accepts_missing_pending():
     client = Mock()
     resource = _usage_resource("instance-1")
     resource.pop("pending")
@@ -351,8 +351,10 @@ def test_usage_loader_requires_current_month_and_accepts_missing_pending():
         {"limit": 1, "count": 1, "resources": [resource]}
     )
     assert fetch_usage_evidence(client, "account-1", "2026-11", (), now=NOW).account_id == "account-1"
-    with pytest.raises(ValueError, match="current month"):
-        fetch_usage_evidence(client, "account-1", "2026-10", (), now=NOW)
+    with pytest.raises(ValueError, match="future"):
+        fetch_usage_evidence(client, "account-1", "2026-12", (), now=NOW)
+    resource["month"] = "2026-10"
+    assert fetch_usage_evidence(client, "account-1", "2026-10", (), now=NOW).resource_count == 1
 
 
 def test_usage_loader_uses_utc_month_at_timezone_boundary():
@@ -367,7 +369,7 @@ def test_usage_loader_uses_utc_month_at_timezone_boundary():
     usage = fetch_usage_evidence(client, "account-1", "2026-12", (), now=instant_local)
 
     assert usage.billing_period_start == datetime(2026, 12, 1, tzinfo=timezone.utc)
-    with pytest.raises(ValueError, match="current month"):
+    with pytest.raises(ValueError, match="billing period mismatch"):
         fetch_usage_evidence(client, "account-1", "2026-11", (), now=instant_local)
 
 

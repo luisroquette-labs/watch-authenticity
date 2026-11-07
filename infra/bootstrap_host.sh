@@ -302,7 +302,7 @@ launch_training_container() {
         --env HTTPS_PROXY=http://host.docker.internal:3128 \
         --env NO_PROXY=169.254.169.254 \
         --env "RUN_ID=${RUN_ID}" \
-        --env "RUN_SPEC_COS_URI=cos://${COS_BUCKET}/${COS_RUN_PREFIX}/run-spec.json" \
+        --env "RUN_SPEC_COS_URI=cos://${COS_BUCKET}/${COS_RUN_PREFIX}/run-spec-${RUN_SPEC_TRANSPORT_SHA256}.json" \
         --env "WATCH_AUTH_REGION=${IBM_REGION}" \
         --env "WATCH_AUTH_COS_ENDPOINT=${COS_ENDPOINT}" \
         --env "WATCH_AUTH_COS_BUCKET=${COS_BUCKET}" \

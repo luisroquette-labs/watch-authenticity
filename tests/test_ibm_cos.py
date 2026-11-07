@@ -106,7 +106,10 @@ class FakeCOS:
         if VersionId is not None and not VersionId.startswith("current:"):
             body = self.version_bodies[(Key, VersionId)]
         else:
-            body = self.objects[Key][0]
+            try:
+                body = self.objects[Key][0]
+            except KeyError as exc:
+                raise _NotFound() from exc
         return {"Body": io.BytesIO(body)}
 
     def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
@@ -234,6 +237,7 @@ def test_create_client_uses_trusted_profile_token_manager_only(monkeypatch):
     assert not ({"api_key", "aws_access_key_id", "aws_secret_access_key"} & kwargs.keys())
     assert getattr(created, "_watch_auth_bucket") == spec.bucket
     assert getattr(created, "_watch_auth_prefix") == spec.prefix
+    assert getattr(created, "_watch_auth_spec") == spec
     assert getattr(created, "_watch_auth_configuration_verified") is False
 
 
