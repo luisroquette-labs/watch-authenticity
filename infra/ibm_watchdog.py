@@ -8,7 +8,8 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from decimal import Decimal, InvalidOperation
+from typing import Any, Callable
 from uuid import uuid4
 
 from infra.ibm_cos import (
@@ -18,9 +19,15 @@ from infra.ibm_cos import (
     validate_event_chain,
     verify_cos_configuration,
 )
-from infra.ibm_evidence import run_spec_sha256
-from infra.ibm_types import ResourceLease, RunEvent, RunSpec, run_event_sha256
-from infra.ibm_vpc import AmbiguousProvisioning, _field, _list_named, delete_and_wait
+from infra.ibm_evidence import fetch_usage_evidence, run_spec_sha256
+from infra.ibm_types import ResourceLease, RunEvent, RunSpec, UsageEvidence, run_event_sha256
+from infra.ibm_vpc import (
+    AmbiguousProvisioning,
+    _field,
+    _list_named,
+    delete_and_wait,
+    restore_cleanup_context,
+)
 
 _LOG = logging.getLogger(__name__)
 _DELETE_TIMEOUT_SECONDS = 30 * 60
@@ -76,6 +83,142 @@ def _payload_hash(state: str, *, resource: str, reason: str) -> str:
     ).hexdigest()
 
 
+def _cos_status_code(exc: BaseException) -> int | None:
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return None
+    metadata = response.get("ResponseMetadata")
+    if isinstance(metadata, dict) and isinstance(metadata.get("HTTPStatusCode"), int):
+        return metadata["HTTPStatusCode"]
+    error = response.get("Error")
+    code = error.get("Code") if isinstance(error, dict) else None
+    if not isinstance(code, (str, int)) or isinstance(code, bool):
+        return None
+    try:
+        return int(code)
+    except (TypeError, ValueError):
+        return 404 if code in {"NoSuchKey", "NotFound"} else None
+
+
+def _put_immutable_document(cos: Any, spec: RunSpec, key: str, document: object) -> str:
+    body = _canonical(document)
+    digest = hashlib.sha256(body).hexdigest()
+    try:
+        cos.put_object(
+            Bucket=spec.bucket,
+            Key=key,
+            Body=body,
+            Metadata={"sha256": digest, "length": str(len(body))},
+            ContentType="application/json",
+            IfNoneMatch="*",
+        )
+    except Exception as exc:
+        if _cos_status_code(exc) != 412:
+            raise
+    observed = _body_bytes(cos.get_object(Bucket=spec.bucket, Key=key))
+    if observed != body:
+        raise IntegrityError(f"immutable COS object differs: {key}")
+    return digest
+
+
+def _load_optional_document(cos: Any, spec: RunSpec, key: str) -> dict[str, object] | None:
+    try:
+        body = _body_bytes(cos.get_object(Bucket=spec.bucket, Key=key))
+    except Exception as exc:
+        if _cos_status_code(exc) == 404:
+            return None
+        raise
+    try:
+        document = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise IntegrityError(f"COS object is not JSON: {key}") from exc
+    if not isinstance(document, dict) or body != _canonical(document):
+        raise IntegrityError(f"COS object is not canonical JSON: {key}")
+    return document
+
+
+def _cleanup_context_key(spec: RunSpec) -> str:
+    return f"{spec.prefix}/watchdog/cleanup-context.json"
+
+
+def _persist_cleanup_context(cos: Any, spec: RunSpec, context: dict[str, object]) -> None:
+    _put_immutable_document(cos, spec, _cleanup_context_key(spec), context)
+
+
+def _restore_cleanup_context(cos: Any, spec: RunSpec, instance_id: str) -> None:
+    context = _load_optional_document(cos, spec, _cleanup_context_key(spec))
+    if context is not None:
+        restore_cleanup_context(spec, instance_id, context)
+
+
+def _require_identity_or_durable_cleanup(
+    tagger: Any,
+    lease: ResourceLease,
+    cos: Any,
+    spec: RunSpec,
+    instance_id: str,
+) -> None:
+    try:
+        _require_identity_tags(tagger, lease)
+    except Exception:
+        context = _load_optional_document(cos, spec, _cleanup_context_key(spec))
+        if context is None:
+            raise
+        restore_cleanup_context(spec, instance_id, context)
+
+
+def _persist_deletion_receipts(
+    cos: Any, spec: RunSpec, context: dict[str, object]
+) -> dict[str, str]:
+    resources = {
+        "vpc-vsi": context["instance_id"],
+        "boot-volume": context["volume_id"],
+        "subnet": context["subnet_id"],
+        "public-gateway": context["public_gateway_id"],
+        "floating-ip": context["public_gateway_floating_ip_id"],
+    }
+    hashes: dict[str, str] = {}
+    for resource_type, resource_id in resources.items():
+        receipt = {
+            "provider_state": "404",
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+            "run_id": str(spec.run_id),
+        }
+        digest = hashlib.sha256(_canonical(receipt)).hexdigest()
+        key = f"{spec.prefix}/receipts/deletion/{resource_type}-{digest}.json"
+        hashes[resource_type] = _put_immutable_document(cos, spec, key, receipt)
+    return hashes
+
+
+def _persist_usage_reconciliation(
+    cos: Any, spec: RunSpec, usage: UsageEvidence
+) -> str:
+    if (
+        usage.account_id != spec.account_id
+        or usage.unreconciled_run_ids
+        or usage.reconciled_run_ids != (spec.run_id,)
+    ):
+        raise IntegrityError("provider usage is not terminally reconciled for this account")
+    document = {
+        "account_id": usage.account_id,
+        "evidence_sha256": usage.evidence_sha256,
+        "observed_at": usage.observed_at.isoformat(),
+        "observed_usage_usd": str(usage.observed_usage_usd),
+        "provider_verified": usage.provider_verified,
+        "resource_count": usage.resource_count,
+        "run_id": str(spec.run_id),
+        "reconciled_run_ids": [str(value) for value in usage.reconciled_run_ids],
+        "unreconciled_run_ids": [],
+    }
+    return _put_immutable_document(
+        cos,
+        spec,
+        f"{spec.prefix}/evidence/usage-reconciliation-{usage.evidence_sha256}.json",
+        document,
+    )
+
+
 def _append_state(
     cos: Any,
     spec: RunSpec,
@@ -86,8 +229,19 @@ def _append_state(
     instance_id: str | None,
     resource: str,
     reason: str,
+    details: dict[str, object] | None = None,
 ) -> tuple[RunEvent, ...]:
     current = _authoritative_events(cos, spec, events)
+    payload_sha256 = _payload_hash(state, resource=resource, reason=reason)
+    if details is not None:
+        payload = {"reason": reason, "resource": resource, "state": state, **details}
+        payload_sha256 = hashlib.sha256(_canonical(payload)).hexdigest()
+        _put_immutable_document(
+            cos,
+            spec,
+            f"{spec.prefix}/event-payloads/{payload_sha256}.json",
+            payload,
+        )
     event = RunEvent(
         event_id=uuid4(),
         run_id=spec.run_id,
@@ -97,7 +251,7 @@ def _append_state(
         instance_id=instance_id,
         lineage_sha256=run_spec_sha256(spec),
         previous_event_sha256=run_event_sha256(current[-1]),
-        payload_sha256=_payload_hash(state, resource=resource, reason=reason),
+        payload_sha256=payload_sha256,
     )
     append_event(cos, spec.bucket, spec.prefix, event)
     updated = _ordered(load_event_inventory(cos, spec).events, spec)
@@ -179,17 +333,18 @@ def _require_identity_tags(tagger: Any, lease: ResourceLease) -> None:
 
 
 def _log_state(
-    cos: Any,
     lease: ResourceLease,
     state: str,
     *,
     now: datetime,
     instance_id: str | None,
+    estimated_usd: Decimal,
+    observed_usage_usd: Decimal,
 ) -> None:
     record = {
         "age_seconds": max(0, int((now - lease.created_at).total_seconds())),
-        "estimated_usd": getattr(cos, "_watch_auth_estimated_usd", None),
-        "observed_usage_usd": getattr(cos, "_watch_auth_observed_usage_usd", None),
+        "estimated_usd": str(estimated_usd),
+        "observed_usage_usd": str(observed_usage_usd),
         "run_id": str(lease.run_id),
         "state": state,
         "vsi_id_hash": hashlib.sha256(instance_id.encode()).hexdigest() if instance_id else None,
@@ -204,12 +359,17 @@ def reconcile_expired_resources(
     events: tuple[RunEvent, ...],
     *,
     now: datetime,
+    estimated_usd: Decimal,
+    usage: UsageEvidence,
+    usage_reconciler: Callable[[], UsageEvidence],
 ) -> tuple[RunEvent, ...]:
     """Delete one expired, exactly-owned run; never create or broaden ownership."""
 
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("now must be timezone-aware")
     spec = _bound_spec(cos)
+    if usage.account_id != spec.account_id or not usage.provider_verified:
+        raise IntegrityError("watchdog usage evidence is not authoritative")
     ordered = _ordered(events, spec)
     _authoritative_events(cos, spec, ordered)
     if ordered[-1].state == "deleted":
@@ -222,13 +382,22 @@ def reconcile_expired_resources(
             raise AmbiguousProvisioning("run must have exactly one VSI lease")
         lease = _validate_lease(candidates[0], spec, now)
         if now < lease.expires_at:
-            _log_state(cos, lease, "active", now=now, instance_id=None)
+            _log_state(
+                lease,
+                "active",
+                now=now,
+                instance_id=None,
+                estimated_usd=estimated_usd,
+                observed_usage_usd=usage.observed_usage_usd,
+            )
             return ordered
         instance_id = _resolve_instance_id(vpc, spec, lease, ordered)
         tagger = getattr(vpc, "_watch_auth_tagger", None)
         if tagger is None:
             raise AmbiguousProvisioning("VPC client has no bound tagging client")
-        _require_identity_tags(tagger, lease)
+        _require_identity_or_durable_cleanup(
+            tagger, lease, cos, spec, instance_id
+        )
     except (AmbiguousProvisioning, ValueError) as exc:
         quarantine_lease = (
             candidates[0]
@@ -248,11 +417,12 @@ def reconcile_expired_resources(
             )
         if quarantine_lease is not None:
             _log_state(
-                cos,
                 quarantine_lease,
                 "quarantined",
                 now=now,
                 instance_id=instance_id,
+                estimated_usd=estimated_usd,
+                observed_usage_usd=usage.observed_usage_usd,
             )
         return ordered
 
@@ -268,14 +438,25 @@ def reconcile_expired_resources(
             resource="vpc-vsi",
             reason="lease_expired",
         )
-    _log_state(cos, lease, "deleting", now=now, instance_id=instance_id)
+    _log_state(
+        lease,
+        "deleting",
+        now=now,
+        instance_id=instance_id,
+        estimated_usd=estimated_usd,
+        observed_usage_usd=usage.observed_usage_usd,
+    )
     try:
+        _restore_cleanup_context(cos, spec, instance_id)
         delete_and_wait(
             vpc,
             spec,
             instance_id,
             deadline=time.monotonic() + _DELETE_TIMEOUT_SECONDS,
             tagger=getattr(vpc, "_watch_auth_tagger"),
+            cleanup_context_sink=lambda context: _persist_cleanup_context(
+                cos, spec, context
+            ),
         )
     except Exception as exc:
         ordered = _append_state(
@@ -288,8 +469,21 @@ def reconcile_expired_resources(
             resource="vpc-vsi",
             reason=type(exc).__name__,
         )
-        _log_state(cos, lease, "quarantined", now=now, instance_id=instance_id)
+        _log_state(
+            lease,
+            "quarantined",
+            now=now,
+            instance_id=instance_id,
+            estimated_usd=estimated_usd,
+            observed_usage_usd=usage.observed_usage_usd,
+        )
         raise
+    context = _load_optional_document(cos, spec, _cleanup_context_key(spec))
+    if context is None:
+        raise IntegrityError("durable cleanup context is missing after teardown")
+    deletion_receipts = _persist_deletion_receipts(cos, spec, context)
+    reconciled_usage = usage_reconciler()
+    usage_receipt_sha256 = _persist_usage_reconciliation(cos, spec, reconciled_usage)
     ordered = _append_state(
         cos,
         spec,
@@ -299,8 +493,21 @@ def reconcile_expired_resources(
         instance_id=instance_id,
         resource="all-run-resources",
         reason="provider_404_confirmed",
+        details={
+            "deletion_receipt_sha256": deletion_receipts,
+            "estimated_usd": str(estimated_usd),
+            "observed_usage_usd": str(reconciled_usage.observed_usage_usd),
+            "usage_receipt_sha256": usage_receipt_sha256,
+        },
     )
-    _log_state(cos, lease, "deleted", now=now, instance_id=instance_id)
+    _log_state(
+        lease,
+        "deleted",
+        now=now,
+        instance_id=instance_id,
+        estimated_usd=estimated_usd,
+        observed_usage_usd=reconciled_usage.observed_usage_usd,
+    )
     return ordered
 
 
@@ -357,6 +564,40 @@ def _load_run_spec(cos: Any, bucket: str, key: str) -> RunSpec:
     return spec
 
 
+def _load_authorization_estimate(cos: Any, spec: RunSpec) -> Decimal:
+    key = f"{spec.prefix}/evidence/authorization-consumed.json"
+    document = _load_optional_document(cos, spec, key)
+    if document is None:
+        raise IntegrityError("durable launch authorization is missing")
+    expected = {
+        "account_id",
+        "authorization_sha256",
+        "consumption_sha256",
+        "estimated_usd",
+        "run_id",
+        "run_spec_sha256",
+    }
+    if set(document) != expected:
+        raise IntegrityError("durable launch authorization schema differs")
+    if (
+        document["account_id"] != spec.account_id
+        or document["run_id"] != str(spec.run_id)
+        or document["run_spec_sha256"] != run_spec_sha256(spec)
+    ):
+        raise IntegrityError("durable launch authorization differs from RunSpec")
+    for name in ("authorization_sha256", "consumption_sha256"):
+        value = document[name]
+        if not isinstance(value, str) or len(value) != 64:
+            raise IntegrityError(f"durable launch {name} is invalid")
+    try:
+        estimated = Decimal(str(document["estimated_usd"]))
+    except InvalidOperation as exc:
+        raise IntegrityError("durable launch estimate is invalid") from exc
+    if not estimated.is_finite() or estimated < 0:
+        raise IntegrityError("durable launch estimate is invalid")
+    return estimated
+
+
 def _lease_for_run(
     vpc: Any, spec: RunSpec, events: tuple[RunEvent, ...]
 ) -> tuple[ResourceLease, ...]:
@@ -390,6 +631,7 @@ def run_watchdog_once(
     vpc: Any,
     tagger: Any,
     cos: Any,
+    usage_client: Any,
     *,
     account_id: str,
     resource_group_id: str,
@@ -422,8 +664,33 @@ def run_watchdog_once(
             events = load_event_inventory(cos, spec).events
             if not events or events[-1].state == "deleted":
                 continue
+            estimated_usd = _load_authorization_estimate(cos, spec)
+            billing_period = now.astimezone(timezone.utc).strftime("%Y-%m")
+            usage = fetch_usage_evidence(
+                usage_client,
+                spec.account_id,
+                billing_period,
+                (spec.run_id,),
+                now=now,
+            )
             leases = _lease_for_run(vpc, spec, events)
-            reconcile_expired_resources(vpc, cos, leases, events, now=now)
+            reconcile_expired_resources(
+                vpc,
+                cos,
+                leases,
+                events,
+                now=now,
+                estimated_usd=estimated_usd,
+                usage=usage,
+                usage_reconciler=lambda: fetch_usage_evidence(
+                    usage_client,
+                    spec.account_id,
+                    billing_period,
+                    (),
+                    now=now,
+                reconciled_run_ids=(spec.run_id,),
+                ),
+            )
         except Exception as exc:
             failures.append((run_id, type(exc).__name__))
             _LOG.error(
@@ -450,7 +717,7 @@ def main() -> None:
 
     import ibm_boto3
     from ibm_cloud_sdk_core.authenticators import ContainerAuthenticator
-    from ibm_platform_services import GlobalTaggingV1
+    from ibm_platform_services import GlobalTaggingV1, UsageReportsV4
     from ibm_vpc import VpcV1
 
     account_id = _required_env("WATCH_AUTH_ACCOUNT_ID")
@@ -459,14 +726,17 @@ def main() -> None:
     bucket = _required_env("WATCH_AUTH_COS_BUCKET")
     endpoint = _required_env("WATCH_AUTH_COS_ENDPOINT")
     service_instance_id = _required_env("WATCH_AUTH_COS_SERVICE_INSTANCE_ID")
+    trusted_profile_id = _required_env("WATCH_AUTH_TRUSTED_PROFILE_ID")
     runs_prefix = os.environ.get("WATCH_AUTH_RUNS_PREFIX", "runs").strip("/")
     if not runs_prefix:
         raise RuntimeError("WATCH_AUTH_RUNS_PREFIX must be non-empty")
 
-    auth = ContainerAuthenticator()
+    logging.basicConfig(level=logging.INFO)
+    auth = ContainerAuthenticator(iam_profile_id=trusted_profile_id)
     vpc = VpcV1(authenticator=auth)
     vpc.set_service_url(f"https://{region}.iaas.cloud.ibm.com/v1")
     tagger = GlobalTaggingV1(authenticator=auth)
+    usage = UsageReportsV4(authenticator=auth)
     cos = ibm_boto3.client(
         "s3",
         endpoint_url=endpoint,
@@ -477,6 +747,7 @@ def main() -> None:
         vpc,
         tagger,
         cos,
+        usage,
         account_id=account_id,
         resource_group_id=resource_group_id,
         region=region,

@@ -168,15 +168,14 @@ def authorize_run(
 
     if usage.unreconciled_run_ids:
         reasons.append("prior run usage is unreconciled")
-    if usage.resource_count:
-        reasons.append("existing IBM usage requires authoritative Task 7 reconciliation")
     groups = _event_groups(events)
+    prior_run_ids = set(groups) - {spec.run_id}
+    if usage.resource_count and not usage.reconciled_run_ids:
+        reasons.append("existing IBM usage requires authoritative Task 7 reconciliation")
+    if set(usage.reconciled_run_ids) != prior_run_ids:
+        reasons.append("provider usage reconciliation differs from prior run history")
     if spec.run_id in groups:
         reasons.append("run_id already has persisted events")
-    if groups:
-        reasons.append(
-            "prior run history requires authoritative Task 7 usage reconciliation"
-        )
     for run_id, chain in groups.items():
         if run_id == spec.run_id:
             continue

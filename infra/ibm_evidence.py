@@ -380,6 +380,7 @@ def fetch_usage_evidence(
     pending_run_ids: tuple[UUID, ...],
     *,
     now: datetime,
+    reconciled_run_ids: tuple[UUID, ...] = (),
 ) -> UsageEvidence:
     """Fetch and normalize every page of an IBM Usage Reports response."""
 
@@ -456,7 +457,13 @@ def fetch_usage_evidence(
 
     raw_hash = hashlib.sha256(
         json.dumps(
-            {"account_id": account_id, "billing_period": billing_period, "pages": pages},
+            {
+                "account_id": account_id,
+                "billing_period": billing_period,
+                "pages": pages,
+                "reconciled_run_ids": sorted(str(value) for value in reconciled_run_ids),
+                "unreconciled_run_ids": sorted(str(value) for value in pending_run_ids),
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -468,6 +475,7 @@ def fetch_usage_evidence(
         observed_usage_usd=total,
         resource_count=len(resource_ids),
         unreconciled_run_ids=pending_run_ids,
+        reconciled_run_ids=reconciled_run_ids,
         evidence_sha256=raw_hash,
         provider_verified=True,
     )

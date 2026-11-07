@@ -798,6 +798,55 @@ def _persist_cleanup(
             raise AmbiguousProvisioning("cleanup context differs from provider state")
 
 
+def restore_cleanup_context(
+    spec: RunSpec,
+    instance_id: str,
+    context: dict[str, object],
+) -> None:
+    """Restore an exact provider-validated cleanup context into this job's ledger."""
+
+    expected = {
+        "run_id": str(spec.run_id),
+        "account_id": spec.account_id,
+        "instance_id": instance_id,
+        "subnet_id": spec.subnet_id,
+        "public_gateway_id": spec.public_gateway_id,
+        "public_gateway_floating_ip_id": spec.public_gateway_floating_ip_id,
+    }
+    if set(context) != {*expected, "volume_id"} or any(
+        context.get(key) != value for key, value in expected.items()
+    ):
+        raise AmbiguousProvisioning("durable cleanup context differs from RunSpec")
+    volume_id = context.get("volume_id")
+    if not isinstance(volume_id, str) or not volume_id:
+        raise AmbiguousProvisioning("durable cleanup context has no boot volume ID")
+    _persist_cleanup(
+        spec,
+        instance_id,
+        volume_id,
+        spec.public_gateway_id,
+        spec.public_gateway_floating_ip_id,
+    )
+
+
+def _cleanup_context_document(
+    spec: RunSpec,
+    instance_id: str,
+    volume_id: str | None,
+) -> dict[str, object]:
+    if not isinstance(volume_id, str) or not volume_id:
+        raise AmbiguousProvisioning("cleanup context has no boot volume ID")
+    return {
+        "run_id": str(spec.run_id),
+        "account_id": spec.account_id,
+        "instance_id": instance_id,
+        "volume_id": volume_id,
+        "subnet_id": spec.subnet_id,
+        "public_gateway_id": spec.public_gateway_id,
+        "public_gateway_floating_ip_id": spec.public_gateway_floating_ip_id,
+    }
+
+
 def _load_cleanup(
     spec: RunSpec,
     instance_id: str,
@@ -2278,12 +2327,20 @@ def delete_and_wait(
     *,
     deadline: float,
     tagger: Any,
+    cleanup_context_sink: Callable[[dict[str, object]], None] | None = None,
 ) -> None:
     """Delete only resources bound to the RunSpec and confirm each with 404."""
 
     _validate_deadline(deadline)
     with run_lifecycle_lease(spec, deadline=deadline):
-        _delete_and_wait_locked(vpc, tagger, spec, instance_id, deadline=deadline)
+        _delete_and_wait_locked(
+            vpc,
+            tagger,
+            spec,
+            instance_id,
+            deadline=deadline,
+            cleanup_context_sink=cleanup_context_sink,
+        )
 
 
 def _read_instance_for_cleanup(
@@ -2323,6 +2380,7 @@ def _delete_and_wait_locked(
     instance_id: str,
     *,
     deadline: float,
+    cleanup_context_sink: Callable[[dict[str, object]], None] | None,
 ) -> None:
 
     now = time.monotonic()
@@ -2416,6 +2474,11 @@ def _delete_and_wait_locked(
             _persist_cleanup(
                 spec, instance_id, volume_id, gateway_id, floating_ip_id
             )
+
+    if cleanup_context_sink is not None:
+        cleanup_context_sink(
+            _cleanup_context_document(spec, instance_id, volume_id)
+        )
 
     if instance_exists:
         try:

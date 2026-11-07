@@ -219,6 +219,64 @@ def consume_authorization(
     )
 
 
+def reconcile_pending_authorization(
+    cos: Any,
+    spec: RunSpec,
+    *,
+    store: Path | None = None,
+) -> None:
+    """Release the account fence only from a durable provider-usage receipt."""
+
+    store = (store or _AUTHORIZATION_DIR).resolve()
+    account_key = hashlib.sha256(spec.account_id.encode()).hexdigest()
+    lock_path = store / f"account-{account_key}.lock"
+    pending_path = store / f"account-{account_key}.pending.json"
+    with lock_path.open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        pending = pending_path.read_bytes()
+        try:
+            consumed = json.loads(pending)
+        except json.JSONDecodeError as exc:
+            raise IntegrityError("pending authorization is not JSON") from exc
+        if (
+            not isinstance(consumed, dict)
+            or consumed.get("run_id") != str(spec.run_id)
+            or consumed.get("run_spec_sha256") != run_spec_sha256(spec)
+        ):
+            raise IntegrityError("pending authorization differs from RunSpec")
+        prefix = f"{spec.prefix}/evidence/usage-reconciliation-"
+        page = cos.list_objects_v2(Bucket=spec.bucket, Prefix=prefix)
+        contents = page.get("Contents") if isinstance(page, dict) else None
+        keys = [item.get("Key") for item in contents or [] if isinstance(item, dict)]
+        if page.get("IsTruncated") or len(keys) != 1 or not isinstance(keys[0], str):
+            raise IntegrityError("exactly one terminal usage reconciliation is required")
+        receipt_body = _response_bytes(
+            cos.get_object(Bucket=spec.bucket, Key=keys[0])
+        )
+        try:
+            receipt = json.loads(receipt_body)
+        except json.JSONDecodeError as exc:
+            raise IntegrityError("usage reconciliation is not JSON") from exc
+        if receipt_body != _canonical(receipt) or not isinstance(receipt, dict):
+            raise IntegrityError("usage reconciliation is not canonical JSON")
+        if (
+            receipt.get("account_id") != spec.account_id
+            or receipt.get("run_id") != str(spec.run_id)
+            or receipt.get("provider_verified") is not True
+            or receipt.get("unreconciled_run_ids") != []
+            or receipt.get("reconciled_run_ids") != [str(spec.run_id)]
+        ):
+            raise IntegrityError("usage reconciliation is not terminal for this run")
+        marker = store / f"account-{account_key}.reconciled-{spec.run_id}.json"
+        _atomic_record(marker, receipt_body)
+        pending_path.unlink()
+        directory = os.open(store, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+
 def _watchdog_proof_document(proof: WatchdogCanaryProof) -> dict[str, object]:
     return {
         "account_id": proof.account_id,
@@ -337,6 +395,26 @@ def _put_immutable(client: Any, spec: RunSpec, key: str, body: bytes) -> None:
 def publish_run_spec(client: Any, spec: RunSpec) -> None:
     body = _canonical(run_spec_transport_document(spec))
     _put_immutable(client, spec, f"{spec.prefix}/run-spec.json", body)
+
+
+def _publish_authorization_evidence(client: Any, run: AuthorizedRun) -> None:
+    spec = run.spec
+    body = _canonical(
+        {
+            "account_id": spec.account_id,
+            "authorization_sha256": run.authorization_sha256,
+            "consumption_sha256": run.consumption_sha256,
+            "estimated_usd": str(run.estimated_usd),
+            "run_id": str(spec.run_id),
+            "run_spec_sha256": run.run_spec_sha256,
+        }
+    )
+    _put_immutable(
+        client,
+        spec,
+        f"{spec.prefix}/evidence/authorization-consumed.json",
+        body,
+    )
 
 
 def _event_payload(state: str, details: object | None = None) -> str:
@@ -537,6 +615,8 @@ def launch_training(
         verify_cos_configuration(clients.cos, spec)
     with _hard_deadline(_evidence_deadline(operation_deadline)):
         publish_run_spec(clients.cos, spec)
+    with _hard_deadline(_evidence_deadline(operation_deadline)):
+        _publish_authorization_evidence(clients.cos, run)
     _append_state(
         clients.cos,
         spec,

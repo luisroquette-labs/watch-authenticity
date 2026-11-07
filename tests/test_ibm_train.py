@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -19,7 +21,13 @@ import training.worker as worker
 from infra.ibm_bootstrap import bootstrap_sha256_for
 from infra.ibm_cos import IntegrityError
 from infra.ibm_evidence import run_spec_sha256
-from infra.ibm_train import IBMClients, consume_authorization, launch_training, parse_run_spec
+from infra.ibm_train import (
+    IBMClients,
+    consume_authorization,
+    launch_training,
+    parse_run_spec,
+    reconcile_pending_authorization,
+)
 from infra.ibm_types import (
     AuthorizationDecision,
     InstanceRef,
@@ -161,6 +169,64 @@ def test_crash_after_consume_blocks_replay_and_different_run(tmp_path):
         )
 
     assert len(tuple(store.glob("account-*.pending.json"))) == 1
+
+
+def test_terminal_cos_usage_receipt_releases_account_fence(tmp_path):
+    spec = _spec()
+    decision = _decision(spec)
+    store = tmp_path / "auth"
+    consume_authorization(
+        spec,
+        decision,
+        decision.evidence_hashes,
+        watchdog_proof=_proof(spec),
+        now=NOW,
+        store=store,
+    )
+    receipt = subject._canonical(
+        {
+            "account_id": spec.account_id,
+            "evidence_sha256": "9" * 64,
+            "observed_at": NOW.isoformat(),
+            "observed_usage_usd": "2.50",
+            "provider_verified": True,
+            "resource_count": 1,
+            "run_id": str(spec.run_id),
+            "reconciled_run_ids": [str(spec.run_id)],
+            "unreconciled_run_ids": [],
+        }
+    )
+    key = f"{spec.prefix}/evidence/usage-reconciliation-{'9' * 64}.json"
+    cos = SimpleNamespace(
+        list_objects_v2=lambda **_kwargs: {
+            "Contents": [{"Key": key}],
+            "IsTruncated": False,
+        },
+        get_object=lambda **_kwargs: {"Body": io.BytesIO(receipt)},
+    )
+
+    reconcile_pending_authorization(cos, spec, store=store)
+
+    assert not tuple(store.glob("account-*.pending.json"))
+    marker = next(store.glob("account-*.reconciled-*.json"))
+    assert json.loads(marker.read_bytes())["provider_verified"] is True
+
+
+def test_authorization_estimate_is_published_without_local_paths(monkeypatch, tmp_path):
+    run = _authorized(tmp_path)
+    captured: list[tuple[str, bytes]] = []
+    monkeypatch.setattr(
+        subject,
+        "_put_immutable",
+        lambda _client, _spec, key, body: captured.append((key, body)),
+    )
+
+    subject._publish_authorization_evidence(object(), run)
+
+    key, body = captured[0]
+    assert key == f"{run.spec.prefix}/evidence/authorization-consumed.json"
+    assert json.loads(body)["estimated_usd"] == "14.33"
+    assert b"pending_record_path" not in body
 
 
 def test_default_account_fence_is_shared_across_working_directories(monkeypatch, tmp_path):
@@ -341,6 +407,7 @@ def _instance() -> InstanceRef:
 def _patch_lifecycle(monkeypatch, states, deleted, receipt_error=None):
     monkeypatch.setattr(subject, "verify_cos_configuration", lambda *_: None)
     monkeypatch.setattr(subject, "publish_run_spec", lambda *_: None)
+    monkeypatch.setattr(subject, "_publish_authorization_evidence", lambda *_: None)
 
     def append(_cos, spec, state, *, now, instance_id, details=None, deadline):
         del details, deadline

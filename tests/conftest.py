@@ -97,6 +97,7 @@ def valid_usage(now: datetime = NOW) -> UsageEvidence:
         observed_usage_usd=Decimal("0.00"),
         resource_count=0,
         unreconciled_run_ids=(),
+        reconciled_run_ids=(),
         evidence_sha256="2" * 64,
         provider_verified=True,
     )
