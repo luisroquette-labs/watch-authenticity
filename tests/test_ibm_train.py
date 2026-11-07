@@ -435,6 +435,8 @@ def _patch_lifecycle(monkeypatch, states, deleted, receipt_error=None):
     monkeypatch.setattr(subject, "verify_cos_configuration", lambda *_: None)
     monkeypatch.setattr(subject, "publish_run_spec", lambda *_: None)
     monkeypatch.setattr(subject, "_publish_authorization_evidence", lambda *_: None)
+    monkeypatch.setattr(subject, "load_immutable_json", lambda *_: {})
+    monkeypatch.setattr(subject, "persist_deletion_receipts", lambda *_: {})
 
     def append(_cos, spec, state, *, now, instance_id, details=None, deadline):
         del details, deadline
@@ -754,3 +756,31 @@ def test_worker_persists_failure_receipt_when_training_fails(monkeypatch):
     assert b'"status":"failed"' in receipts[0]
     assert b'"error_type":"RuntimeError"' in receipts[0]
     assert b"training failed" not in receipts[0]
+
+
+@pytest.mark.parametrize("failure", ["missing-context", "receipt-write"])
+def test_deletion_evidence_failure_does_not_claim_terminal_success(monkeypatch, tmp_path, failure):
+    states: list[str] = []
+    deleted: list[str] = []
+    _patch_lifecycle(monkeypatch, states, deleted)
+    monkeypatch.setattr(subject, "_RECOVERY_DIR", tmp_path / "recovery")
+    if failure == "missing-context":
+        monkeypatch.setattr(subject, "load_immutable_json", lambda *_: None)
+        expected = IntegrityError
+    else:
+        def fail_receipt(*_args):
+            raise OSError("receipt write failed")
+        monkeypatch.setattr(subject, "persist_deletion_receipts", fail_receipt)
+        expected = OSError
+
+    run = _authorized(tmp_path)
+    with pytest.raises(expected):
+        launch_training(
+            IBMClients(vpc=object(), tagger=object(), cos=object()),
+            run, confirm=True, now=NOW,
+        )
+
+    assert deleted == ["vsi-1"]
+    assert states[-1] == "deleting"
+    assert "deleted" not in states
+    assert Path(run.pending_record_path).is_file()

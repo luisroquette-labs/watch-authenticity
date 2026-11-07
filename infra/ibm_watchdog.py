@@ -18,6 +18,7 @@ from infra.ibm_cos import (
     immutable_json_key,
     load_event_inventory,
     load_immutable_json,
+    persist_deletion_receipts,
     put_immutable_json,
     validate_event_chain,
     verify_cos_configuration,
@@ -130,30 +131,6 @@ def _require_identity_or_durable_cleanup(
         if context is None:
             raise
         restore_cleanup_context(spec, instance_id, context)
-
-
-def _persist_deletion_receipts(
-    cos: Any, spec: RunSpec, context: dict[str, object]
-) -> dict[str, str]:
-    resources = {
-        "vpc-vsi": context["instance_id"],
-        "boot-volume": context["volume_id"],
-        "subnet": context["subnet_id"],
-        "public-gateway": context["public_gateway_id"],
-        "floating-ip": context["public_gateway_floating_ip_id"],
-    }
-    hashes: dict[str, str] = {}
-    for resource_type, resource_id in resources.items():
-        receipt = {
-            "provider_state": "404",
-            "resource_id": resource_id,
-            "resource_type": resource_type,
-            "run_id": str(spec.run_id),
-        }
-        digest = hashlib.sha256(_canonical(receipt)).hexdigest()
-        key = f"{spec.prefix}/receipts/deletion/{resource_type}-{digest}.json"
-        hashes[resource_type] = _put_immutable_document(cos, spec, key, receipt)
-    return hashes
 
 
 def _persist_usage_reconciliation(
@@ -483,7 +460,7 @@ def reconcile_expired_resources(
     context = _load_optional_document(cos, spec, _cleanup_context_key(spec))
     if context is None:
         raise IntegrityError("durable cleanup context is missing after teardown")
-    deletion_receipts = _persist_deletion_receipts(cos, spec, context)
+    deletion_receipts = persist_deletion_receipts(cos, spec, context)
     ordered = _append_state(
         cos,
         spec,
