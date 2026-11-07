@@ -1,4 +1,4 @@
-"""Bind an authenticated Code Engine readback to a Cloud Logs canary query."""
+"""Read credentialless Logs routing and Monitoring control-plane integration."""
 
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ class RoutingProbe:
     trusted_profile_id: str
     image_digest: str
     logs_crn: str
+    monitoring_crn: str
     nonce: str
 
     def __post_init__(self) -> None:
@@ -48,15 +49,17 @@ class RoutingProbe:
             raise RoutingProofUnavailable("invalid project GUID or nonce (PENDENTE E2E)") from None
         _require(bool(re.fullmatch(r"[^\s]+@sha256:[a-f0-9]{64}", self.image_digest)),
                  "probe image must be digest-pinned")
-        parts = self.logs_crn.split(":")
-        _require(len(parts) == 10 and parts[:5] == ["crn", "v1", "bluemix", "public", "logs"]
-                 and parts[6] == f"a/{self.account_id}" and parts[8:] == ["", ""],
-                 "Logs destination differs from the authorized account")
-        _require(bool(re.fullmatch(r"[a-z]{2}-[a-z]+", parts[5])), "invalid Logs region")
-        try:
-            _require(str(UUID(parts[7])) == parts[7], "invalid Logs instance GUID")
-        except ValueError:
-            raise RoutingProofUnavailable("invalid Logs instance GUID (PENDENTE E2E)") from None
+        for crn, service in ((self.logs_crn, "logs"), (self.monitoring_crn, "sysdig-monitor")):
+            _require(isinstance(crn, str), "observability destination must be a CRN")
+            parts = crn.split(":")
+            _require(len(parts) == 10
+                     and parts[:6] == ["crn", "v1", "bluemix", "public", service, self.region]
+                     and parts[6] == f"a/{self.account_id}" and parts[8:] == ["", ""],
+                     "observability destination differs from the authorized account or region")
+            try:
+                _require(str(UUID(parts[7])) == parts[7], "invalid observability instance GUID")
+            except ValueError:
+                raise RoutingProofUnavailable("invalid observability instance GUID (PENDENTE E2E)") from None
 
     @property
     def marker(self) -> str:
@@ -184,6 +187,87 @@ def verify_routing_probes(evidence: object = None, *, probe: RoutingProbe | None
              "Cloud Logs must return exactly one raw log line")
     occurrences = re.findall(rf"(?<![A-Za-z0-9_-]){re.escape(probe.nonce)}(?![A-Za-z0-9_-])", output)
     _require(len(occurrences) == 1, "Cloud Logs must return exactly one canary nonce occurrence")
+    _verify_monitoring(evidence, probe)
+
+
+def _verify_monitoring(evidence: dict[str, Any], probe: RoutingProbe) -> None:
+    # Native Resource Controller v2 and Metrics Routing v3 readbacks, not local flags:
+    # https://cloud.ibm.com/apidocs/metrics-router/metrics-router-v3
+    for label, crn in (("logs_instance", probe.logs_crn),
+                       ("monitoring_instance", probe.monitoring_crn)):
+        instance = _mapping(evidence.get(label), label)
+        _require(instance.get("guid") == crn.split(":")[7] and instance.get("crn") == crn
+                 and instance.get("account_id") == probe.account_id
+                 and instance.get("region_id") == probe.region and instance.get("state") == "active",
+                 "observability instance identity, region or active state differs")
+    targets = _mapping(evidence.get("metrics_targets"), "Metrics Routing targets").get("targets")
+    routes = _mapping(evidence.get("metrics_routes"), "Metrics Routing routes").get("routes")
+    settings = _mapping(evidence.get("metrics_settings"), "Metrics Routing settings")
+    _require(isinstance(targets, list) and isinstance(routes, list), "Metrics Routing inventory is malformed")
+    assert isinstance(targets, list) and isinstance(routes, list)
+    _require(all(isinstance(target, dict) for target in targets), "Metrics Routing target is malformed")
+    matches = [target for target in targets if target.get("destination_crn") == probe.monitoring_crn]
+    _require(len(matches) == 1, "Monitoring requires exactly one Metrics Routing target")
+    target = matches[0]
+    target_id = target.get("id")
+    try:
+        _require(isinstance(target_id, str) and str(UUID(target_id)) == target_id,
+                 "Metrics Routing target GUID is absent or invalid")
+    except ValueError:
+        raise RoutingProofUnavailable("invalid Metrics Routing target GUID (PENDENTE E2E)") from None
+    target_crn = (f"crn:v1:bluemix:public:metrics-router:{probe.region}:"
+                  f"a/{probe.account_id}::target:{target_id}")
+    _require(target.get("crn") == target_crn and target.get("target_type") == "sysdig_monitor",
+             "Metrics Routing target account, region or type differs")
+    _require(sum(item.get("id") == target_id for item in targets) == 1,
+             "Metrics Routing target identity is duplicated")
+    _require(_mapping(target.get("write_status"), "Metrics Routing write status").get("status") == "success",
+             "Metrics Routing has no successful platform integration")
+    defaults = settings.get("default_targets")
+    permitted = settings.get("permitted_target_regions")
+    _require(isinstance(defaults, list) and isinstance(permitted, list)
+             and all(isinstance(region, str) for region in permitted)
+             and (not permitted or probe.region in permitted),
+             "Metrics Routing default targets or permitted regions are absent or divergent")
+    assert isinstance(defaults, list)
+    # shortcut: single-destination routing only, extend when an authorized account needs complex rules.
+    _require(len(routes) <= 1, "multiple Metrics Routing routes need independent verification")
+    if not routes:
+        _require(len(defaults) == 1 and isinstance(defaults[0], dict)
+                 and defaults[0].get("id") == target_id and defaults[0].get("crn") == target_crn
+                 and defaults[0].get("target_type") == "sysdig_monitor",
+                 "Metrics Routing has no unique expected default destination")
+        return
+    route = _mapping(routes[0], "Metrics Routing route")
+    route_id = route.get("id")
+    _require(isinstance(route_id, str) and bool(route_id)
+             and route.get("crn") == (f"crn:v1:bluemix:public:metrics-router:global:"
+                                      f"a/{probe.account_id}::route:{route_id}"),
+             "Metrics Routing route account differs")
+    rules = route.get("rules")
+    _require(isinstance(rules, list) and len(rules) == 1,
+             "Metrics Routing requires exactly one verified rule")
+    assert isinstance(rules, list)
+    rule = _mapping(rules[0], "Metrics Routing rule")
+    destinations = rule.get("targets")
+    _require(rule.get("action", "send") == "send"
+             and isinstance(destinations, list) and len(destinations) == 1
+             and isinstance(destinations[0], dict) and destinations[0].get("id") == target_id
+             and destinations[0].get("crn") == target_crn
+             and destinations[0].get("target_type") == "sysdig_monitor",
+             "Metrics Routing rule drops metrics or targets another destination")
+    filters = rule.get("inclusion_filters", [])
+    _require(isinstance(filters, list), "Metrics Routing filters are malformed")
+    seen: set[str] = set()
+    for item in filters:
+        item = _mapping(item, "Metrics Routing filter")
+        operand = item.get("operand")
+        _require(isinstance(operand, str) and operand in {"location", "service_name"}
+                 and operand not in seen, "Metrics Routing filter scope is unsupported or duplicated")
+        seen.add(operand)
+        expected = probe.region if operand == "location" else "is"
+        _require(item.get("operator") in ("is", "in") and item.get("values") == [expected],
+                 "Metrics Routing filter does not cover the expected regional VPC metrics")
 
 
 def _cli(*arguments: str) -> str:
@@ -224,6 +308,13 @@ def collect_routing_probes(probe: RoutingProbe, *, now: datetime) -> dict[str, A
     readbacks.extend((label, iam + suffix, {}) for label, suffix in (
         ("trusted_profile", ""), ("trusted_profile_rules", "/rules"),
         ("trusted_profile_links", "/links")))
+    readbacks.extend((label, "https://resource-controller.cloud.ibm.com/v2/resource_instances/"
+                      + crn.split(":")[7], {}) for label, crn in (
+                          ("logs_instance", probe.logs_crn),
+                          ("monitoring_instance", probe.monitoring_crn)))
+    readbacks.extend((f"metrics_{name}",
+                      f"https://{probe.region}.metrics-router.cloud.ibm.com/api/v3/{name}", {})
+                     for name in ("targets", "routes", "settings"))
     for label, url, params in readbacks:
         try:
             response = requests.get(url, params=params,
@@ -231,9 +322,12 @@ def collect_routing_probes(probe: RoutingProbe, *, now: datetime) -> dict[str, A
                                     timeout=20, allow_redirects=False)
             _require(response.status_code == 200, f"IBM {label} readback failed")
             evidence[label] = _json(response.text)
+            if label == "trusted_profile_links":
+                _verify_source(evidence, probe, now)
         except requests.RequestException:
             raise RoutingProofUnavailable("IBM provider readback failed (PENDENTE E2E)") from None
     created_at = _verify_source(evidence, probe, now)
+    _verify_monitoring(evidence, probe)
     # IBM documents DataPrime fields and logs-raw; no invented SSE/records envelope.
     # https://cloud.ibm.com/docs/codeengine?topic=codeengine-logging
     # https://cloud.ibm.com/docs/cloud-logs?topic=cloud-logs-query-synch
@@ -262,14 +356,10 @@ def main() -> None:
             trusted_profile_id=os.environ["WATCH_AUTH_TRUSTED_PROFILE_ID"],
             image_digest=os.environ["WATCH_AUTH_WATCHDOG_IMAGE_DIGEST"],
             logs_crn=os.environ["WATCH_AUTH_PLATFORM_LOGS_CRN"],
+            monitoring_crn=os.environ["WATCH_AUTH_PLATFORM_MONITORING_CRN"],
             nonce=os.environ["WATCH_AUTH_ROUTING_PROBE_NONCE"],
         )
         collect_routing_probes(probe, now=datetime.now(timezone.utc))
-        # Logs routing does not establish the independent VPC metric delivery path.
-        raise RoutingProofUnavailable(
-            "IBM Monitoring routing proof is still unavailable: VPC platform metric delivery "
-            "must be observed independently (PENDENTE E2E)."
-        )
     except KeyError as exc:
         raise SystemExit(f"missing routing probe configuration: {exc.args[0]} (PENDENTE E2E)") from None
     except RoutingProofUnavailable as exc:

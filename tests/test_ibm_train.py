@@ -8,7 +8,7 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -75,12 +75,27 @@ def _proof(spec=None, **overrides):
         "canary_run_id": UUID("99999999-9999-4999-8999-999999999999"),
         "canary_instance_sha256": "7" * 64,
         "canary_deleted_at": NOW - timedelta(minutes=1),
+        "canary_nonce": UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        "canary_log_sha256": "a" * 64,
+        "canary_metric_sha256": "b" * 64,
+        "canary_404_sha256": "c" * 64,
         "observed_at": NOW,
         "expires_at": NOW + timedelta(hours=24),
         "evidence_sha256": "8" * 64,
         "provider_verified": True,
     }
     values.update(overrides)
+    for field, service, guid in (
+        ("logs_crn", "logs", "22222222-2222-4222-8222-222222222222"),
+        ("monitoring_crn", "sysdig-monitor", "44444444-4444-4444-8444-444444444444"),
+    ):
+        if field not in overrides:
+            values[field] = f"crn:v1:bluemix:public:{service}:{values['region']}:a/{values['account_id']}:{guid}::"
+    document = {name: value.isoformat() if isinstance(value, datetime)
+                else str(value) if isinstance(value, UUID) else value
+                for name, value in values.items() if name != "evidence_sha256"}
+    values["evidence_sha256"] = hashlib.sha256(
+        json.dumps(document, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return WatchdogCanaryProof(**values)
 
 
@@ -784,3 +799,67 @@ def test_deletion_evidence_failure_does_not_claim_terminal_success(monkeypatch, 
     assert states[-1] == "deleting"
     assert "deleted" not in states
     assert Path(run.pending_record_path).is_file()
+
+
+def test_watchdog_canary_identity_cannot_change_without_evidence_hash():
+    with pytest.raises(ValueError, match="canary evidence hash"):
+        replace(_proof(), canary_run_id=uuid4())
+
+
+@pytest.mark.parametrize("field", ["canary_nonce", "canary_log_sha256", "canary_metric_sha256", "canary_404_sha256"])
+def test_gpu_canary_observation_dimensions_are_mandatory(field):
+    from dataclasses import asdict
+
+    legacy = asdict(_proof())
+    del legacy[field]
+    with pytest.raises(TypeError, match=field):
+        WatchdogCanaryProof(**legacy)
+
+
+@pytest.mark.parametrize("field", ["canary_log_sha256", "canary_metric_sha256", "canary_404_sha256"])
+@pytest.mark.parametrize("value", [None, "", "not-a-sha256"])
+def test_gpu_canary_observation_hashes_fail_closed(field, value):
+    with pytest.raises(ValueError, match=field):
+        _proof(**{field: value})
+
+
+@pytest.mark.parametrize("field", ["canary_nonce", "canary_log_sha256", "canary_metric_sha256", "canary_404_sha256",
+                                  "logs_crn", "monitoring_crn"])
+def test_gpu_authorization_persists_all_bound_canary_dimensions(field, tmp_path):
+    from dataclasses import asdict
+
+    run = _authorized(tmp_path)
+    document = subject._watchdog_proof_document(run.watchdog_proof)
+    expected = asdict(run.watchdog_proof)[field]
+    assert document[field] == (str(expected) if isinstance(expected, UUID) else expected)
+
+
+def test_deletion_only_proof_no_longer_authorizes_gpu():
+    from dataclasses import asdict
+
+    legacy = asdict(_proof())
+    for field in ("canary_nonce", "canary_log_sha256", "canary_metric_sha256", "canary_404_sha256",
+                  "logs_crn", "monitoring_crn"):
+        del legacy[field]
+    with pytest.raises(TypeError, match="required"):
+        WatchdogCanaryProof(**legacy)
+
+
+@pytest.mark.parametrize("field", ["canary_log_sha256", "canary_metric_sha256", "canary_404_sha256"])
+def test_gpu_canary_observation_hash_cannot_change_without_bound_digest(field):
+    with pytest.raises(ValueError, match="canary evidence hash"):
+        replace(_proof(), **{field: "d" * 64})
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("canary_nonce", UUID("aaaaaaaa-aaaa-1aaa-8aaa-aaaaaaaaaaaa")),
+    ("canary_nonce", None), ("canary_nonce", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    ("logs_crn", None), ("monitoring_crn", "invalid-secret"),
+    ("logs_crn", "crn:v1:bluemix:public:logs:eu-de:a/other:22222222-2222-4222-8222-222222222222::"),
+    ("monitoring_crn", "crn:v1:bluemix:public:sysdig-monitor:us-south:a/other:44444444-4444-4444-8444-444444444444::"),
+    ("provider_verified", False),
+])
+def test_gpu_canary_nonce_destinations_and_provider_verification_fail_closed(field, value):
+    with pytest.raises(ValueError) as error:
+        _proof(**{field: value})
+    assert "invalid-secret" not in str(error.value)

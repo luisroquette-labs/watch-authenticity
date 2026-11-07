@@ -37,22 +37,7 @@ project=json.load(sys.stdin)
 if project.get("name")!=sys.argv[1]: raise SystemExit("selected Code Engine project differs from WATCH_AUTH_CE_PROJECT")' \
   "$WATCH_AUTH_CE_PROJECT" <<<"$project_json"
 
-# Platform integrations and provider-observed credentialless deliveries are proved before mutation.
-logs_json="$(ibmcloud resource service-instance --id "$WATCH_AUTH_PLATFORM_LOGS_CRN" --output json)"
-monitoring_json="$(ibmcloud resource service-instance --id "$WATCH_AUTH_PLATFORM_MONITORING_CRN" --output json)"
-python3 - "$WATCH_AUTH_ACCOUNT_ID" "$WATCH_AUTH_REGION" \
-  "$WATCH_AUTH_PLATFORM_LOGS_CRN" "$WATCH_AUTH_PLATFORM_MONITORING_CRN" \
-  "$logs_json" "$monitoring_json" <<'PY'
-import json, sys
-
-account, region, logs_crn, monitoring_crn, logs_raw, monitoring_raw = sys.argv[1:]
-instances = (json.loads(logs_raw), json.loads(monitoring_raw))
-for instance, crn in zip(instances, (logs_crn, monitoring_crn), strict=True):
-    if instance.get("guid") not in crn or instance.get("region_id") != region:
-        raise SystemExit("observability instance differs from selected account or region")
-    if f":a/{account}:" not in crn:
-        raise SystemExit("observability CRN differs from selected account")
-PY
+# The Python boundary verified exact active instances and platform integration.
 job_args=(
   --name watch-auth-watchdog
   --image "$WATCH_AUTH_WATCHDOG_IMAGE_DIGEST"

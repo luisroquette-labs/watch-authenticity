@@ -34,6 +34,7 @@ def probe():
         service_account="watchdog", trusted_profile_id="Profile-watchdog",
         image_digest="private.us-south.icr.io/watch/watchdog@sha256:" + "a" * 64,
         logs_crn="crn:v1:bluemix:public:logs:us-south:a/account-1:22222222-2222-4222-8222-222222222222::",
+        monitoring_crn="crn:v1:bluemix:public:sysdig-monitor:us-south:a/account-1:44444444-4444-4444-8444-444444444444::",
         nonce="33333333-3333-4333-8333-333333333333",
     )
 
@@ -52,7 +53,22 @@ def provider_evidence(probe):
            "created_at": (NOW - timedelta(minutes=1)).isoformat()}
     run["run_env_variables"].append({"name": "WATCH_AUTH_ROUTING_PROBE_NONCE", "type": "literal",
                                      "value": probe.nonce})
+    target = {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "crn": f"crn:v1:bluemix:public:metrics-router:{probe.region}:a/{probe.account_id}::target:55555555-5555-4555-8555-555555555555",
+        "destination_crn": probe.monitoring_crn, "target_type": "sysdig_monitor",
+        "write_status": {"status": "success"}, "managed_by": "account",
+    }
+    instances = {label: {"guid": crn.split(":")[7], "crn": crn, "account_id": probe.account_id,
+                         "region_id": probe.region, "state": "active"}
+                 for label, crn in (("logs_instance", probe.logs_crn),
+                                   ("monitoring_instance", probe.monitoring_crn))}
     return {
+        **instances,
+        "metrics_targets": {"targets": [target]},
+        "metrics_routes": {"routes": []},
+        "metrics_settings": {"default_targets": [{key: target[key] for key in ("id", "crn", "target_type")}],
+                             "permitted_target_regions": [probe.region]},
         "project": {"id": probe.project_id, "name": probe.project_name,
                     "crn": f"crn:v1:bluemix:public:codeengine:{probe.region}:a/{probe.account_id}:{probe.project_id}::"},
         "job": job, "job_run": run,
@@ -87,7 +103,8 @@ def providers(monkeypatch, provider_evidence):
     cli_mock = Mock(side_effect=cli)
     http = Mock(side_effect=[SimpleNamespace(status_code=200, text=json.dumps(provider_evidence[key]))
                              for key in ("project", "job", "job_run", "trusted_profile",
-                                         "trusted_profile_rules", "trusted_profile_links")])
+                                         "trusted_profile_rules", "trusted_profile_links", "logs_instance",
+                                         "monitoring_instance", "metrics_targets", "metrics_routes", "metrics_settings")])
     monkeypatch.setattr(routing.subprocess, "run", cli_mock)
     monkeypatch.setattr(routing.requests, "get", http)
     return cli_mock, http
@@ -191,7 +208,11 @@ def test_collector_reads_official_ce_api_and_queries_exact_provider_metadata(pro
         f"https://api.us-south.codeengine.cloud.ibm.com/v2/projects/{probe.project_id}{suffix}"
         for suffix in ("", f"/jobs/{probe.job_name}", f"/job_runs/{probe.job_run_name}")
     ] + [f"https://iam.cloud.ibm.com/v1/profiles/{probe.trusted_profile_id}{suffix}"
-         for suffix in ("", "/rules", "/links")]
+         for suffix in ("", "/rules", "/links")] + [
+        "https://resource-controller.cloud.ibm.com/v2/resource_instances/" + crn.split(":")[7]
+        for crn in (probe.logs_crn, probe.monitoring_crn)
+    ] + [f"https://{probe.region}.metrics-router.cloud.ibm.com/api/v3/{name}"
+         for name in ("targets", "routes", "settings")]
     for call in http.call_args_list:
         assert call.kwargs["headers"]["Authorization"] == "Bearer ephemeral-test-token"
         assert call.kwargs["allow_redirects"] is False
@@ -284,7 +305,7 @@ def test_main_blocks_without_canary_configuration(monkeypatch):
         main()
 
 
-def test_main_keeps_monitoring_proof_independent(monkeypatch, probe, provider_evidence):
+def test_main_accepts_provider_verified_control_plane(monkeypatch, probe, provider_evidence):
     environment = {
         "WATCH_AUTH_ACCOUNT_ID": probe.account_id, "WATCH_AUTH_REGION": probe.region,
         "WATCH_AUTH_CE_PROJECT_ID": probe.project_id, "WATCH_AUTH_CE_PROJECT": probe.project_name,
@@ -292,18 +313,19 @@ def test_main_keeps_monitoring_proof_independent(monkeypatch, probe, provider_ev
         "WATCH_AUTH_WATCHDOG_SERVICE_ACCOUNT": probe.service_account,
         "WATCH_AUTH_TRUSTED_PROFILE_ID": probe.trusted_profile_id,
         "WATCH_AUTH_WATCHDOG_IMAGE_DIGEST": probe.image_digest,
-        "WATCH_AUTH_PLATFORM_LOGS_CRN": probe.logs_crn, "WATCH_AUTH_ROUTING_PROBE_NONCE": probe.nonce,
+        "WATCH_AUTH_PLATFORM_LOGS_CRN": probe.logs_crn,
+        "WATCH_AUTH_PLATFORM_MONITORING_CRN": probe.monitoring_crn, "WATCH_AUTH_ROUTING_PROBE_NONCE": probe.nonce,
     }
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
     collector = Mock(return_value=provider_evidence)
     monkeypatch.setattr(routing, "collect_routing_probes", collector)
-    with pytest.raises(SystemExit, match="Monitoring routing proof is still unavailable"):
-        main()
+    main()
     collector.assert_called_once()
 
 
-def test_deploy_missing_nonce_stops_before_any_ibm_cli_call(tmp_path):
+@pytest.mark.parametrize("blocker", ["missing-nonce", "invalid-monitoring"])
+def test_deploy_invalid_proof_stops_before_any_ibm_cli_call(tmp_path, blocker):
     marker = tmp_path / "provider-called"
     fake_cli = tmp_path / "ibmcloud"
     fake_cli.write_text('#!/bin/sh\nprintf invoked > "$WATCH_TEST_CALLS"\nexit 0\n')
@@ -323,10 +345,14 @@ def test_deploy_missing_nonce_stops_before_any_ibm_cli_call(tmp_path):
         "WATCH_AUTH_TRUSTED_PROFILE_ID": "profile-1", "WATCH_AUTH_PLATFORM_LOGS_CRN": "logs",
         "WATCH_AUTH_PLATFORM_MONITORING_CRN": "monitoring",
     }
+    if blocker == "invalid-monitoring":
+        environment["WATCH_AUTH_ROUTING_PROBE_NONCE"] = "33333333-3333-4333-8333-333333333333"
+        environment["WATCH_AUTH_PLATFORM_LOGS_CRN"] = "crn:v1:bluemix:public:logs:us-south:a/account-1:22222222-2222-4222-8222-222222222222::"
     result = subprocess.run(["bash", "scripts/deploy_ibm_watchdog.sh"], cwd=root, env=environment,
                             capture_output=True, text=True, timeout=10)
     assert result.returncode != 0
-    assert "WATCH_AUTH_ROUTING_PROBE_NONCE" in result.stderr
+    expected = "WATCH_AUTH_ROUTING_PROBE_NONCE" if blocker == "missing-nonce" else "observability destination"
+    assert expected in result.stderr
     assert not marker.exists()
 
 
@@ -408,4 +434,153 @@ def test_authenticated_iam_failure_never_queries_logs(probe, providers, status):
 def test_malformed_iam_links_fail_with_concrete_blocker(probe, provider_evidence, links):
     provider_evidence["trusted_profile_links"]["links"] = links
     with pytest.raises(RoutingProofUnavailable, match="IAM"):
+        verify_routing_probes(provider_evidence, probe=probe, now=NOW)
+
+
+@pytest.mark.parametrize("section", ["logs_instance", "monitoring_instance", "metrics_targets",
+                                      "metrics_routes", "metrics_settings"])
+def test_missing_monitoring_control_plane_readback_blocks(probe, provider_evidence, section):
+    del provider_evidence[section]
+    with pytest.raises(RoutingProofUnavailable):
+        verify_routing_probes(provider_evidence, probe=probe, now=NOW)
+
+
+@pytest.mark.parametrize("section", ["logs_instance", "monitoring_instance"])
+@pytest.mark.parametrize(("field", "value"), [
+    ("guid", "other-instance"), ("crn", "other-crn"), ("account_id", "other-account"),
+    ("region_id", "eu-de"), ("state", "removed"), ("state", None),
+])
+def test_observability_instances_are_exact_active_account_and_region(probe, provider_evidence, section, field, value):
+    provider_evidence[section][field] = value
+    with pytest.raises(RoutingProofUnavailable, match="observability instance"):
+        verify_routing_probes(provider_evidence, probe=probe, now=NOW)
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("id", None), ("id", "other-instance"), ("crn", "other-account-or-region"),
+    ("destination_crn", "other-monitoring-instance"), ("target_type", "logs"),
+    ("write_status", None), ("write_status", {"status": "failed", "reason": "secret"}),
+    ("write_status", {"status": True}),
+])
+def test_monitoring_target_identity_and_integration_are_provider_verified(probe, provider_evidence, field, value):
+    provider_evidence["metrics_targets"]["targets"][0][field] = value
+    with pytest.raises(RoutingProofUnavailable) as error:
+        verify_routing_probes(provider_evidence, probe=probe, now=NOW)
+    assert "secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "duplicate", "duplicate-id", "malformed"])
+def test_missing_or_ambiguous_monitoring_target_blocks(probe, provider_evidence, mutation):
+    targets = provider_evidence["metrics_targets"]["targets"]
+    if mutation == "missing":
+        targets.clear()
+    elif mutation == "duplicate":
+        targets.append(copy.deepcopy(targets[0]))
+    elif mutation == "duplicate-id":
+        targets.append({**targets[0], "destination_crn": "other"})
+    else:
+        targets.append(None)
+    with pytest.raises(RoutingProofUnavailable):
+        verify_routing_probes(provider_evidence, probe=probe, now=NOW)
+
+
+@pytest.mark.parametrize("defaults", [None, [], [None], [{"id": "wrong"}], [{"id": "x"}, {"id": "x"}]])
+def test_missing_or_ambiguous_default_target_blocks(probe, provider_evidence, defaults):
+    provider_evidence["metrics_settings"]["default_targets"] = defaults
+    with pytest.raises(RoutingProofUnavailable):
+        verify_routing_probes(provider_evidence, probe=probe, now=NOW)
+
+
+@pytest.fixture
+def explicit_route(probe, provider_evidence):
+    target = provider_evidence["metrics_settings"]["default_targets"][0]
+    rule = {"action": "send", "targets": [copy.deepcopy(target)], "inclusion_filters": [
+        {"operand": "location", "operator": "is", "values": [probe.region]},
+        {"operand": "service_name", "operator": "is", "values": ["is"]},
+    ]}
+    route = {"id": "66666666-6666-4666-8666-666666666666",
+             "crn": f"crn:v1:bluemix:public:metrics-router:global:a/{probe.account_id}::route:66666666-6666-4666-8666-666666666666",
+             "rules": [rule]}
+    provider_evidence["metrics_routes"]["routes"] = [route]
+    provider_evidence["metrics_settings"]["default_targets"] = []
+    return route
+
+
+@pytest.mark.parametrize("filters", [[], ["location"], ["service_name"], ["location", "service_name"]])
+def test_single_official_send_route_covers_platform_vpc_metrics(probe, provider_evidence, explicit_route, filters):
+    rule = explicit_route["rules"][0]
+    rule["inclusion_filters"] = [item for item in rule["inclusion_filters"] if item["operand"] in filters]
+    verify_routing_probes(provider_evidence, probe=probe, now=NOW)
+
+
+@pytest.mark.parametrize("mutation", ["drop", "other-account", "other-region", "other-service", "resource-filter",
+    "duplicate-filter", "multiple-rules", "multiple-routes", "other-target", "multiple-targets"])
+def test_divergent_or_complex_routes_remain_blocked(probe, provider_evidence, explicit_route, mutation):
+    rule = explicit_route["rules"][0]
+    if mutation == "drop":
+        rule["action"] = "drop"
+    elif mutation == "other-account":
+        explicit_route["crn"] = explicit_route["crn"].replace(probe.account_id, "other")
+    elif mutation == "other-region":
+        rule["inclusion_filters"][0]["values"] = ["eu-de"]
+    elif mutation == "other-service":
+        rule["inclusion_filters"][1]["values"] = ["codeengine"]
+    elif mutation == "resource-filter":
+        rule["inclusion_filters"].append({"operand": "resource", "operator": "is", "values": ["another-vsi"]})
+    elif mutation == "duplicate-filter":
+        rule["inclusion_filters"].append(copy.deepcopy(rule["inclusion_filters"][0]))
+    elif mutation == "multiple-rules":
+        explicit_route["rules"].append(copy.deepcopy(rule))
+    elif mutation == "multiple-routes":
+        provider_evidence["metrics_routes"]["routes"].append(copy.deepcopy(explicit_route))
+    elif mutation == "other-target":
+        rule["targets"][0]["id"] = "other"
+    else:
+        rule["targets"].append(copy.deepcopy(rule["targets"][0]))
+    with pytest.raises(RoutingProofUnavailable):
+        verify_routing_probes(provider_evidence, probe=probe, now=NOW)
+
+
+@pytest.mark.parametrize("permitted", [None, "us-south", ["eu-de"], [None]])
+def test_metrics_permitted_regions_fail_closed(probe, provider_evidence, permitted):
+    provider_evidence["metrics_settings"]["permitted_target_regions"] = permitted
+    with pytest.raises(RoutingProofUnavailable):
+        verify_routing_probes(provider_evidence, probe=probe, now=NOW)
+
+
+@pytest.mark.parametrize("stage", range(6, 11))
+@pytest.mark.parametrize("failure", [401, 403, 404, 500, 302, requests.Timeout("secret")])
+def test_monitoring_provider_failure_prevents_logs_query(probe, providers, stage, failure):
+    cli, http = providers
+    responses = list(http.side_effect)
+    responses[stage] = (failure if isinstance(failure, Exception)
+                        else SimpleNamespace(status_code=failure, text="secret"))
+    http.side_effect = responses
+    with pytest.raises(RoutingProofUnavailable) as error:
+        collect_routing_probes(probe, now=NOW)
+    assert "secret" not in str(error.value)
+    assert cli.call_count == 1
+
+
+@pytest.mark.parametrize("change", [
+    lambda crn: crn.replace("account-1", "other-account"),
+    lambda crn: crn.replace("us-south", "eu-de"),
+    lambda crn: crn.replace("sysdig-monitor", "logs"),
+    lambda crn: crn.replace("44444444-4444-4444-8444-444444444444", "attacker.example"),
+])
+def test_monitoring_destination_cannot_be_self_declared_elsewhere(probe, change):
+    with pytest.raises(RoutingProofUnavailable):
+        replace(probe, monitoring_crn=change(probe.monitoring_crn))
+
+
+def test_returned_monitoring_proof_never_contains_session_bearer(probe, providers):
+    proof = collect_routing_probes(probe, now=NOW)
+    assert "ephemeral-test-token" not in json.dumps(proof)
+    assert "Authorization" not in json.dumps(proof)
+
+
+@pytest.mark.parametrize(("field", "value"), [("crn", "other-account"), ("target_type", "logs")])
+def test_explicit_route_target_descriptor_cannot_diverge(probe, provider_evidence, explicit_route, field, value):
+    explicit_route["rules"][0]["targets"][0][field] = value
+    with pytest.raises(RoutingProofUnavailable, match="destination"):
         verify_routing_probes(provider_evidence, probe=probe, now=NOW)

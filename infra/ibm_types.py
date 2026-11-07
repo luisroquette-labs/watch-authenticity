@@ -399,7 +399,7 @@ def run_spec_transport_sha256(spec: RunSpec) -> str:
 
 @dataclass(frozen=True)
 class WatchdogCanaryProof:
-    """Provider-backed proof that an independent watchdog deleted its canary."""
+    """Provider canary evidence; control-plane routing alone cannot authorize GPU."""
 
     account_id: str
     region: str
@@ -408,6 +408,12 @@ class WatchdogCanaryProof:
     canary_run_id: UUID
     canary_instance_sha256: str
     canary_deleted_at: datetime
+    canary_nonce: UUID
+    logs_crn: str
+    monitoring_crn: str
+    canary_log_sha256: str
+    canary_metric_sha256: str
+    canary_404_sha256: str
     observed_at: datetime
     expires_at: datetime
     evidence_sha256: str
@@ -431,6 +437,29 @@ class WatchdogCanaryProof:
         if self.expires_at != self.observed_at + timedelta(hours=24):
             raise ValueError("watchdog proof must expire after exactly 24 hours")
         _hash(self.evidence_sha256, "evidence_sha256")
+        if not isinstance(self.canary_nonce, UUID) or self.canary_nonce.version != 4:
+            raise ValueError("canary nonce must be UUID4")
+        for crn, service in ((self.logs_crn, "logs"), (self.monitoring_crn, "sysdig-monitor")):
+            _crn(crn, "canary observability destination")
+            parts = crn.split(":")
+            if (len(parts) != 10
+                    or parts[:7] != ["crn", "v1", "bluemix", "public", service,
+                                     self.region, f"a/{self.account_id}"]
+                    or parts[8:] != ["", ""]):
+                raise ValueError("canary observability destination differs from account or region")
+            _uuid_string(parts[7], "canary observability instance")
+        for name in ("canary_log_sha256", "canary_metric_sha256", "canary_404_sha256"):
+            _hash(getattr(self, name), name)
+        document = {}
+        for field in fields(self):
+            if field.name == "evidence_sha256":
+                continue
+            value = getattr(self, field.name)
+            document[field.name] = (value.isoformat() if isinstance(value, datetime)
+                                    else str(value) if isinstance(value, UUID) else value)
+        digest = hashlib.sha256(json.dumps(document, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if self.evidence_sha256 != digest:
+            raise ValueError("canary evidence hash differs from its identity or observations")
         if self.provider_verified is not True:
             raise ValueError("watchdog proof must be provider verified")
 
