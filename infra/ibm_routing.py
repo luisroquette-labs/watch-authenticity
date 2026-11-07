@@ -8,7 +8,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
 import requests
@@ -294,9 +294,12 @@ def _json(raw: str) -> dict[str, Any]:
         raise RoutingProofUnavailable("malformed provider JSON (PENDENTE E2E)") from None
 
 
-def collect_routing_probes(probe: RoutingProbe, *, now: datetime) -> dict[str, Any]:
+def collect_routing_probes(
+    probe: RoutingProbe, *, now: datetime, http: Any = requests,
+    cli: Callable[..., str] = _cli, message: str | None = None,
+) -> dict[str, Any]:
     """Read authenticated providers directly; never accept local proof files or flags."""
-    token = _json(_cli("iam", "oauth-tokens", "--output", "json")).get("iam_token")
+    token = _json(cli("iam", "oauth-tokens", "--output", "json")).get("iam_token")
     _require(isinstance(token, str) and token.startswith("Bearer ") and len(token) > 7,
              "IBM session has no IAM bearer token")
     base = f"https://api.{probe.region}.codeengine.cloud.ibm.com/v2/projects/{probe.project_id}"
@@ -317,7 +320,7 @@ def collect_routing_probes(probe: RoutingProbe, *, now: datetime) -> dict[str, A
                      for name in ("targets", "routes", "settings"))
     for label, url, params in readbacks:
         try:
-            response = requests.get(url, params=params,
+            response = http.get(url, params=params,
                                     headers={"Authorization": token, "Accept": "application/json"},
                                     timeout=20, allow_redirects=False)
             _require(response.status_code == 200, f"IBM {label} readback failed")
@@ -334,9 +337,11 @@ def collect_routing_probes(probe: RoutingProbe, *, now: datetime) -> dict[str, A
     fields = {"app": "codeengine", "originator": "user", "codeengine.region": probe.region,
               "codeengine.projectGuid": probe.project_id, "codeengine.componentType": "job_run",
               "codeengine.component": probe.job_name, "codeengine.subcomponentType": "job_run",
-              "codeengine.subcomponent": probe.job_run_name, "message.message": probe.marker}
+              "codeengine.subcomponent": probe.job_run_name, "message.message": message or probe.marker}
+    _require(all("'" not in value and "\\" not in value for value in fields.values()),
+             "unsupported provider query literal")
     query = "source logs | filter " + " && ".join(f"$d.{key} == '{value}'" for key, value in fields.items())
-    evidence["logs_output"] = _cli(
+    evidence["logs_output"] = cli(
         "logs", "query", "--service-url", probe.logs_url, "--query", query,
         "--syntax", "dataprime", "--start-date", created_at.isoformat(),
         "--end-date", now.isoformat(), "--limit", "2", "--output", "logs-raw",

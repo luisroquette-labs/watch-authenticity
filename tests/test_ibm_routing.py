@@ -116,6 +116,14 @@ def test_official_chain_passes_without_authentication_fields_in_logs(probe, prov
     assert "service_account" not in provider_evidence["logs_output"]
 
 
+@pytest.mark.parametrize("message", ["nonce' || true", "nonce\\escape"])
+def test_canary_message_cannot_escape_provider_query(probe, providers, message):
+    cli, _http = providers
+    with pytest.raises(RoutingProofUnavailable, match="query literal"):
+        collect_routing_probes(probe, now=NOW, message=message)
+    assert cli.call_count == 1  # Only authenticated token retrieval; no Logs query.
+
+
 @pytest.mark.parametrize(("section", "key", "value"), [
     ("project", "id", "different"), ("project", "name", "different"),
     ("project", "crn", "crn:v1:bluemix:public:codeengine:us-south:a/other:project::"),

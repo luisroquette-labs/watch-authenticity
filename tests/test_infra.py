@@ -111,6 +111,7 @@ def test_ibm_only_mocked_e2e_persists_artifacts_and_resource_deletions(monkeypat
     from infra.ibm_train import IBMClients, authorize_training, launch_training
     from infra.ibm_types import run_spec_transport_sha256
     from tests.conftest import NOW, valid_credit, valid_post_promo_plan, valid_pricing, vpc_instance
+    from tests.test_ibm_canary import canary_clients
     from tests.test_ibm_cos import FakeCOS
     from tests.test_ibm_train import _proof, _spec
     from tests.test_ibm_vpc import (
@@ -138,7 +139,7 @@ def test_ibm_only_mocked_e2e_persists_artifacts_and_resource_deletions(monkeypat
     }
     run = authorize_training(
         cos, usage, spec, valid_credit(), valid_pricing(spec=spec), valid_post_promo_plan(),
-        watchdog_proof=_proof(spec), now=NOW, store=tmp_path / "auth",
+        watchdog_proof=_proof(spec), canary_clients=canary_clients(_proof(spec)), now=NOW, store=tmp_path / "auth",
     )
     assert Path(run.pending_record_path).is_file()
     client = _client()

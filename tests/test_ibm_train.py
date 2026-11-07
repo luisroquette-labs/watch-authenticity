@@ -37,6 +37,8 @@ from infra.ibm_types import (
     run_spec_transport_sha256,
 )
 from tests.conftest import NOW, valid_run_spec
+from tests.test_ibm_canary import INSTANCE_ID, canary_clients, observation_bytes
+from tests.test_ibm_cos import FakeCOS
 
 
 def _spec():
@@ -70,12 +72,12 @@ def _proof(spec=None, **overrides):
         "resource_group_id": spec.resource_group_id,
         "watchdog_job_crn": (
             f"crn:v1:bluemix:public:codeengine:{spec.region}:"
-            f"a/{spec.account_id}:watch-auth::job:watchdog"
+            f"a/{spec.account_id}:11111111-1111-4111-8111-111111111111:job:watch-auth-watchdog"
         ),
         "canary_run_id": UUID("99999999-9999-4999-8999-999999999999"),
-        "canary_instance_sha256": "7" * 64,
+        "canary_instance_sha256": hashlib.sha256(INSTANCE_ID.encode()).hexdigest(),
         "canary_deleted_at": NOW - timedelta(minutes=1),
-        "canary_nonce": UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        "canary_nonce": UUID("33333333-3333-4333-8333-333333333333"),
         "canary_log_sha256": "a" * 64,
         "canary_metric_sha256": "b" * 64,
         "canary_404_sha256": "c" * 64,
@@ -91,6 +93,11 @@ def _proof(spec=None, **overrides):
     ):
         if field not in overrides:
             values[field] = f"crn:v1:bluemix:public:{service}:{values['region']}:a/{values['account_id']}:{guid}::"
+    if (isinstance(values["canary_nonce"], UUID)
+            and isinstance(values["canary_deleted_at"], datetime)):
+        for kind, body in observation_bytes(values).items():
+            if f"canary_{kind}_sha256" not in overrides:
+                values[f"canary_{kind}_sha256"] = hashlib.sha256(body).hexdigest()
     document = {name: value.isoformat() if isinstance(value, datetime)
                 else str(value) if isinstance(value, UUID) else value
                 for name, value in values.items() if name != "evidence_sha256"}
@@ -99,10 +106,17 @@ def _proof(spec=None, **overrides):
     return WatchdogCanaryProof(**values)
 
 
+def _consume_with_provider(spec, decision, hashes, **kwargs):
+    proof = kwargs.get("watchdog_proof")
+    kwargs.setdefault("canary_clients", canary_clients(proof) if proof is not None else None)
+    kwargs.setdefault("cos", FakeCOS(bucket=spec.bucket, prefix=spec.prefix))
+    return consume_authorization(spec, decision, hashes, **kwargs)
+
+
 def _authorized(tmp_path: Path):
     spec = _spec()
     decision = _decision(spec)
-    return consume_authorization(
+    return _consume_with_provider(
         spec,
         decision,
         decision.evidence_hashes,
@@ -112,7 +126,21 @@ def _authorized(tmp_path: Path):
     )
 
 
-def test_concurrent_same_run_consumes_only_one_account_launch(tmp_path):
+def test_fabricated_self_consistent_canary_proof_cannot_authorize_gpu(tmp_path):
+    spec = _spec()
+    decision = _decision(spec)
+    # The envelope and all three observation hashes are locally forgeable.
+    with pytest.raises(PermissionError, match="canary.*readback"):
+        consume_authorization(
+            spec, decision, decision.evidence_hashes, watchdog_proof=_proof(spec),
+            now=NOW, store=tmp_path / "auth",
+        )
+    assert not tuple(tmp_path.rglob("*.json"))
+
+
+def test_concurrent_same_run_consumes_only_one_account_launch(tmp_path, monkeypatch):
+    # This test isolates the atomic store; the VPC SDK hard-deadline path is main-thread only.
+    monkeypatch.setattr("infra.ibm_canary.confirm_instance_absent", lambda *a, **k: None)
     spec = _spec()
     first = _decision(spec)
     second = _decision(spec)
@@ -120,7 +148,7 @@ def test_concurrent_same_run_consumes_only_one_account_launch(tmp_path):
 
     def consume(decision):
         try:
-            consume_authorization(
+            _consume_with_provider(
                 spec,
                 decision,
                 decision.evidence_hashes,
@@ -129,7 +157,7 @@ def test_concurrent_same_run_consumes_only_one_account_launch(tmp_path):
                 store=store,
             )
             return "allowed"
-        except PermissionError:
+        except (PermissionError, IntegrityError):
             return "blocked"
 
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -143,7 +171,7 @@ def test_crash_after_consume_blocks_replay_and_different_run(tmp_path):
     spec = _spec()
     first = _decision(spec)
     store = tmp_path / "auth"
-    consume_authorization(
+    _consume_with_provider(
         spec,
         first,
         first.evidence_hashes,
@@ -152,8 +180,8 @@ def test_crash_after_consume_blocks_replay_and_different_run(tmp_path):
         store=store,
     )
 
-    with pytest.raises(PermissionError, match="pending provider usage"):
-        consume_authorization(
+    with pytest.raises(IntegrityError, match="usage reconciliation is missing"):
+        _consume_with_provider(
             spec,
             first,
             first.evidence_hashes,
@@ -173,8 +201,8 @@ def test_crash_after_consume_blocks_replay_and_different_run(tmp_path):
         bootstrap_sha256=bootstrap_sha256_for(different_candidate),
     )
     second = _decision(different)
-    with pytest.raises(PermissionError, match="pending provider usage"):
-        consume_authorization(
+    with pytest.raises(IntegrityError, match="usage reconciliation is missing"):
+        _consume_with_provider(
             different,
             second,
             second.evidence_hashes,
@@ -190,7 +218,7 @@ def test_self_asserted_usage_receipt_does_not_release_account_fence(tmp_path):
     spec = _spec()
     decision = _decision(spec)
     store = tmp_path / "auth"
-    consume_authorization(
+    _consume_with_provider(
         spec,
         decision,
         decision.evidence_hashes,
@@ -257,7 +285,7 @@ def test_default_account_fence_is_shared_across_working_directories(monkeypatch,
     monkeypatch.setattr(subject, "_AUTHORIZATION_DIR", shared)
 
     monkeypatch.chdir(first_cwd)
-    consume_authorization(
+    _consume_with_provider(
         spec,
         first,
         first.evidence_hashes,
@@ -265,8 +293,8 @@ def test_default_account_fence_is_shared_across_working_directories(monkeypatch,
         now=NOW,
     )
     monkeypatch.chdir(second_cwd)
-    with pytest.raises(PermissionError, match="pending provider usage"):
-        consume_authorization(
+    with pytest.raises(IntegrityError, match="usage reconciliation is missing"):
+        _consume_with_provider(
             spec,
             second,
             second.evidence_hashes,
@@ -289,7 +317,7 @@ def test_denied_or_expired_decision_never_consumes_nonce(tmp_path):
     spec = _spec()
     denied = _decision(spec, allowed=False, reasons=("credit unavailable",))
     with pytest.raises(PermissionError, match="denied"):
-        consume_authorization(
+        _consume_with_provider(
             spec,
             denied,
             denied.evidence_hashes,
@@ -311,7 +339,7 @@ def test_missing_watchdog_canary_proof_blocks_before_create(monkeypatch, tmp_pat
     )
 
     with pytest.raises(PermissionError, match="watchdog deletion canary"):
-        consume_authorization(
+        _consume_with_provider(
             spec,
             decision,
             decision.evidence_hashes,
@@ -332,12 +360,12 @@ def test_watchdog_proof_from_different_environment_blocks_before_create(tmp_path
         region="eu-de",
         watchdog_job_crn=(
             f"crn:v1:bluemix:public:codeengine:eu-de:"
-            f"a/{spec.account_id}:watch-auth::job:watchdog"
+            f"a/{spec.account_id}:11111111-1111-4111-8111-111111111111:job:watch-auth-watchdog"
         ),
     )
 
     with pytest.raises(PermissionError, match="region differs"):
-        consume_authorization(
+        _consume_with_provider(
             spec,
             decision,
             decision.evidence_hashes,
@@ -664,6 +692,7 @@ def test_recovery_record_failure_cannot_skip_teardown(monkeypatch, tmp_path):
 
 
 def test_confirm_false_has_no_effect(monkeypatch, tmp_path):
+    run = _authorized(tmp_path)
     monkeypatch.setattr(
         subject,
         "verify_cos_configuration",
@@ -672,7 +701,7 @@ def test_confirm_false_has_no_effect(monkeypatch, tmp_path):
     with pytest.raises(PermissionError, match="confirmation"):
         launch_training(
             IBMClients(vpc=object(), tagger=object(), cos=object()),
-            _authorized(tmp_path),
+            run,
             confirm=False,
             now=NOW,
         )

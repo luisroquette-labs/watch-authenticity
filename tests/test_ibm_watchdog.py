@@ -158,6 +158,43 @@ def test_expired_exactly_owned_vsi_is_deleted_and_observed(monkeypatch):
     assert not any(call for call in vpc.method_calls if call[0].startswith("create"))
 
 
+@pytest.mark.parametrize("outcome", ["deleted", "failure", "different-run"])
+def test_canary_message_is_emitted_only_after_bound_terminal_deletion(monkeypatch, capsys, outcome):
+    import hashlib
+
+    from infra.ibm_canary import canary_log_message
+
+    spec = valid_run_spec()
+    instance_id = "r006-77777777-7777-4777-8777-777777777777"
+    nonce = UUID("33333333-3333-4333-8333-333333333333")
+    monkeypatch.setenv("WATCH_AUTH_CANARY_RUN_ID", str(spec.run_id) if outcome != "different-run" else "other")
+    monkeypatch.setenv("WATCH_AUTH_ROUTING_PROBE_NONCE", str(nonce))
+    initial = _events(instance_id=instance_id)
+    vpc, cos, stored = _clients(monkeypatch, initial)
+
+    def delete(*_args, **kwargs):
+        if outcome == "failure":
+            raise TimeoutError("provider timeout")
+        kwargs["cleanup_context_sink"](_context())
+
+    monkeypatch.setattr("infra.ibm_watchdog.delete_and_wait", delete)
+    if outcome == "failure":
+        with pytest.raises(TimeoutError):
+            _reconcile(vpc, cos, (_lease(),), initial)
+    else:
+        _reconcile(vpc, cos, (_lease(),), initial)
+    output = capsys.readouterr().out
+    if outcome == "deleted":
+        assert stored[-1].state == "deleted"
+        assert output.strip() == canary_log_message(
+            account_id=spec.account_id, region=spec.region, resource_group_id=spec.resource_group_id,
+            run_id=spec.run_id, instance_sha256=hashlib.sha256(instance_id.encode()).hexdigest(),
+            nonce=nonce, deleted_at=NOW,
+        )
+    else:
+        assert output == ""
+
+
 def test_active_valid_vsi_is_not_deleted(monkeypatch):
     initial = _events(instance_id="r006-77777777-7777-4777-8777-777777777777")
     vpc, cos, _stored = _clients(monkeypatch, initial)

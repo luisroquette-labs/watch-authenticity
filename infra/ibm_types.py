@@ -399,7 +399,7 @@ def run_spec_transport_sha256(spec: RunSpec) -> str:
 
 @dataclass(frozen=True)
 class WatchdogCanaryProof:
-    """Provider canary evidence; control-plane routing alone cannot authorize GPU."""
+    """Untrusted canary claims; the consumer must retrieve every provider observation."""
 
     account_id: str
     region: str
@@ -417,7 +417,7 @@ class WatchdogCanaryProof:
     observed_at: datetime
     expires_at: datetime
     evidence_sha256: str
-    provider_verified: bool
+    provider_verified: bool  # Legacy claim only; authenticated readbacks grant authority.
 
     def __post_init__(self) -> None:
         _nonempty(self.account_id, "account_id")

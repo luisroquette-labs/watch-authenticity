@@ -1575,6 +1575,23 @@ def _confirm_predelete_absence(
     raise TimeoutError(f"{description} absence was not confirmed")
 
 
+def confirm_instance_absent(vpc: Any, instance_id: str, *, deadline: float) -> None:
+    """Read-only, direct VPC 404 proof using the lifecycle's consistency boundary."""
+
+    client = _deadline_client(vpc, deadline)
+    try:
+        client.get_instance(instance_id)
+    except Exception as exc:
+        if _status_code(exc) != 404:
+            raise
+    else:
+        raise AmbiguousProvisioning("canary instance still exists")
+    if not _confirm_predelete_absence(
+        client.get_instance, instance_id, deadline=deadline, description="canary instance",
+    ):
+        raise AmbiguousProvisioning("canary instance reappeared")
+
+
 def _delete_and_confirm(
     deleter: Callable[[str], object],
     reader: Callable[[str], object],

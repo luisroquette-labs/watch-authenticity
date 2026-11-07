@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from infra.ibm_cos import (
     IntegrityError,
@@ -484,6 +484,17 @@ def reconcile_expired_resources(
         estimated_usd=estimated_usd,
         observed_usage_usd=observed_usage_usd,
     )
+    if os.environ.get("WATCH_AUTH_CANARY_RUN_ID") == str(spec.run_id):
+        from infra.ibm_canary import canary_log_message
+
+        nonce = UUID(_required_env("WATCH_AUTH_ROUTING_PROBE_NONCE"))
+        if nonce.version != 4:
+            raise IntegrityError("canary nonce must be UUID4")
+        print(canary_log_message(
+            account_id=spec.account_id, region=spec.region, resource_group_id=spec.resource_group_id,
+            run_id=spec.run_id, instance_sha256=hashlib.sha256(instance_id.encode()).hexdigest(),
+            nonce=nonce, deleted_at=now,
+        ), flush=True)
     _persist_usage_reconciliation(cos, spec, usage_reconciler(), ordered[-1])
     return ordered
 

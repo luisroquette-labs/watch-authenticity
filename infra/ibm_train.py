@@ -19,6 +19,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from infra.ibm_bootstrap import bootstrap_sha256_for, render_bootstrap
+from infra.ibm_canary import CanaryReadbackClients, verify_watchdog_canary
 from infra.ibm_cos import (
     IntegrityError,
     append_event,
@@ -178,6 +179,7 @@ def authorize_training(
     *,
     watchdog_proof: WatchdogCanaryProof,
     now: datetime,
+    canary_clients: CanaryReadbackClients | None = None,
     store: Path | None = None,
 ) -> AuthorizedRun:
     """Read prior terminal receipts before granting the next account launch capability."""
@@ -228,7 +230,7 @@ def authorize_training(
     decision = authorize_run(credit, usage, pricing, post_promo, spec, tuple(events), now=now)
     return consume_authorization(
         spec, decision, decision.evidence_hashes, watchdog_proof=watchdog_proof,
-        now=now, store=store, cos=cos,
+        now=now, store=store, cos=cos, canary_clients=canary_clients,
     )
 
 
@@ -241,6 +243,7 @@ def consume_authorization(
     now: datetime,
     store: Path | None = None,
     cos: Any | None = None,
+    canary_clients: CanaryReadbackClients | None = None,
 ) -> AuthorizedRun:
     """Atomically turn one fresh decision nonce into one launch capability."""
 
@@ -257,6 +260,11 @@ def consume_authorization(
         raise IntegrityError("authorization RunSpec hash mismatch")
     if evidence_hashes != decision.evidence_hashes:
         raise IntegrityError("authorization evidence hashes mismatch")
+
+    if cos is None:
+        raise PermissionError("canary authenticated provider readbacks and COS are required")
+    with _cos_run_scope(cos, spec):
+        verify_watchdog_canary(spec, watchdog_proof, canary_clients, cos, now=now)
 
     payload = _consumption_payload(
         spec=spec,
