@@ -6,7 +6,7 @@ import hashlib
 import shlex
 from pathlib import Path
 
-from infra.ibm_types import RunSpec
+from infra.ibm_types import RunSpec, run_spec_transport_sha256
 
 _TEMPLATE = Path(__file__).with_name("bootstrap_host.sh")
 
@@ -20,6 +20,11 @@ def _render(spec: RunSpec) -> str:
         "__WATCH_AUTH_COS_PREFIX__": spec.prefix,
         "__WATCH_AUTH_COS_SERVICE_INSTANCE_ID__": spec.cos_service_instance_id,
         "__WATCH_AUTH_TRUSTED_PROFILE_ID__": spec.trusted_profile_id,
+        "__WATCH_AUTH_CODE_SHA__": spec.code_sha,
+        "__WATCH_AUTH_MANIFEST_SHA256__": spec.manifest_sha256,
+        "__WATCH_AUTH_SPLITS_SHA256__": spec.splits_sha256,
+        "__WATCH_AUTH_COS_ENDPOINT__": spec.cos_endpoint,
+        "__WATCH_AUTH_RUN_SPEC_TRANSPORT_SHA256__": run_spec_transport_sha256(spec),
     }
     rendered = _TEMPLATE.read_text(encoding="utf-8")
     for token, value in values.items():

@@ -10,7 +10,7 @@ import hashlib
 import ipaddress
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit
@@ -370,6 +370,63 @@ class RunSpec:
             raise ValueError("Public Gateway must be dedicated to and owned by the run")
 
 
+def run_spec_transport_document(spec: RunSpec) -> dict[str, object]:
+    """Return the non-circular fields transported to the worker."""
+
+    document: dict[str, object] = {"schema_version": 1}
+    for field in fields(spec):
+        if field.name == "bootstrap_sha256":
+            continue
+        value = getattr(spec, field.name)
+        document[field.name] = str(value) if isinstance(value, (Decimal, UUID)) else value
+    return document
+
+
+def run_spec_transport_sha256(spec: RunSpec) -> str:
+    encoded = json.dumps(
+        run_spec_transport_document(spec), sort_keys=True, separators=(",", ":")
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+@dataclass(frozen=True)
+class WatchdogCanaryProof:
+    """Provider-backed proof that an independent watchdog deleted its canary."""
+
+    account_id: str
+    region: str
+    resource_group_id: str
+    watchdog_job_crn: str
+    canary_run_id: UUID
+    canary_instance_sha256: str
+    canary_deleted_at: datetime
+    observed_at: datetime
+    expires_at: datetime
+    evidence_sha256: str
+    provider_verified: bool
+
+    def __post_init__(self) -> None:
+        _nonempty(self.account_id, "account_id")
+        _nonempty(self.region, "region")
+        _identifier(self.resource_group_id, "resource_group_id")
+        _crn(self.watchdog_job_crn, "watchdog_job_crn")
+        if not isinstance(self.canary_run_id, UUID):
+            raise TypeError("canary_run_id must be UUID")
+        _hash(self.canary_instance_sha256, "canary_instance_sha256")
+        _aware(self.canary_deleted_at, "canary_deleted_at")
+        _aware(self.observed_at, "observed_at")
+        _aware(self.expires_at, "expires_at")
+        if not self.canary_deleted_at <= self.observed_at:
+            raise ValueError("canary deletion cannot follow proof observation")
+        if self.observed_at - self.canary_deleted_at > timedelta(hours=24):
+            raise ValueError("canary deletion proof is stale")
+        if self.expires_at != self.observed_at + timedelta(hours=24):
+            raise ValueError("watchdog proof must expire after exactly 24 hours")
+        _hash(self.evidence_sha256, "evidence_sha256")
+        if self.provider_verified is not True:
+            raise ValueError("watchdog proof must be provider verified")
+
+
 @dataclass(frozen=True)
 class AuthorizationDecision:
     """Auditable gate result, never a launch capability.
@@ -421,6 +478,15 @@ class AuthorizedRun:
     spec: RunSpec
     estimated_usd: Decimal
     evidence_hashes: tuple[str, ...]
+    authorization_sha256: str
+    run_spec_sha256: str
+    issued_at: datetime
+    expires_at: datetime
+    nonce: UUID
+    watchdog_proof: WatchdogCanaryProof
+    consumption_sha256: str
+    authorization_record_path: str
+    pending_record_path: str
 
     def __new__(cls) -> AuthorizedRun:
         raise TypeError("AuthorizedRun must be created with from_decision")
@@ -431,6 +497,19 @@ class AuthorizedRun:
             raise ValueError("evidence_hashes must be non-empty")
         for value in self.evidence_hashes:
             _hash(value, "evidence_hash")
+        _hash(self.authorization_sha256, "authorization_sha256")
+        _hash(self.run_spec_sha256, "run_spec_sha256")
+        _aware(self.issued_at, "issued_at")
+        _aware(self.expires_at, "expires_at")
+        if self.expires_at != self.issued_at + timedelta(minutes=5):
+            raise ValueError("authorization must expire after exactly five minutes")
+        if not isinstance(self.nonce, UUID):
+            raise TypeError("nonce must be UUID")
+        if not isinstance(self.watchdog_proof, WatchdogCanaryProof):
+            raise TypeError("watchdog_proof must be WatchdogCanaryProof")
+        _hash(self.consumption_sha256, "consumption_sha256")
+        _nonempty(self.authorization_record_path, "authorization_record_path")
+        _nonempty(self.pending_record_path, "pending_record_path")
 
     @classmethod
     def from_decision(
@@ -443,6 +522,34 @@ class AuthorizedRun:
         raise RuntimeError(
             "launch authorization requires Task 8 atomic nonce consumption"
         )
+
+    @classmethod
+    def _from_consumed_decision(
+        cls,
+        spec: RunSpec,
+        decision: AuthorizationDecision,
+        watchdog_proof: WatchdogCanaryProof,
+        consumption_sha256: str,
+        authorization_record_path: str,
+        pending_record_path: str,
+    ) -> AuthorizedRun:
+        """Create a capability only after the launch store consumed its nonce."""
+
+        instance = object.__new__(cls)
+        object.__setattr__(instance, "spec", spec)
+        object.__setattr__(instance, "estimated_usd", decision.estimated_usd)
+        object.__setattr__(instance, "evidence_hashes", decision.evidence_hashes)
+        object.__setattr__(instance, "authorization_sha256", decision.authorization_sha256)
+        object.__setattr__(instance, "run_spec_sha256", decision.run_spec_sha256)
+        object.__setattr__(instance, "issued_at", decision.issued_at)
+        object.__setattr__(instance, "expires_at", decision.expires_at)
+        object.__setattr__(instance, "nonce", decision.nonce)
+        object.__setattr__(instance, "watchdog_proof", watchdog_proof)
+        object.__setattr__(instance, "consumption_sha256", consumption_sha256)
+        object.__setattr__(instance, "authorization_record_path", authorization_record_path)
+        object.__setattr__(instance, "pending_record_path", pending_record_path)
+        instance._validate()
+        return instance
 
 
 @dataclass(frozen=True)

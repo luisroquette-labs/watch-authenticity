@@ -22,6 +22,7 @@ from infra.ibm_vpc import (
     build_instance_prototype,
     delete_and_wait,
     ensure_single_instance,
+    recover_accepted_instance,
     recover_created_instance_id,
     wait_running,
 )
@@ -860,6 +861,75 @@ def test_lost_create_response_reconciles_by_exact_name(monkeypatch, tmp_path):
 
     assert ensure_single_instance(client, spec, prototype, tagger=_tagger()).id.startswith("r006-")
     assert client.create_instance.call_count == 1
+    assert recover_created_instance_id(spec, prototype) == _instance_id()
+
+
+def test_create_interruption_reconciles_and_persists_accepted_id(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    client = _client()
+    client.list_instances.side_effect = [
+        _page(),
+        _page(vpc_instance()),
+    ]
+    client.create_instance.side_effect = KeyboardInterrupt()
+    spec = valid_run_spec()
+    prototype = build_instance_prototype(spec, safe_user_data())
+
+    with pytest.raises(KeyboardInterrupt):
+        ensure_single_instance(client, spec, prototype, tagger=_tagger())
+
+    assert recover_created_instance_id(spec, prototype) == _instance_id()
+
+
+def test_cleanup_window_recovers_create_visible_after_create_timeout(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    client = _client()
+    created = vpc_instance()
+    client.list_instances.side_effect = [
+        _page(),
+        _page(),
+        _page(),
+        _page(),
+        _page(),
+        _page(created),
+        _page(created),
+    ]
+    client.create_instance.side_effect = ReadTimeout()
+    spec = valid_run_spec()
+    prototype = build_instance_prototype(spec, safe_user_data())
+
+    with pytest.raises(AmbiguousProvisioning, match="unknown"):
+        ensure_single_instance(client, spec, prototype, tagger=_tagger())
+
+    recovered = recover_accepted_instance(
+        client,
+        spec,
+        prototype,
+        deadline=time.monotonic() + 60,
+    )
+
+    assert recovered == _instance_id()
+    assert recover_created_instance_id(spec, prototype) == _instance_id()
+
+
+def test_partial_cleanup_hydration_keeps_durable_accepted_id(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed_intent()
+    client = _client()
+    incomplete = vpc_instance(boot_volume_attachment={})
+    client.list_instances.return_value = _page(incomplete)
+    client.get_instance.return_value = _Response(incomplete)
+    spec = valid_run_spec()
+    prototype = build_instance_prototype(spec, safe_user_data())
+
+    with pytest.raises(AmbiguousProvisioning, match="cleanup context"):
+        recover_accepted_instance(
+            client,
+            spec,
+            prototype,
+            deadline=time.monotonic() + 60,
+        )
+
     assert recover_created_instance_id(spec, prototype) == _instance_id()
 
 
