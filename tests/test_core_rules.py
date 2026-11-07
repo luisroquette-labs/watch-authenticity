@@ -19,10 +19,11 @@ from core.rules import (
     clip_confidence,
     goldset_regression_gate,
     grade_map,
+    model_class_for_label,
     publish_gate,
     source_label_rule,
 )
-from core.types import Label
+from core.types import Label, ModelClass
 from tests.test_core_types import FORBIDDEN_IMPORT_ROOTS, _top_level_imports
 
 
@@ -95,6 +96,17 @@ def test_grade_map_higher_price_returns_common_replica_grade():
 def test_grade_map_without_factory_or_price_raises():
     with pytest.raises(ValueError):
         grade_map()
+
+
+@pytest.mark.parametrize("grade", [0, 5])
+def test_fake_model_class_refuses_non_market_grades(grade: int):
+    with pytest.raises(ValueError, match="between 1 and 4"):
+        model_class_for_label(Label.FAKE, grade)
+
+
+@pytest.mark.parametrize("grade", [1, 2, 3, 4])
+def test_fake_model_class_accepts_market_grades(grade: int):
+    assert model_class_for_label(Label.FAKE, grade) is ModelClass(grade)
 
 
 # --- CK-13/18 & CK-27/29: source_label_rule ---------------------------------

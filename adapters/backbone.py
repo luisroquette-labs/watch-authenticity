@@ -23,6 +23,7 @@ from transformers import AutoModel
 # table) — deliberately not one of the non-commercial XRay-DINO/Cell-DINO
 # specialty checkpoints the skill warns against.
 BACKBONE_CHECKPOINT = "facebook/dinov2-base"
+BACKBONE_REVISION = "f9e44c814b77203eaa57a6bdbbd535f21ede1415"
 
 # ViT-B/14 pooled-output width (SKILL.md Configuration section). Per-angle
 # heads in `model/heads.py` are sized against this constant so the two
@@ -39,7 +40,12 @@ def load_frozen_backbone(checkpoint: str = BACKBONE_CHECKPOINT) -> Any:
     parameter rather than a hardcoded literal, so a test can substitute
     `AutoModel.from_pretrained` without this function's body changing.
     """
-    backbone = AutoModel.from_pretrained(checkpoint)
+    backbone = AutoModel.from_pretrained(
+        checkpoint,
+        revision=BACKBONE_REVISION,
+        local_files_only=True,
+        use_safetensors=True,
+    )
     for parameter in backbone.parameters():
         parameter.requires_grad = False
     return backbone

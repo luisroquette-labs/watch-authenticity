@@ -16,6 +16,7 @@ single fact (CK-22) instead of two lists that could silently drift apart.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -23,7 +24,7 @@ import torch
 from torch import nn
 
 from adapters.backbone import BACKBONE_CHECKPOINT, BACKBONE_EMBED_DIM, load_frozen_backbone
-from core.rules import aggregate_angles
+from core.rules import aggregate_angles, require_all_model_classes
 from core.types import ModelClass
 from dataset.crop import ANGLE_CROP_FRACTIONS
 
@@ -52,6 +53,8 @@ class ImageBackbone(Protocol):
     def parameters(self) -> object: ...
 
     def __call__(self, pixel_values: torch.Tensor) -> Any: ...
+
+    def eval(self) -> Any: ...
 
 
 class AngleHeadModel(nn.Module):
@@ -98,6 +101,20 @@ def build_model(
     """
     resolved_backbone = backbone if backbone is not None else load_frozen_backbone(checkpoint)
     return AngleHeadModel(resolved_backbone)
+
+
+def build_trainable_model(
+    class_counts: Mapping[str, Mapping[ModelClass, int]],
+    *,
+    backbone: ImageBackbone | None = None,
+    checkpoint: str = BACKBONE_CHECKPOINT,
+) -> AngleHeadModel:
+    """Build training heads only after every angle proves six-class coverage."""
+    if set(class_counts) != set(GUIDED_ANGLES):
+        raise ValueError("training class counts must cover every guided angle")
+    for counts in class_counts.values():
+        require_all_model_classes(counts)
+    return build_model(backbone=backbone, checkpoint=checkpoint)
 
 
 def trainable_head_parameters(model: AngleHeadModel) -> list[nn.Parameter]:
