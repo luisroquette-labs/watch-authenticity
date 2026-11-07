@@ -228,7 +228,9 @@ def _image(**overrides: object) -> dict[str, object]:
         "operating_system": {
             "architecture": "amd64",
             "family": "Ubuntu Linux",
+            "name": "ubuntu-22-04-amd64",
             "user_data_format": "cloud_init",
+            "version": "22.04",
         },
     }
     image.update(overrides)
@@ -667,6 +669,42 @@ def test_invalid_image_is_rejected_before_create():
     client.get_image.return_value = _Response(_image(visibility="private"))
 
     with pytest.raises(PrototypeMismatch, match="public Ubuntu"):
+        ensure_single_instance(
+            client,
+            valid_run_spec(),
+            build_instance_prototype(valid_run_spec(), safe_user_data()),
+            tagger=_tagger(),
+        )
+
+    client.create_instance.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "operating_system",
+    (
+        {
+            "architecture": "amd64",
+            "family": "Ubuntu Linux",
+            "name": "ubuntu-24-04-amd64",
+            "user_data_format": "cloud_init",
+            "version": "24.04",
+        },
+        {
+            "architecture": "amd64",
+            "family": "Ubuntu Linux",
+            "name": "ubuntu-22-04-amd64",
+            "user_data_format": "cloud_init",
+            "version": "24.04",
+        },
+    ),
+)
+def test_wrong_ubuntu_release_is_rejected_before_create(
+    operating_system: dict[str, object],
+):
+    client = _client()
+    client.get_image.return_value = _Response(_image(operating_system=operating_system))
+
+    with pytest.raises(PrototypeMismatch, match="Ubuntu 22.04"):
         ensure_single_instance(
             client,
             valid_run_spec(),

@@ -2,8 +2,8 @@
 
 Deviation note (same class of environment limitation as `test_model_build.
 py`/`test_rejection.py`): every test here is gated behind
-`pytest.importorskip`, because this sandbox's Python (3.14) has no wheel
-for the pinned `torch==2.5.1`/`grad-cam==1.5.4` (`requirements.txt`). None
+`pytest.importorskip` because optional training dependencies may be absent
+from a lightweight local environment. None
 of these tests need the network or a real DINOv2 checkpoint even where
 torch *is* installed: each builds a tiny, ViT-shaped stub classifier
 (patch-embed + one transformer block + linear head) instead of loading
@@ -20,7 +20,7 @@ for the verification record).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -29,10 +29,10 @@ if TYPE_CHECKING:
     from torch import nn
 else:
     torch = pytest.importorskip(
-        "torch", reason="torch==2.5.1 has no wheel for this sandbox's Python 3.14"
+        "torch", reason="optional training dependency torch is not installed"
     )
     pytest.importorskip(
-        "pytorch_grad_cam", reason="grad-cam==1.5.4 requires the unavailable torch==2.5.1"
+        "pytorch_grad_cam", reason="optional training dependency grad-cam is not installed"
     )
     from torch import nn  # noqa: E402
 
@@ -122,7 +122,8 @@ class _StubDinov2StyleClassifier(nn.Module):
 
     def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
         tokens = _tokenize(pixel_values, self.patch_embed, self.cls_token)
-        tokens = self.encoder.layer[-1](tokens)
+        layer = cast(nn.ModuleList, self.encoder["layer"])
+        tokens = layer[-1](tokens)
         # Mean-pool every token (CLS + patches), not CLS alone: a real ViT
         # block's self-attention makes the CLS output depend on every
         # patch; this stub's `_Norm1Block` is a plain per-token LayerNorm

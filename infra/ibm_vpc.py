@@ -1080,9 +1080,11 @@ def _validate_launch_dependencies(vpc: VpcV1, tagger: Any, spec: RunSpec) -> Non
         or not isinstance(operating_system, dict)
         or operating_system.get("architecture") != "amd64"
         or "ubuntu" not in str(operating_system.get("family", "")).lower()
+        or operating_system.get("name") != "ubuntu-22-04-amd64"
+        or operating_system.get("version") != "22.04"
         or operating_system.get("user_data_format") != "cloud_init"
     ):
-        raise PrototypeMismatch("image is not the authorized public Ubuntu amd64 image")
+        raise PrototypeMismatch("image is not the authorized public Ubuntu 22.04 amd64 image")
     security_group = _result(vpc.get_security_group(spec.security_group_id))
     if (
         _field(security_group, "id") != spec.security_group_id

@@ -1,8 +1,8 @@
 """Tests for the OOD/rejection gate (CK-4): `model.rejection.classify`.
 
 Deviation note (same sandbox limitation as `tests/test_model_build.py`):
-this sandbox's Python (3.14) has no wheel for the pinned `torch==2.5.1`/
-`transformers==4.46.0` (requirements.txt), and `model.rejection` imports
+optional training dependencies may be absent from a lightweight local
+environment, and `model.rejection` imports
 `model.heads`, which imports `torch` unconditionally — so every test
 below is gated behind `pytest.importorskip`, exactly like
 `test_model_build.py`. None of these tests need the network or a real
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     import torch
 else:
     torch = pytest.importorskip(
-        "torch", reason="torch==2.5.1 has no wheel for this sandbox's Python 3.14"
+        "torch", reason="optional training dependency torch is not installed"
     )
     pytest.importorskip(
         "transformers", reason="model.heads imports transformers via adapters.backbone"

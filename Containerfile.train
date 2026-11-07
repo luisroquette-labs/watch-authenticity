@@ -1,0 +1,51 @@
+FROM --platform=linux/amd64 nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04@sha256:23debbe74125dc84df96df79cff42079b3b15265c27140714fd27b5aa718faa4
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN export DEBIAN_FRONTEND=noninteractive \
+    && apt-mark hold \
+        cuda-toolkit-12-config-common \
+        cuda-toolkit-config-common \
+        libcudnn9-cuda-12 \
+        libnccl2 \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        libglib2.0-0 \
+        libgl1 \
+        python3 \
+        python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 watch-auth \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin watch-auth
+
+WORKDIR /opt/watch-auth
+
+COPY requirements-train.lock /opt/watch-auth/requirements-train.lock
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/python -m pip install --no-cache-dir --require-hashes -r /opt/watch-auth/requirements-train.lock
+
+COPY --chown=10001:10001 adapters adapters
+COPY --chown=10001:10001 calibration calibration
+COPY --chown=10001:10001 core core
+COPY --chown=10001:10001 dataset dataset
+COPY --chown=10001:10001 evaluation evaluation
+COPY --chown=10001:10001 explainability explainability
+COPY --chown=10001:10001 inference inference
+COPY --chown=10001:10001 labeling labeling
+COPY --chown=10001:10001 model model
+COPY --chown=10001:10001 quality_gate quality_gate
+COPY --chown=10001:10001 release release
+
+ENV PATH="/opt/venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+USER 10001:10001
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD python3 -c 'import torch; assert torch.__version__.startswith("2.10.0"); assert torch.version.cuda == "12.6"; assert torch.cuda.is_available()' || exit 1
+
+CMD ["python3", "-c", "import time, torch; assert torch.cuda.is_available(); time.sleep(86400)"]

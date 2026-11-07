@@ -1,8 +1,8 @@
 """Tests for temperature-scaling calibration (CK-15) + ceiling/clip wrap (CK-3, CK-1, CK-22).
 
 Deviation note (same class of environment limitation as `test_model_build.
-py`): every test here is gated behind `pytest.importorskip` because this
-sandbox's Python (3.14) has no `torch==2.5.1` wheel. The tests are written
+py`): every test here is gated behind `pytest.importorskip` because optional
+training dependencies may be absent from a lightweight local environment. The tests are written
 to need neither the network nor a real DINOv2 download, so wherever the
 pinned `requirements.txt` actually installs, they run for real.
 """
@@ -20,10 +20,10 @@ if TYPE_CHECKING:
     import torch
 else:
     torch = pytest.importorskip(
-        "torch", reason="torch==2.5.1 has no wheel for this sandbox's Python 3.14"
+        "torch", reason="optional training dependency torch is not installed"
     )
     pytest.importorskip(
-        "transformers", reason="transformers==4.46.0 requires the unavailable torch==2.5.1"
+        "transformers", reason="optional training dependency transformers is not installed"
     )
 
 from calibration.temperature_scaling import (  # noqa: E402

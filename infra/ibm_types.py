@@ -21,6 +21,7 @@ _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _OCI_DIGEST = re.compile(r"^private\.[a-z0-9-]+\.icr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$")
 _IBM_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 _IBM_CRN = re.compile(r"^crn:v1:[A-Za-z0-9._:/-]+$")
+_DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
 _RFC1918_NETWORKS = tuple(
     ipaddress.IPv4Network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
@@ -83,6 +84,20 @@ def _uuid_string(value: str, field: str) -> None:
         UUID(value)
     except (AttributeError, TypeError, ValueError) as exc:
         raise ValueError(f"{field} must be a valid UUID") from exc
+
+
+def _bucket_name(value: str) -> None:
+    if (
+        not isinstance(value, str)
+        or not 3 <= len(value) <= 63
+        or any(_DNS_LABEL.fullmatch(label) is None for label in value.split("."))
+    ):
+        raise ValueError("bucket must be a lowercase DNS-compatible COS bucket name")
+    try:
+        ipaddress.IPv4Address(value)
+    except ipaddress.AddressValueError:
+        return
+    raise ValueError("bucket must not be formatted as an IPv4 address")
 
 
 @dataclass(frozen=True)
@@ -290,10 +305,10 @@ class RunSpec:
         for field, value in (
             ("region", self.region),
             ("zone", self.zone),
-            ("bucket", self.bucket),
             ("prefix", self.prefix),
         ):
             _nonempty(value, field)
+        _bucket_name(self.bucket)
         endpoint = urlsplit(self.cos_endpoint)
         allowed_host = f"s3.direct.{self.region}.cloud-object-storage.appdomain.cloud"
         if (
