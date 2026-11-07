@@ -10,7 +10,9 @@ module exists at all.
 
 from __future__ import annotations
 
-from core.types import Grade, Label
+from collections.abc import Mapping
+
+from core.types import Grade, Label, ModelClass
 
 # Confidence is structurally forbidden from reading as an absolute verdict
 # (Requirements item 2): clamping away from the 0.0/1.0 extremes is what
@@ -44,6 +46,26 @@ _SUPERCLONE_FACTORIES = frozenset({"clean", "vsf"})
 # Below this listing price, an anonymous marketplace fake is assumed to be
 # street-fake territory (quartz movement, no-magnification lupa).
 PRICE_GRADE_1_CEILING = 50.0
+
+
+def model_class_for_label(label: Label, grade: int | None) -> ModelClass:
+    """Map one validated dataset label to the canonical model output."""
+    if label is Label.GENUINE and grade is None:
+        return ModelClass.GENUINE
+    if label is Label.FAKE and isinstance(grade, int) and not isinstance(grade, bool):
+        try:
+            return ModelClass(Grade(grade).value)
+        except ValueError as exc:
+            raise ValueError("fake grade must be between 1 and 4") from exc
+    if label is Label.REJECTION and grade is None:
+        return ModelClass.REJECTION
+    raise ValueError("label and grade do not form a trainable model class")
+
+
+def require_all_model_classes(counts: Mapping[ModelClass, int]) -> None:
+    """Refuse a head whose declared output vocabulary contains an empty class."""
+    if set(counts) != set(ModelClass) or any(counts[model_class] <= 0 for model_class in ModelClass):
+        raise ValueError("every model class requires at least one training example")
 
 
 def clip_confidence(p: float) -> float:

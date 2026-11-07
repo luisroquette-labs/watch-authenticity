@@ -27,6 +27,9 @@ COPY requirements-train.lock /opt/watch-auth/requirements-train.lock
 RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/python -m pip install --no-cache-dir --require-hashes -r /opt/watch-auth/requirements-train.lock
 
+ENV HF_HOME=/opt/watch-auth/huggingface
+RUN /opt/venv/bin/python -c "from transformers import AutoModel; AutoModel.from_pretrained('facebook/dinov2-base', revision='f9e44c814b77203eaa57a6bdbbd535f21ede1415', use_safetensors=True)"
+
 COPY --chown=10001:10001 adapters adapters
 COPY --chown=10001:10001 calibration calibration
 COPY --chown=10001:10001 core core
@@ -34,12 +37,16 @@ COPY --chown=10001:10001 dataset dataset
 COPY --chown=10001:10001 evaluation evaluation
 COPY --chown=10001:10001 explainability explainability
 COPY --chown=10001:10001 inference inference
+COPY --chown=10001:10001 infra infra
 COPY --chown=10001:10001 labeling labeling
 COPY --chown=10001:10001 model model
 COPY --chown=10001:10001 quality_gate quality_gate
 COPY --chown=10001:10001 release release
+COPY --chown=10001:10001 training training
 
 ENV PATH="/opt/venv/bin:${PATH}" \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 

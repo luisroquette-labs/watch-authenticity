@@ -13,7 +13,8 @@ Rigor, 0.25) both depend on.
 from __future__ import annotations
 
 import random
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
+from typing import Protocol
 
 from core.types import Label, ManifestRecord
 
@@ -39,6 +40,35 @@ TEST = "test"
 CROSS_SOURCE = "cross_source"
 FACTORY_HOLDOUT = "factory_holdout"
 GOLD = "gold"
+
+
+class RejectionGroupRecord(Protocol):
+    @property
+    def asset_id(self) -> str: ...
+
+    @property
+    def label(self) -> Label: ...
+
+    @property
+    def provenance_id(self) -> str: ...
+
+    @property
+    def subject_id(self) -> str: ...
+
+
+def ensure_rejection_groups_are_disjoint(
+    records: Sequence[RejectionGroupRecord], split_by_asset: Mapping[str, str]
+) -> None:
+    """Keep every approved negative provenance/subject family in one split."""
+    group_splits: dict[tuple[str, str], str] = {}
+    for record in records:
+        if record.label is not Label.REJECTION:
+            continue
+        split = split_by_asset[record.asset_id]
+        group = (record.provenance_id, record.subject_id)
+        previous = group_splits.setdefault(group, split)
+        if previous != split:
+            raise ValueError("rejection group crosses dataset splits")
 
 
 def build_splits(
