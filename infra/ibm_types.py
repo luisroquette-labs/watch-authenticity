@@ -148,6 +148,7 @@ class UsageEvidence:
     reconciled_run_ids: tuple[UUID, ...]
     evidence_sha256: str
     provider_verified: bool
+    resource_records: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _nonempty(self.account_id, "account_id")

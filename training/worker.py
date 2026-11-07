@@ -70,7 +70,7 @@ def _bootstrap_cos(env: dict[str, str]) -> Any:
 
 
 def _load_spec(cos: Any, env: dict[str, str]) -> RunSpec:
-    key = f"{env['WATCH_AUTH_COS_PREFIX']}/run-spec.json"
+    key = f"{env['WATCH_AUTH_COS_PREFIX']}/run-spec-{env['WATCH_AUTH_RUN_SPEC_TRANSPORT_SHA256']}.json"
     body = _response_bytes(cos.get_object(Bucket=env["WATCH_AUTH_COS_BUCKET"], Key=key))
     try:
         document = json.loads(body)

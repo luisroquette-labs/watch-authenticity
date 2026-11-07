@@ -15,11 +15,19 @@ from uuid import uuid4
 from infra.ibm_cos import (
     IntegrityError,
     append_event,
+    immutable_json_key,
     load_event_inventory,
+    load_immutable_json,
+    put_immutable_json,
     validate_event_chain,
     verify_cos_configuration,
 )
-from infra.ibm_evidence import fetch_usage_evidence, run_spec_sha256
+from infra.ibm_evidence import (
+    fetch_usage_evidence,
+    run_spec_sha256,
+    stable_usage_observations,
+    usage_observation,
+)
 from infra.ibm_types import ResourceLease, RunEvent, RunSpec, UsageEvidence, run_event_sha256
 from infra.ibm_vpc import (
     AmbiguousProvisioning,
@@ -83,58 +91,15 @@ def _payload_hash(state: str, *, resource: str, reason: str) -> str:
     ).hexdigest()
 
 
-def _cos_status_code(exc: BaseException) -> int | None:
-    response = getattr(exc, "response", None)
-    if not isinstance(response, dict):
-        return None
-    metadata = response.get("ResponseMetadata")
-    if isinstance(metadata, dict) and isinstance(metadata.get("HTTPStatusCode"), int):
-        return metadata["HTTPStatusCode"]
-    error = response.get("Error")
-    code = error.get("Code") if isinstance(error, dict) else None
-    if not isinstance(code, (str, int)) or isinstance(code, bool):
-        return None
-    try:
-        return int(code)
-    except (TypeError, ValueError):
-        return 404 if code in {"NoSuchKey", "NotFound"} else None
-
-
 def _put_immutable_document(cos: Any, spec: RunSpec, key: str, document: object) -> str:
     body = _canonical(document)
     digest = hashlib.sha256(body).hexdigest()
-    try:
-        cos.put_object(
-            Bucket=spec.bucket,
-            Key=key,
-            Body=body,
-            Metadata={"sha256": digest, "length": str(len(body))},
-            ContentType="application/json",
-            IfNoneMatch="*",
-        )
-    except Exception as exc:
-        if _cos_status_code(exc) != 412:
-            raise
-    observed = _body_bytes(cos.get_object(Bucket=spec.bucket, Key=key))
-    if observed != body:
-        raise IntegrityError(f"immutable COS object differs: {key}")
+    put_immutable_json(cos, spec, key, body)
     return digest
 
 
 def _load_optional_document(cos: Any, spec: RunSpec, key: str) -> dict[str, object] | None:
-    try:
-        body = _body_bytes(cos.get_object(Bucket=spec.bucket, Key=key))
-    except Exception as exc:
-        if _cos_status_code(exc) == 404:
-            return None
-        raise
-    try:
-        document = json.loads(body)
-    except json.JSONDecodeError as exc:
-        raise IntegrityError(f"COS object is not JSON: {key}") from exc
-    if not isinstance(document, dict) or body != _canonical(document):
-        raise IntegrityError(f"COS object is not canonical JSON: {key}")
-    return document
+    return load_immutable_json(cos, spec, key)
 
 
 def _cleanup_context_key(spec: RunSpec) -> str:
@@ -192,14 +157,44 @@ def _persist_deletion_receipts(
 
 
 def _persist_usage_reconciliation(
-    cos: Any, spec: RunSpec, usage: UsageEvidence
-) -> str:
-    if (
-        usage.account_id != spec.account_id
-        or usage.unreconciled_run_ids
-        or usage.reconciled_run_ids != (spec.run_id,)
-    ):
-        raise IntegrityError("provider usage is not terminally reconciled for this account")
+    cos: Any, spec: RunSpec, usage: UsageEvidence, terminal: RunEvent
+) -> str | None:
+    if terminal.state != "deleted":
+        raise IntegrityError("usage reconciliation requires terminal deletion")
+    if _load_optional_document(cos, spec, f"{spec.prefix}/evidence/usage-reconciliation.json"):
+        return None
+    context = _load_optional_document(cos, spec, _cleanup_context_key(spec))
+    if context is None:
+        raise IntegrityError("usage reconciliation has no provider resource inventory")
+    observation = usage_observation(spec, usage, context)
+    if observation is None or usage.observed_at <= terminal.observed_at:
+        return None
+    prefix = f"{spec.prefix}/evidence/usage-observations/"
+    page = cos.list_objects_v2(Bucket=spec.bucket, Prefix=prefix)
+    if not isinstance(page, dict) or page.get("IsTruncated"):
+        raise IntegrityError("usage observation inventory is incomplete")
+    earlier: dict[str, object] | None = None
+    earlier_key: str | None = None
+    observations = []
+    for item in page.get("Contents", []):
+        candidate = _load_optional_document(cos, spec, item["Key"])
+        if candidate is None:
+            raise IntegrityError("usage observation disappeared")
+        observations.append((datetime.fromisoformat(str(candidate["observed_at"])), item["Key"], candidate))
+    for observed_at, key, candidate in sorted(observations):
+        if observed_at > usage.observed_at:
+            raise IntegrityError("usage observation is future dated")
+        if candidate.get("resources") != observation["resources"]:
+            earlier, earlier_key = None, None
+        elif earlier is None:
+            earlier, earlier_key = candidate, key
+    observation_key = immutable_json_key(prefix + "observation.json", _canonical(observation))
+    _put_immutable_document(cos, spec, observation_key, observation)
+    if earlier is None or not stable_usage_observations(earlier, observation, spec):
+        return None
+    authorization = _load_optional_document(cos, spec, f"{spec.prefix}/evidence/authorization-consumed.json")
+    if authorization is None or authorization.get("run_spec_sha256") != run_spec_sha256(spec):
+        raise IntegrityError("usage reconciliation lacks bound launch authorization")
     document = {
         "account_id": usage.account_id,
         "evidence_sha256": usage.evidence_sha256,
@@ -208,13 +203,18 @@ def _persist_usage_reconciliation(
         "provider_verified": usage.provider_verified,
         "resource_count": usage.resource_count,
         "run_id": str(spec.run_id),
-        "reconciled_run_ids": [str(value) for value in usage.reconciled_run_ids],
+        "run_spec_sha256": run_spec_sha256(spec),
+        "terminal_event_sha256": run_event_sha256(terminal),
+        "authorization_sha256": authorization["authorization_sha256"],
+        "consumption_sha256": authorization["consumption_sha256"],
+        "observation_keys": [earlier_key, observation_key],
+        "reconciled_run_ids": [str(spec.run_id)],
         "unreconciled_run_ids": [],
     }
     return _put_immutable_document(
         cos,
         spec,
-        f"{spec.prefix}/evidence/usage-reconciliation-{usage.evidence_sha256}.json",
+        f"{spec.prefix}/evidence/usage-reconciliation.json",
         document,
     )
 
@@ -339,12 +339,12 @@ def _log_state(
     now: datetime,
     instance_id: str | None,
     estimated_usd: Decimal,
-    observed_usage_usd: Decimal,
+    observed_usage_usd: Decimal | None,
 ) -> None:
     record = {
         "age_seconds": max(0, int((now - lease.created_at).total_seconds())),
         "estimated_usd": str(estimated_usd),
-        "observed_usage_usd": str(observed_usage_usd),
+        "observed_usage_usd": str(observed_usage_usd) if observed_usage_usd is not None else None,
         "run_id": str(lease.run_id),
         "state": state,
         "vsi_id_hash": hashlib.sha256(instance_id.encode()).hexdigest() if instance_id else None,
@@ -360,7 +360,7 @@ def reconcile_expired_resources(
     *,
     now: datetime,
     estimated_usd: Decimal,
-    usage: UsageEvidence,
+    usage: UsageEvidence | None,
     usage_reconciler: Callable[[], UsageEvidence],
 ) -> tuple[RunEvent, ...]:
     """Delete one expired, exactly-owned run; never create or broaden ownership."""
@@ -368,11 +368,13 @@ def reconcile_expired_resources(
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("now must be timezone-aware")
     spec = _bound_spec(cos)
-    if usage.account_id != spec.account_id or not usage.provider_verified:
+    if usage is not None and (usage.account_id != spec.account_id or not usage.provider_verified):
         raise IntegrityError("watchdog usage evidence is not authoritative")
+    observed_usage_usd = usage.observed_usage_usd if usage is not None else None
     ordered = _ordered(events, spec)
     _authoritative_events(cos, spec, ordered)
     if ordered[-1].state == "deleted":
+        _persist_usage_reconciliation(cos, spec, usage_reconciler(), ordered[-1])
         return ordered
 
     candidates = tuple(lease for lease in leases if getattr(lease, "run_id", None) == spec.run_id)
@@ -388,7 +390,7 @@ def reconcile_expired_resources(
                 now=now,
                 instance_id=None,
                 estimated_usd=estimated_usd,
-                observed_usage_usd=usage.observed_usage_usd,
+                observed_usage_usd=observed_usage_usd,
             )
             return ordered
         instance_id = _resolve_instance_id(vpc, spec, lease, ordered)
@@ -422,7 +424,7 @@ def reconcile_expired_resources(
                 now=now,
                 instance_id=instance_id,
                 estimated_usd=estimated_usd,
-                observed_usage_usd=usage.observed_usage_usd,
+                observed_usage_usd=observed_usage_usd,
             )
         return ordered
 
@@ -444,7 +446,7 @@ def reconcile_expired_resources(
         now=now,
         instance_id=instance_id,
         estimated_usd=estimated_usd,
-        observed_usage_usd=usage.observed_usage_usd,
+        observed_usage_usd=observed_usage_usd,
     )
     try:
         _restore_cleanup_context(cos, spec, instance_id)
@@ -475,15 +477,13 @@ def reconcile_expired_resources(
             now=now,
             instance_id=instance_id,
             estimated_usd=estimated_usd,
-            observed_usage_usd=usage.observed_usage_usd,
+            observed_usage_usd=observed_usage_usd,
         )
         raise
     context = _load_optional_document(cos, spec, _cleanup_context_key(spec))
     if context is None:
         raise IntegrityError("durable cleanup context is missing after teardown")
     deletion_receipts = _persist_deletion_receipts(cos, spec, context)
-    reconciled_usage = usage_reconciler()
-    usage_receipt_sha256 = _persist_usage_reconciliation(cos, spec, reconciled_usage)
     ordered = _append_state(
         cos,
         spec,
@@ -496,8 +496,7 @@ def reconcile_expired_resources(
         details={
             "deletion_receipt_sha256": deletion_receipts,
             "estimated_usd": str(estimated_usd),
-            "observed_usage_usd": str(reconciled_usage.observed_usage_usd),
-            "usage_receipt_sha256": usage_receipt_sha256,
+            "observed_usage_usd": str(observed_usage_usd) if observed_usage_usd is not None else None,
         },
     )
     _log_state(
@@ -506,8 +505,9 @@ def reconcile_expired_resources(
         now=now,
         instance_id=instance_id,
         estimated_usd=estimated_usd,
-        observed_usage_usd=reconciled_usage.observed_usage_usd,
+        observed_usage_usd=observed_usage_usd,
     )
+    _persist_usage_reconciliation(cos, spec, usage_reconciler(), ordered[-1])
     return ordered
 
 
@@ -540,7 +540,7 @@ def _run_spec_keys(cos: Any, bucket: str, prefix: str) -> tuple[str, ...]:
             raise IntegrityError("COS run-spec listing is malformed")
         for item in page.get("Contents", []):
             key = item.get("Key") if isinstance(item, dict) else None
-            if isinstance(key, str) and key.endswith("/run-spec.json"):
+            if isinstance(key, str) and "/run-spec-" in key and key.endswith(".json"):
                 keys.append(key)
         if not page.get("IsTruncated"):
             return tuple(sorted(set(keys)))
@@ -559,7 +559,7 @@ def _load_run_spec(cos: Any, bucket: str, key: str) -> RunSpec:
     if body != _canonical(document):
         raise IntegrityError("run-spec object is not canonical JSON")
     spec = _parse_run_spec(document)
-    if key != f"{spec.prefix}/run-spec.json":
+    if key != immutable_json_key(f"{spec.prefix}/run-spec.json", body):
         raise IntegrityError("run-spec key differs from its RunSpec")
     return spec
 
@@ -662,18 +662,27 @@ def run_watchdog_once(
             setattr(cos, "_watch_auth_configuration_verified", False)
             verify_cos_configuration(cos, spec)
             events = load_event_inventory(cos, spec).events
-            if not events or events[-1].state == "deleted":
+            if not events:
                 continue
             estimated_usd = _load_authorization_estimate(cos, spec)
-            billing_period = now.astimezone(timezone.utc).strftime("%Y-%m")
-            usage = fetch_usage_evidence(
-                usage_client,
-                spec.account_id,
-                billing_period,
-                (spec.run_id,),
-                now=now,
-            )
-            leases = _lease_for_run(vpc, spec, events)
+            billing_period = (
+                events[-1].observed_at if events[-1].state == "deleted" else now
+            ).astimezone(timezone.utc).strftime("%Y-%m")
+            usage: UsageEvidence | None
+            try:
+                usage = fetch_usage_evidence(
+                    usage_client, spec.account_id, billing_period, (spec.run_id,), now=now,
+                )
+            except Exception as exc:
+                usage = None
+                _LOG.error("watchdog_usage_unavailable run_id=%s error_type=%s", run_id, type(exc).__name__)
+
+            def require_usage() -> UsageEvidence:
+                if usage is None:
+                    raise IntegrityError("provider usage unavailable; account remains fenced")
+                return usage
+
+            leases = () if events[-1].state == "deleted" else _lease_for_run(vpc, spec, events)
             reconcile_expired_resources(
                 vpc,
                 cos,
@@ -682,14 +691,7 @@ def run_watchdog_once(
                 now=now,
                 estimated_usd=estimated_usd,
                 usage=usage,
-                usage_reconciler=lambda: fetch_usage_evidence(
-                    usage_client,
-                    spec.account_id,
-                    billing_period,
-                    (),
-                    now=now,
-                reconciled_run_ids=(spec.run_id,),
-                ),
+                usage_reconciler=require_usage,
             )
         except Exception as exc:
             failures.append((run_id, type(exc).__name__))

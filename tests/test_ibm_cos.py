@@ -106,7 +106,10 @@ class FakeCOS:
         if VersionId is not None and not VersionId.startswith("current:"):
             body = self.version_bodies[(Key, VersionId)]
         else:
-            body = self.objects[Key][0]
+            try:
+                body = self.objects[Key][0]
+            except KeyError as exc:
+                raise _NotFound() from exc
         return {"Body": io.BytesIO(body)}
 
     def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:

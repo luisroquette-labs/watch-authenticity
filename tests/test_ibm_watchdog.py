@@ -48,6 +48,9 @@ class _Cos:
             raise _MissingObject from exc
         return {"Body": io.BytesIO(body)}
 
+    def list_objects_v2(self, *, Bucket, Prefix):
+        return {"Contents": [{"Key": key} for key in self.objects if key.startswith(Prefix)]}
+
 
 def _events(*, instance_id: str | None = None) -> tuple[RunEvent, ...]:
     spec = valid_run_spec()

@@ -171,7 +171,7 @@ def test_crash_after_consume_blocks_replay_and_different_run(tmp_path):
     assert len(tuple(store.glob("account-*.pending.json"))) == 1
 
 
-def test_terminal_cos_usage_receipt_releases_account_fence(tmp_path):
+def test_self_asserted_usage_receipt_does_not_release_account_fence(tmp_path):
     spec = _spec()
     decision = _decision(spec)
     store = tmp_path / "auth"
@@ -205,11 +205,12 @@ def test_terminal_cos_usage_receipt_releases_account_fence(tmp_path):
         get_object=lambda **_kwargs: {"Body": io.BytesIO(receipt)},
     )
 
-    reconcile_pending_authorization(cos, spec, store=store)
-
-    assert not tuple(store.glob("account-*.pending.json"))
-    marker = next(store.glob("account-*.reconciled-*.json"))
-    assert json.loads(marker.read_bytes())["provider_verified"] is True
+    cos._watch_auth_bucket = spec.bucket
+    cos._watch_auth_prefix = spec.prefix
+    cos._watch_auth_configuration_verified = True
+    with pytest.raises(IntegrityError, match="digest"):
+        reconcile_pending_authorization(cos, spec, store=store)
+    assert tuple(store.glob("account-*.pending.json"))
 
 
 def test_authorization_estimate_is_published_without_local_paths(monkeypatch, tmp_path):
@@ -388,6 +389,32 @@ def test_worker_rejects_run_spec_that_differs_from_bootstrap():
 
     with pytest.raises(IntegrityError, match="bootstrap identity"):
         worker._load_spec(cos, env)
+
+
+def test_worker_reads_published_content_addressed_spec_and_controller_reads_receipt():
+    from tests.test_ibm_cos import FakeCOS
+
+    spec = _spec()
+    cos = FakeCOS(bucket=spec.bucket, prefix=spec.prefix)
+    subject.publish_run_spec(cos, spec)
+    env = {
+        "RUN_ID": str(spec.run_id), "WATCH_AUTH_REGION": spec.region,
+        "WATCH_AUTH_COS_ENDPOINT": spec.cos_endpoint, "WATCH_AUTH_COS_BUCKET": spec.bucket,
+        "WATCH_AUTH_COS_PREFIX": spec.prefix,
+        "WATCH_AUTH_COS_SERVICE_INSTANCE_ID": spec.cos_service_instance_id,
+        "WATCH_AUTH_TRUSTED_PROFILE_ID": spec.trusted_profile_id,
+        "WATCH_AUTH_CODE_SHA": spec.code_sha, "WATCH_AUTH_IMAGE_DIGEST": spec.image_digest,
+        "WATCH_AUTH_MANIFEST_SHA256": spec.manifest_sha256,
+        "WATCH_AUTH_SPLITS_SHA256": spec.splits_sha256,
+        "WATCH_AUTH_RUN_SPEC_TRANSPORT_SHA256": run_spec_transport_sha256(spec),
+    }
+    assert worker._load_spec(cos, env) == spec
+    subject._put_immutable(
+        cos, spec, f"{spec.prefix}/receipts/training.json",
+        worker._receipt(spec, "failed", error_type="TrainingError"),
+    )
+    with pytest.raises(RuntimeError, match="training worker failed: TrainingError"):
+        subject.wait_for_training_receipt(cos, spec, deadline=time.monotonic() + 1)
 
 
 def _instance() -> InstanceRef:

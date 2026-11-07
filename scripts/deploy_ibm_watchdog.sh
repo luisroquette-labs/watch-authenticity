@@ -38,29 +38,19 @@ logs_json="$(ibmcloud resource service-instance --id "$WATCH_AUTH_PLATFORM_LOGS_
 monitoring_json="$(ibmcloud resource service-instance --id "$WATCH_AUTH_PLATFORM_MONITORING_CRN" --output json)"
 python3 - "$WATCH_AUTH_ACCOUNT_ID" "$WATCH_AUTH_REGION" \
   "$WATCH_AUTH_PLATFORM_LOGS_CRN" "$WATCH_AUTH_PLATFORM_MONITORING_CRN" \
-  "$WATCH_AUTH_PLATFORM_ROUTING_PROOF" "$logs_json" "$monitoring_json" <<'PY'
-import json, pathlib, sys
+  "$logs_json" "$monitoring_json" <<'PY'
+import json, sys
 
-account, region, logs_crn, monitoring_crn, proof_path, logs_raw, monitoring_raw = sys.argv[1:]
+account, region, logs_crn, monitoring_crn, logs_raw, monitoring_raw = sys.argv[1:]
 instances = (json.loads(logs_raw), json.loads(monitoring_raw))
 for instance, crn in zip(instances, (logs_crn, monitoring_crn), strict=True):
     if instance.get("guid") not in crn or instance.get("region_id") != region:
         raise SystemExit("observability instance differs from selected account or region")
     if f":a/{account}:" not in crn:
         raise SystemExit("observability CRN differs from selected account")
-proof = json.loads(pathlib.Path(proof_path).read_text(encoding="utf-8"))
-expected = {
-    "account_id": account,
-    "credentialless": True,
-    "logs_crn": logs_crn,
-    "logs_probe": "delivered",
-    "monitoring_crn": monitoring_crn,
-    "monitoring_probe": "delivered",
-    "region": region,
-}
-if proof != expected:
-    raise SystemExit("credentialless platform routing proof is missing or differs")
 PY
+# Verify credentialless platform routing proof through authenticated destination reads.
+python3 -m infra.ibm_routing
 
 job_args=(
   --name watch-auth-watchdog
