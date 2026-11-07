@@ -4,7 +4,8 @@ set -euo pipefail
 required=(
   WATCH_AUTH_ACCOUNT_ID WATCH_AUTH_RESOURCE_GROUP WATCH_AUTH_RESOURCE_GROUP_ID
   WATCH_AUTH_REGION WATCH_AUTH_COS_ENDPOINT WATCH_AUTH_COS_SERVICE_INSTANCE_ID
-  WATCH_AUTH_CE_PROJECT
+  WATCH_AUTH_CE_PROJECT WATCH_AUTH_CE_PROJECT_ID
+  WATCH_AUTH_ROUTING_JOB_RUN WATCH_AUTH_ROUTING_PROBE_NONCE
   WATCH_AUTH_WATCHDOG_SERVICE_ACCOUNT WATCH_AUTH_WATCHDOG_IMAGE_DIGEST
   WATCH_AUTH_TRUSTED_PROFILE_ID
   WATCH_AUTH_COS_BUCKET WATCH_AUTH_PLATFORM_LOGS_CRN WATCH_AUTH_PLATFORM_MONITORING_CRN
@@ -17,7 +18,7 @@ done
   exit 2
 }
 
-# Block before provider access until credentialless platform routing proof is supported.
+# Verify credentialless platform routing proof through authenticated provider readbacks before mutation.
 python3 -m infra.ibm_routing
 
 command -v ibmcloud >/dev/null || { echo "ibmcloud CLI is required" >&2; exit 2; }
@@ -56,6 +57,7 @@ job_args=(
   --name watch-auth-watchdog
   --image "$WATCH_AUTH_WATCHDOG_IMAGE_DIGEST"
   --service-account "$WATCH_AUTH_WATCHDOG_SERVICE_ACCOUNT"
+  --trusted-profiles-enabled=true
   --env WATCH_AUTH_ACCOUNT_ID="$WATCH_AUTH_ACCOUNT_ID"
   --env WATCH_AUTH_RESOURCE_GROUP="$WATCH_AUTH_RESOURCE_GROUP"
   --env WATCH_AUTH_RESOURCE_GROUP_ID="$WATCH_AUTH_RESOURCE_GROUP_ID"
