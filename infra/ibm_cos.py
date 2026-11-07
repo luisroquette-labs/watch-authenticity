@@ -78,6 +78,7 @@ def create_cos_client(spec: RunSpec) -> Any:
     )
     setattr(client, "_watch_auth_bucket", spec.bucket)
     setattr(client, "_watch_auth_prefix", spec.prefix.strip("/"))
+    setattr(client, "_watch_auth_spec", spec)
     setattr(client, "_watch_auth_configuration_verified", False)
     return client
 

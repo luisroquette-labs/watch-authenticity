@@ -234,6 +234,7 @@ def test_create_client_uses_trusted_profile_token_manager_only(monkeypatch):
     assert not ({"api_key", "aws_access_key_id", "aws_secret_access_key"} & kwargs.keys())
     assert getattr(created, "_watch_auth_bucket") == spec.bucket
     assert getattr(created, "_watch_auth_prefix") == spec.prefix
+    assert getattr(created, "_watch_auth_spec") == spec
     assert getattr(created, "_watch_auth_configuration_verified") is False
 
 
