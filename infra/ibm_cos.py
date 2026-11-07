@@ -105,6 +105,34 @@ def load_immutable_json(client: Any, spec: RunSpec, key: str) -> dict[str, Any] 
     return document
 
 
+def persist_deletion_receipts(
+    cos: Any, spec: RunSpec, context: dict[str, object]
+) -> dict[str, str]:
+    """Persist the shared per-resource receipt format after confirmed teardown."""
+
+    resources = {
+        "vpc-vsi": context["instance_id"],
+        "boot-volume": context["volume_id"],
+        "subnet": context["subnet_id"],
+        "public-gateway": context["public_gateway_id"],
+        "floating-ip": context["public_gateway_floating_ip_id"],
+    }
+    hashes: dict[str, str] = {}
+    for resource_type, resource_id in resources.items():
+        receipt = {
+            "provider_state": "404",
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+            "run_id": str(spec.run_id),
+        }
+        body = json.dumps(receipt, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        digest = hashlib.sha256(body).hexdigest()
+        key = f"{spec.prefix}/receipts/deletion/{resource_type}-{digest}.json"
+        put_immutable_json(cos, spec, key, body)
+        hashes[resource_type] = digest
+    return hashes
+
+
 @dataclass(frozen=True)
 class EventInventorySnapshot:
     """Diagnostic snapshot; Task 8 must fence it before launch authorization."""

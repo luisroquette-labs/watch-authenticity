@@ -24,6 +24,7 @@ from infra.ibm_cos import (
     append_event,
     load_event_inventory,
     load_immutable_json,
+    persist_deletion_receipts,
     put_immutable_json,
     validate_event_chain,
     verify_cos_configuration,
@@ -873,12 +874,20 @@ def launch_training(
                         _canonical(context),
                     ),
                 )
+                with _hard_deadline(_evidence_deadline(total_deadline)):
+                    context = load_immutable_json(
+                        clients.cos, spec, f"{spec.prefix}/watchdog/cleanup-context.json"
+                    )
+                    if context is None:
+                        raise IntegrityError("durable cleanup context is missing after teardown")
+                    deletion_receipts = persist_deletion_receipts(clients.cos, spec, context)
                 terminal = _append_state(
                     clients.cos,
                     spec,
                     "deleted",
                     now=now,
                     instance_id=instance_id,
+                    details={"deletion_receipt_sha256": deletion_receipts},
                     deadline=_evidence_deadline(total_deadline),
                 )
             except BaseException as exc:
