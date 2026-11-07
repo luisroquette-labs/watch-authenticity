@@ -106,9 +106,16 @@ def test_bootstrap_is_two_stage_version_pinned_and_secretless_on_disk():
 
 def test_bootstrap_enforces_exact_proxy_and_dual_stack_isolation():
     bootstrap = _text(BOOTSTRAP)
+    proxy_acls = tuple(
+        line for line in bootstrap.splitlines() if line.startswith("acl exact_destinations ")
+    )
 
-    assert "iam.cloud.ibm.com" in bootstrap
-    assert "s3.direct.${IBM_REGION}.cloud-object-storage.appdomain.cloud" in bootstrap
+    assert proxy_acls == (
+        (
+            "acl exact_destinations dstdomain iam.cloud.ibm.com "
+            "s3.direct.${IBM_REGION}.cloud-object-storage.appdomain.cloud"
+        ),
+    )
     assert "dstdomain ." not in bootstrap
     assert "--network host" not in bootstrap
     assert "docker network create" in bootstrap
