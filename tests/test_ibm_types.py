@@ -88,6 +88,23 @@ def test_run_spec_requires_region_bound_direct_cos_endpoint(endpoint):
         replace(valid_run_spec(), cos_endpoint=endpoint)
 
 
+@pytest.mark.parametrize(
+    "bucket",
+    (
+        "bad/bucket",
+        "../other",
+        "bucket%2fother",
+        "Bad_Bucket",
+        "192.168.1.1",
+        ".leading",
+        "trailing.",
+    ),
+)
+def test_run_spec_rejects_cos_bucket_path_injection(bucket):
+    with pytest.raises(ValueError, match="bucket"):
+        replace(valid_run_spec(), bucket=bucket)
+
+
 def test_financial_evidence_rejects_naive_time_and_non_decimal_or_nan():
     with pytest.raises(ValueError, match="timezone-aware"):
         replace(valid_credit(), observed_at=datetime(2026, 11, 5))

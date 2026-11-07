@@ -6,14 +6,15 @@
 
 **Architecture:** A local controller authorizes one immutable run, IBM VPC executes one digest-pinned GPU container, IBM COS is the append-only object/receipt store, and a pre-deployed IBM Code Engine cron watchdog deletes expired workers. The VSI has no inbound path or floating IP. Its hash-bound host bootstrap installs a local forward proxy; the training container runs on an isolated bridge that can reach only the exact regional COS endpoint and IAM through that proxy. The trusted host installs signed packages before mounting any dataset, obtains short-lived credentials through Instance Metadata and reaches the internet through the outbound-only Public Gateway. Pure cost/lifecycle rules are SDK-free; IBM SDK adapters sit at the boundary.
 
-**Tech Stack:** Python 3.10, PyTorch 2.5.1/CUDA 12.4, `ibm-vpc==0.36.1`, `ibm-cos-sdk==2.16.2`, `ibm-platform-services==0.77.1`, `ibm-cloud-sdk-core==3.28.0`, IBM VPC `gx3-16x80x1l4`, IBM COS, IBM Container Registry, IBM Code Engine cron, IAM trusted profiles, IBM Cloud Logs/Monitoring.
+**Tech Stack:** Python 3.12, PyTorch 2.10.0/CUDA 12.6, `ibm-vpc==0.36.1`, `ibm-cos-sdk==2.16.2`, `ibm-platform-services==0.77.1`, `ibm-cloud-sdk-core==3.28.0`, IBM VPC `gx3-16x80x1l4`, IBM COS, IBM Container Registry, IBM Code Engine cron, IAM trusted profiles, IBM Cloud Logs/Monitoring.
 
 **Spec:** `.specs/tasks/in-progress/train-watch-authenticity-model.feature.md`
 
 ## Global Constraints
 
 - Production profile is exactly `gx3-16x80x1l4`: 1 NVIDIA L4 24 GB, 16 vCPU and 80 GiB RAM.
-- L4 host bootstrap must prove NVIDIA driver >=550 and CUDA 12.4 before the container starts.
+- The host image is the exact authorized public `ubuntu-22-04-amd64` image; bootstrap package pins are validated against Ubuntu 22.04 repositories before provisioning.
+- L4 host bootstrap must prove NVIDIA driver >=550 and CUDA 12.6 before the container starts.
 - The applied promo code is not balance proof. Production launch requires console/API evidence of remaining credit, expiry and eligible IBM-native SKUs observed within 24 hours.
 - A run must finish at least 48 hours before promo expiry.
 - Default safety reserve is USD 500. Lowering it is a financial decision requiring the owner's explicit approval in that conversation.
@@ -47,7 +48,7 @@
 - Create `infra/ibm_vpc.py`: thin `ibm-vpc` adapter and deterministic reconciliation.
 - Create `infra/ibm_train.py`: lifecycle orchestrator with `finally` teardown.
 - Create `infra/ibm_watchdog.py`: stale-instance reconciliation used by Code Engine.
-- Create `infra/bootstrap_host.sh`: two-stage driver 550/CUDA 12.4 bootstrap, reboot and digest-pinned container launch.
+- Create `infra/bootstrap_host.sh`: two-stage driver 550/CUDA 12.6 bootstrap, reboot and digest-pinned container launch.
 - Create `Containerfile.train`: digest-pinned training runtime.
 - Create `training/run.py`: real deterministic head-training entrypoint.
 - Create `training/data.py`: manifest/COS loader, target mapping and class/split validation.
@@ -360,38 +361,41 @@ Expected: PASS.
 **Files:**
 - Create: `Containerfile.train`
 - Create: `infra/bootstrap_host.sh`
+- Create: `infra/ibm_bootstrap.py`
 - Create: `requirements-train.lock`
 - Create: `tests/test_training_image_contract.py`
 
 **Interfaces:**
 - Consumes: `RunSpec.image_digest`, `RunSpec.bootstrap_sha256`, `RunSpec.region`, `RunSpec.trusted_profile_id` and the immutable COS run key.
-- Produces: a `linux/amd64` OCI manifest digest, `/var/lib/watch-auth/bootstrap-proof.json`, a healthy training container and the first hash-linked `running`/`failed` event.
+- Produces: a `linux/amd64` OCI manifest digest, `/var/lib/watch-auth/bootstrap-proof.json`, an immutable content-addressed COS copy of that proof and a healthy training container. Task 7 owns conversion of the verified proof into the next hash-linked `running`/`failed` event because only the controller owns the complete event chain.
 
 - [ ] **Step 1: Resolve and record base-image digest**
 
-Run: `docker buildx imagetools inspect nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04`
+Run: `docker buildx imagetools inspect nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04`
 Expected: a platform-specific `sha256:` digest. Put that exact digest in `FROM`; mutable-only tags fail the contract test.
 
 - [ ] **Step 2: Write failing static contract tests**
 
-Assert a `linux/amd64` digest-pinned `FROM`, non-root user, no `ARG/ENV` secret names, `pip install --require-hashes -r requirements-train.lock`, the PyTorch 2.5.1 CUDA 12.4 wheel index/artifact hash and an OCI healthcheck. The contract test fails if `requirements.txt` is copied directly into the training image. It also hashes `infra/bootstrap_host.sh` bytes and requires equality with `RunSpec.bootstrap_sha256`; rejects `--network host`; requires the isolated bridge plus `DOCKER-USER` forwarding and `INPUT` host-service default-drop rules; requires IPv6 disabled on that bridge or equivalent default-drop IPv6 rules and negative proof; requires Squid to bind only the bridge host IP and allow the two exact proxy hosts; and rejects wildcard/suffix proxy allowlists.
+Assert a `linux/amd64` digest-pinned `FROM`, non-root user, no `ARG/ENV` secret names, `pip install --require-hashes -r requirements-train.lock`, the PyTorch 2.10.0 CUDA 12.6 wheel index/artifact hash and an OCI healthcheck. The contract test fails if `requirements.txt` is copied directly into the training image. It also renders the exact `infra/bootstrap_host.sh` bytes from non-secret `RunSpec` values and requires equality with `RunSpec.bootstrap_sha256`; rejects `--network host`; requires the isolated bridge plus `DOCKER-USER` forwarding and `INPUT` host-service default-drop rules; requires IPv6 disabled on that bridge or equivalent default-drop IPv6 rules and negative proof; requires Squid to bind only the bridge host IP and allow the two exact proxy hosts; and rejects wildcard/suffix proxy allowlists.
 
 - [ ] **Step 3: Implement host bootstrap**
 
-Implement an idempotent two-stage systemd bootstrap. Stage 1 verifies signed APT repository fingerprints recorded in the script, installs exact NVIDIA 550 driver/Container Toolkit and Squid package versions, writes no secret, mounts no dataset, enables Stage 2 and reboots once. Stage 2 proves cloud-init success, driver >=550, L4 memory, toolkit and CUDA 12.4 compatibility before requesting a short-lived instance-identity token from Instance Metadata. Configure Squid to bind only the `watch-auth-isolated` bridge host IP, accept only CONNECT on port 443 and allow only the exact hosts `iam.cloud.ibm.com` and `s3.direct.${IBM_REGION}.cloud-object-storage.appdomain.cloud`; disable cache, redact query strings and deny every other destination. Create the dedicated Docker bridge with IPv6 disabled; if the platform cannot prove IPv6 is disabled, install equivalent `ip6tables`/nftables default-drop forwarding and host-input rules. Install IPv4 `DOCKER-USER` rules that allow forwarded container traffic only to the link-local metadata address and drop every other direct destination, and `INPUT` rules that allow bridge traffic only to Squid port 3128 while rejecting every other host service. Prove a direct-IP HTTPS request, another host port, a disallowed domain and IPv6 egress all fail while Instance Metadata and the configured regional COS endpoint succeed. Any missing IPv4/IPv6 firewall or proxy proof blocks dataset mounting and training.
+Implement an idempotent two-stage systemd bootstrap. `infra/ibm_bootstrap.py` renders only validated, non-secret `RunSpec` values into the template and verifies the exact resulting SHA-256 before user-data reaches VPC creation. Stage 1 verifies signed APT repository fingerprints recorded in the script, installs exact NVIDIA 550 driver/Container Toolkit and Squid package versions, writes no secret, mounts no dataset, enables Stage 2 and reboots once. Stage 2 proves cloud-init success, driver >=550, L4 memory, toolkit and CUDA 12.6 compatibility before requesting a short-lived instance-identity token from Instance Metadata. Configure Squid to bind only the `watch-auth-isolated` bridge host IP, accept only CONNECT on port 443 and allow only the exact hosts `iam.cloud.ibm.com` and `s3.direct.${IBM_REGION}.cloud-object-storage.appdomain.cloud`; disable cache, redact query strings and deny every other destination. Create the dedicated Docker bridge with IPv6 disabled; if the platform cannot prove IPv6 is disabled, install equivalent `ip6tables`/nftables default-drop forwarding and host-input rules. Install IPv4 `DOCKER-USER` rules that allow forwarded container traffic only to the link-local metadata address and drop every other direct destination, and `INPUT` rules that allow bridge traffic only to Squid port 3128 while rejecting every other host service. Prove a direct-IP HTTPS request, another host port, a disallowed domain and IPv6 egress all fail while Instance Metadata and the configured regional COS endpoint succeed. Any missing IPv4/IPv6 firewall or proxy proof blocks dataset mounting and training.
 
-After the network proof, log into `private.${IBM_REGION}.icr.io` with username `iamtoken` and the short-lived token on stdin, pull the exact digest, log out, and launch the container with `--gpus all --network watch-auth-isolated --read-only --cap-drop=ALL --security-opt=no-new-privileges --tmpfs /tmp`, `HTTPS_PROXY=http://host.docker.internal:3128`, `NO_PROXY=169.254.169.254` and `--add-host=host.docker.internal:host-gateway`. `DOCKER-USER` permits only forwarded link-local metadata traffic; `INPUT` permits only the proxy on the bridge host; every other direct destination or host service is rejected. The trusted-profile token remains short-lived and is never written to disk, baked into the image or exposed in logs. End with:
+After the network proof, log into `private.${IBM_REGION}.icr.io` with username `iamtoken` and the short-lived token on stdin, pull the exact digest, log out, and launch the container with `--gpus all --network watch-auth-isolated --dns 127.0.0.1 --read-only --cap-drop=ALL --security-opt=no-new-privileges --tmpfs /tmp`, `HTTPS_PROXY=http://host.docker.internal:3128`, `NO_PROXY=169.254.169.254` and `--add-host=host.docker.internal:host-gateway`. The unusable container-local DNS blocks DNS exfiltration; Squid resolves only the two allowlisted proxy hosts on the host. `DOCKER-USER` permits only forwarded link-local metadata traffic; `INPUT` permits only the proxy on the bridge host; every other direct destination or host service is rejected. The trusted-profile token remains short-lived and is never written to disk, baked into the image or exposed in logs. End with:
 
 ```bash
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
 docker run --rm --gpus all "${TRAIN_IMAGE_DIGEST}" python -c 'import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))'
 ```
 
-The container proof additionally asserts `torch.__version__.startswith("2.5.1")`, `torch.version.cuda == "12.4"`, device name contains `L4`, total memory is at least 22 GiB, direct egress is blocked and the proxy rejects an unlisted domain. Write proof to `/var/lib/watch-auth/bootstrap-proof.json` and upload its hash as the first run event; never echo or persist tokens. A failed package signature, required reboot, failed identity exchange, unexpected GPU, digest mismatch, proxy/firewall proof or healthcheck blocks training and proceeds to teardown.
+The container proof additionally asserts `torch.__version__.startswith("2.10.0")`, `torch.version.cuda == "12.6"`, device name contains `L4`, total memory is at least 22 GiB, direct egress is blocked and the proxy rejects an unlisted domain. Write proof to `/var/lib/watch-auth/bootstrap-proof.json` and upload the exact bytes under a content-addressed bootstrap-proof key; Task 7 validates them and appends the next canonical event through `infra.ibm_cos.append_event`. Never echo or persist tokens. A failed package signature, required reboot, failed identity exchange, unexpected GPU, digest mismatch, proxy/firewall proof or healthcheck blocks training and proceeds to teardown.
 
 - [ ] **Step 4: Build, scan and push**
 
 Generate `requirements-train.lock` once for `linux/amd64` with every direct/transitive artifact pinned and SHA-256 hashed, then prove it with `python -m pip install --dry-run --require-hashes -r requirements-train.lock` inside the same pinned base image. Build the `linux/amd64` image into `TRAIN_IMAGE_LOCAL=watch-train:${CODE_SHA}` and run `docker scout cves --exit-code --only-severity critical,high "$TRAIN_IMAGE_LOCAL"` when Docker Scout is installed; otherwise run `trivy image --exit-code 1 --severity HIGH,CRITICAL "$TRAIN_IMAGE_LOCAL"`. If neither scanner exists, stop with `BLOQUEADO — INTERVENÇÃO NECESSÁRIA`; do not silently skip scanning or install a paid service. Push to IBM Container Registry only after external-write/cost authorization, then resolve the manifest digest. `RunSpec.image_digest` must match `^private\.[a-z0-9-]+\.icr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$`; registry retention and storage price are included in `PricingEvidence`.
+
+The strict scan is a release gate: upgrade the runtime rather than suppressing findings. The first implementation scan on 2026-11-06 rejected the prior Python 3.10/PyTorch 2.5.1/CUDA 12.4 stack; Python 3.12, PyTorch 2.10.0, CUDA 12.6, Pillow 13.0.0 and Transformers 5.22.2 produced zero HIGH/CRITICAL findings. Keep NVIDIA base packages held while applying Ubuntu security updates so `apt upgrade` cannot cross the pinned CUDA line.
 
 - [ ] **Step 5: Run contract tests**
 
