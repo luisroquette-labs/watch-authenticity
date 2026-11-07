@@ -219,6 +219,37 @@ def test_previous_billing_month_receipt_can_release_next_month_authorization(tmp
     assert _next_run(spec, cos, store, next_month).spec.run_id != spec.run_id
 
 
+def test_documented_vpc_usage_without_classic_pending_field_reconciles(tmp_path):
+    from ibm_platform_services.usage_reports_v4 import InstanceUsage
+
+    spec, cos, store = _prepared(tmp_path)
+    resources = _resources(spec)
+    for resource in resources:
+        del resource["pending"]
+        resource.update(pricing_country="USA", billable=True)
+        resource["usage"][0].update(rated_cost=1.25, discounts=[])
+    # ibm-platform-services 0.77.1: InstanceUsage.pending is optional and classic-only.
+    resources = [InstanceUsage.from_dict(resource).to_dict() for resource in resources]
+    assert all("pending" not in resource for resource in resources)
+    _watch(spec, cos, resources, NOW + timedelta(hours=1))
+    later = NOW + timedelta(hours=25)
+    _watch(spec, cos, resources, later)
+    assert _next_run(spec, cos, store, later, resources).spec.run_id != spec.run_id
+
+
+@pytest.mark.parametrize("pending", [True, 0, "false"])
+def test_sdk_boundary_rejects_pending_or_invalid_flags(pending):
+    spec = _spec()
+    resources = _resources(spec)
+    resources[0]["pending"] = pending
+    client = Mock()
+    client.get_resource_usage_account.return_value.get_result.return_value = {
+        "resources": resources, "count": len(resources),
+    }
+    with pytest.raises(ValueError, match="pending"):
+        fetch_usage_evidence(client, spec.account_id, "2026-11", (spec.run_id,), now=NOW)
+
+
 @pytest.mark.parametrize("field", ["terminal_event_sha256", "consumption_sha256", "evidence_sha256"])
 def test_controller_rejects_receipt_rebound_to_another_event_or_authorization(tmp_path, field):
     from infra.ibm_cos import immutable_json_key

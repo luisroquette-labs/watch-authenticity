@@ -6,7 +6,7 @@ required=(
   WATCH_AUTH_REGION WATCH_AUTH_COS_ENDPOINT WATCH_AUTH_COS_SERVICE_INSTANCE_ID
   WATCH_AUTH_CE_PROJECT
   WATCH_AUTH_WATCHDOG_SERVICE_ACCOUNT WATCH_AUTH_WATCHDOG_IMAGE_DIGEST
-  WATCH_AUTH_TRUSTED_PROFILE_ID WATCH_AUTH_PLATFORM_ROUTING_PROOF
+  WATCH_AUTH_TRUSTED_PROFILE_ID
   WATCH_AUTH_COS_BUCKET WATCH_AUTH_PLATFORM_LOGS_CRN WATCH_AUTH_PLATFORM_MONITORING_CRN
 )
 for name in "${required[@]}"; do
@@ -16,6 +16,9 @@ done
   echo "WATCH_AUTH_WATCHDOG_IMAGE_DIGEST must be digest-pinned" >&2
   exit 2
 }
+
+# Block before provider access until credentialless platform routing proof is supported.
+python3 -m infra.ibm_routing
 
 command -v ibmcloud >/dev/null || { echo "ibmcloud CLI is required" >&2; exit 2; }
 
@@ -49,9 +52,6 @@ for instance, crn in zip(instances, (logs_crn, monitoring_crn), strict=True):
     if f":a/{account}:" not in crn:
         raise SystemExit("observability CRN differs from selected account")
 PY
-# Verify credentialless platform routing proof through authenticated destination reads.
-python3 -m infra.ibm_routing
-
 job_args=(
   --name watch-auth-watchdog
   --image "$WATCH_AUTH_WATCHDOG_IMAGE_DIGEST"

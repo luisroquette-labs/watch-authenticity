@@ -426,7 +426,7 @@ def fetch_usage_evidence(
             pending = resource.get("pending")
             if pending is True:
                 raise ValueError("incomplete billing period response has pending usage")
-            if pending not in {None, False}:
+            if pending is not None and not isinstance(pending, bool):
                 raise ValueError("usage pending flag is invalid")
             resource_id = resource.get("resource_instance_id")
             if not isinstance(resource_id, str) or not resource_id:
@@ -434,7 +434,9 @@ def fetch_usage_evidence(
             if resource_id in resource_ids:
                 raise ValueError("duplicate usage resource")
             resource_ids.add(resource_id)
-            resource_records.append(json.dumps(resource, sort_keys=True, separators=(",", ":")))
+            # IBM's optional pending flag describes classic infrastructure, not VPC.
+            normalized = {**resource, "pending": False}
+            resource_records.append(json.dumps(normalized, sort_keys=True, separators=(",", ":")))
             metrics = resource.get("usage")
             if not isinstance(metrics, list):
                 raise ValueError("usage metrics are missing")

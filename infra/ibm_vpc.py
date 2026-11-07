@@ -2476,9 +2476,12 @@ def _delete_and_wait_locked(
             )
 
     if cleanup_context_sink is not None:
-        cleanup_context_sink(
-            _cleanup_context_document(spec, instance_id, volume_id)
-        )
+        try:
+            cleanup_context_sink(
+                _cleanup_context_document(spec, instance_id, volume_id)
+            )
+        except Exception as exc:
+            cleanup_ledger_errors.append(exc)
 
     if instance_exists:
         try:
