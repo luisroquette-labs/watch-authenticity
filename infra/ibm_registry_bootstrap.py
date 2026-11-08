@@ -87,6 +87,12 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
              and target.get("account", {}).get("guid") == v["ACCOUNT_ID"]
              and target.get("resource_group", {}).get("name") == v["RESOURCE_GROUP"]
              and target.get("region", {}).get("name") == v["REGION"], "selected IBM target differs")
+    target_user = target.get("user", {})
+    target_account = target.get("account", {})
+    operator_email = target_user.get("user_email")
+    _require(isinstance(operator_email, str) and bool(operator_email)
+             and operator_email == target_account.get("owner"),
+             "IBM target user is not the account owner")
     resource_group_id = cli("resource", "group", v["RESOURCE_GROUP"], "--id").strip()
     _require(resource_group_id == v["RESOURCE_GROUP_ID"], "selected IBM resource group differs")
     selected = _json(cli("ce", "project", "current", "--output", "json"))
@@ -123,6 +129,17 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
             _require(response.status_code == 201, "IBM policy creation failed")
         except requests.RequestException:
             raise BootstrapBlocked("IBM policy creation failed") from None
+
+    def delete(url: str) -> None:
+        try:
+            response = http.delete(
+                url, headers={"Authorization": token, "Accept": "application/json",
+                              "Content-Type": "application/json"},
+                timeout=30, allow_redirects=False,
+            )
+            _require(response.status_code == 204, "orphan registry API key deletion failed")
+        except requests.RequestException:
+            raise BootstrapBlocked("orphan registry API key deletion failed") from None
 
     project = get(ce)
     _require(project is not None and project.get("id") == v["CE_PROJECT_ID"]
@@ -256,13 +273,87 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
             ]}],
         })
         _require(len(policies()) == 1, "registry Reader policy was not persisted")
+
+    operator_attributes = {"accountId": v["ACCOUNT_ID"], "serviceName": "codeengine",
+                           "serviceInstance": v["CE_PROJECT_ID"]}
+
+    def operator_writer_policies() -> list[dict[str, Any]]:
+        try:
+            inventory = json.loads(cli("iam", "user-policies", operator_email, "--output", "JSON"))
+        except (TypeError, ValueError):
+            raise BootstrapBlocked("malformed operator policy inventory") from None
+        _require(isinstance(inventory, list) and all(isinstance(item, dict) for item in inventory),
+                 "malformed operator policy inventory")
+        matches = []
+        for policy in inventory:
+            resources = policy.get("resources", [])
+            _require(isinstance(resources, list)
+                     and all(isinstance(resource, dict) for resource in resources),
+                     "malformed operator policy inventory")
+            observed = resources[0].get("attributes", []) if len(resources) == 1 else []
+            _require(isinstance(observed, list)
+                     and all(isinstance(item, dict) for item in observed),
+                     "malformed operator policy inventory")
+            codeengine = [item for item in observed if item.get("name") == "serviceName"
+                          and item.get("value") == "codeengine"]
+            if codeengine:
+                instances = [item for item in observed if item.get("name") == "serviceInstance"]
+                _require(len(codeengine) == 1
+                         and codeengine[0].get("operator", "stringEquals") == "stringEquals"
+                         and len(instances) == 1
+                         and instances[0].get("operator", "stringEquals") == "stringEquals"
+                         and isinstance(instances[0].get("value"), str)
+                         and bool(re.fullmatch(r"[A-Za-z0-9_-]+", instances[0]["value"])),
+                         "broad Code Engine operator policy")
+            if any(item.get("name") == "serviceInstance"
+                   and item.get("value") == v["CE_PROJECT_ID"] for item in observed):
+                roles = policy.get("roles", [])
+                _require(isinstance(roles, list) and all(isinstance(role, dict) for role in roles),
+                         "malformed operator policy inventory")
+                _require(len(observed) == len(operator_attributes)
+                         and all(item.get("operator", "stringEquals") == "stringEquals"
+                                 for item in observed)
+                         and {item.get("name"): item.get("value") for item in observed}
+                         == operator_attributes
+                         and [role.get("role_id") for role in roles]
+                         == ["crn:v1:bluemix:public:iam::::serviceRole:Writer"],
+                         "Code Engine operator policy differs")
+                matches.append(policy)
+        _require(len(matches) <= 1, "duplicate Code Engine operator policies")
+        return matches
+
+    if not operator_writer_policies():
+        cli("iam", "user-policy-create", operator_email, "--roles", "Writer", "--service-name",
+            "codeengine", "--service-instance", v["CE_PROJECT_ID"], "--output", "JSON")
+        _require(len(operator_writer_policies()) == 1,
+                 "Code Engine operator policy was not persisted")
+    try:
+        registry_inventory = json.loads(cli("ce", "registry", "list", "--output", "json"))
+    except (TypeError, ValueError):
+        raise BootstrapBlocked("malformed registry secret inventory") from None
+    _require(isinstance(registry_inventory, list)
+             and all(isinstance(item, dict) for item in registry_inventory),
+             "malformed registry secret inventory")
+    registry_matches = [item for item in registry_inventory if item.get("name") == SECRET]
+    _require(len(registry_matches) == (1 if secret is not None else 0),
+             "registry secret inventories differ")
     keys = _items(get(IAM + "/v1/apikeys", params={
         "account_id": v["ACCOUNT_ID"], "iam_id": iam_id, "pagesize": "100",
     }) or {}, "apikeys")
-    _require(len(keys) <= 1 and all(key.get("name") == SERVICE for key in keys),
+    api_key_id = keys[0].get("id") if len(keys) == 1 else None
+    _require(len(keys) <= 1 and all(key.get("name") == SERVICE and key.get("iam_id") == iam_id
+             for key in keys)
+             and (not keys or isinstance(api_key_id, str) and bool(re.fullmatch(
+                 r"ApiKey-[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", api_key_id))),
              "unexpected registry API keys")
     if secret is None:
-        _require(not keys, "orphan registry API key needs explicit revocation before retry")
+        if keys:
+            assert isinstance(api_key_id, str)
+            delete(IAM + "/v1/apikeys/" + api_key_id)
+            keys = _items(get(IAM + "/v1/apikeys", params={
+                "account_id": v["ACCOUNT_ID"], "iam_id": iam_id, "pagesize": "100",
+            }) or {}, "apikeys")
+            _require(not keys, "orphan registry API key deletion was not persisted")
         key_file.touch(mode=0o600)
         cli("iam", "service-api-key-create", SERVICE, SERVICE, "--file", str(key_file),
             "--action-if-leaked", "disable", "--force", "--output", "json")
