@@ -45,6 +45,8 @@ class Provider:
         self.groups = []
         self.secret = None
         self.job = None
+        self.subscriptions = {kind: {"items": []} for kind in ("cron", "cos", "kafka")}
+        self.job_runs = {"job_runs": []}
         self.fail = None
         self.key_path = None
         self.leaked = "sensitive-fixture-key-never-log"
@@ -57,6 +59,8 @@ class Provider:
             return json.dumps(self.selected)
         if args[:2] == ("iam", "oauth-tokens"):
             return json.dumps({"iam_token": "Bearer bootstrap-session"})
+        if args[:2] == ("ce", "sub") and args[3] == "list":
+            return json.dumps(self.subscriptions[args[2]])
         if args[1] == "service-id-create":
             self.ids = [copy.deepcopy(SERVICE_ID)]
         elif args[1] == "service-policy-create":
@@ -132,6 +136,9 @@ class Provider:
             result = self.secret
         elif url.endswith(f"/jobs/{JOB}"):
             result = self.job
+        elif url.endswith("/job_runs"):
+            assert kwargs["params"]["job_name"] == JOB
+            result = self.job_runs
         else:
             raise AssertionError(url)
         return SimpleNamespace(status_code=404 if result is None else 200, text=json.dumps(result))
@@ -140,6 +147,128 @@ class Provider:
 def run(provider, tmp_path, env=None):
     tmp_path.chmod(0o700)
     bootstrap(env or ENV, tmp_path / "key.json", cli=provider.cli, http=provider)
+
+
+def mutations(provider):
+    return [call for call in provider.calls if not (
+        call[0] == "target" or call[:3] == ("ce", "project", "current")
+        or call[:2] == ("iam", "oauth-tokens")
+        or (call[:2] == ("ce", "sub") and call[3] == "list")
+    )]
+
+
+@pytest.mark.parametrize("kind", ["cron", "cos", "kafka"])
+def test_existing_subscription_blocks_bootstrap_before_any_mutation(tmp_path, kind):
+    provider = Provider()
+    provider.subscriptions[kind] = {"items": [{"spec": {"sink": {
+        "ref": {"kind": "Job", "name": JOB},
+    }}}]}
+    with pytest.raises(BootstrapBlocked, match="subscription"):
+        run(provider, tmp_path)
+    assert mutations(provider) == []
+    assert not (tmp_path / "key.json").exists()
+
+
+@pytest.mark.parametrize("status", ["running", "pending", "unknown", None])
+def test_active_or_incomplete_job_run_blocks_bootstrap_before_any_mutation(tmp_path, status):
+    provider = Provider()
+    provider.job_runs = {"job_runs": [{"job_name": JOB, "status": status}]}
+    with pytest.raises(BootstrapBlocked, match="job run"):
+        run(provider, tmp_path)
+    assert mutations(provider) == []
+    assert not (tmp_path / "key.json").exists()
+
+
+@pytest.mark.parametrize("inventory", [
+    {}, {"items": None}, {"items": [None]}, {"items": [{}]},
+    {"items": [], "metadata": {"continue": "next-page"}},
+    {"items": [{"spec": {"sink": {"uri": "https://unknown-destination"}}}]},
+])
+def test_missing_malformed_or_paginated_subscription_readback_blocks_all_mutation(tmp_path, inventory):
+    provider = Provider()
+    provider.subscriptions["cron"] = inventory
+    with pytest.raises(BootstrapBlocked):
+        run(provider, tmp_path)
+    assert mutations(provider) == []
+
+
+@pytest.mark.parametrize("inventory", [
+    {}, {"job_runs": None}, {"job_runs": [{}]}, {"job_runs": [], "next": {"start": "next"}},
+    {"job_runs": [{"job_name": JOB, "status": "succeeded"}]},
+    {"job_runs": [{"job_name": JOB, "status": "failed", "status_details": {
+        "completion_time": "2026-11-08T10:00:00Z", "running": 1,
+    }}]},
+])
+def test_missing_malformed_or_paginated_run_readback_blocks_all_mutation(tmp_path, inventory):
+    provider = Provider()
+    provider.job_runs = inventory
+    with pytest.raises(BootstrapBlocked):
+        run(provider, tmp_path)
+    assert mutations(provider) == []
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed"])
+def test_terminal_run_and_unrelated_subscription_allow_inert_bootstrap(tmp_path, status):
+    provider = Provider()
+    provider.job_runs = {"job_runs": [{"job_name": JOB, "status": status, "status_details": {
+        "completion_time": "2026-11-08T10:00:00Z", "running": 0, "pending": 0, "unknown": 0,
+    }}]}
+    provider.subscriptions["cron"] = {"items": [{"spec": {"sink": {
+        "ref": {"kind": "Job", "name": "unrelated-job"},
+    }}}]}
+    run(provider, tmp_path)
+    assert provider.job is not None
+
+
+def test_full_deploy_routing_failure_blocks_before_any_provider_mutation(tmp_path, monkeypatch):
+    provider = Provider()
+    tmp_path.chmod(0o700)
+    for name, value in ENV.items():
+        monkeypatch.setenv(name, value)
+
+    def failed_gate():
+        raise SystemExit("routing verification blocked")
+
+    monkeypatch.setattr("infra.ibm_registry_bootstrap.verify_routing", failed_gate)
+    with pytest.raises(SystemExit, match="routing verification blocked"):
+        bootstrap(ENV, tmp_path / "key.json", cli=provider.cli, http=provider, deploy=True)
+    assert provider.calls == []
+
+
+def test_full_deploy_cannot_reuse_routing_gate_for_another_target(tmp_path, monkeypatch):
+    provider = Provider()
+    tmp_path.chmod(0o700)
+    for name, value in ENV.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("WATCH_AUTH_CE_PROJECT_ID", "other-project")
+    with pytest.raises(BootstrapBlocked, match="routing gate environment"):
+        bootstrap(ENV, tmp_path / "key.json", cli=provider.cli, http=provider, deploy=True)
+    assert provider.calls == []
+
+
+@pytest.mark.parametrize("active_run", [False, True])
+def test_full_deploy_existing_trigger_requires_real_gate_and_still_blocks_active_run(
+    tmp_path, monkeypatch, active_run,
+):
+    provider = Provider()
+    tmp_path.chmod(0o700)
+    for name, value in ENV.items():
+        monkeypatch.setenv(name, value)
+    provider.subscriptions["cron"] = {"items": [{"spec": {"sink": {
+        "ref": {"kind": "Job", "name": JOB},
+    }}}]}
+    if active_run:
+        provider.job_runs = {"job_runs": [{"job_name": JOB, "status": "running"}]}
+    gates = []
+    monkeypatch.setattr("infra.ibm_registry_bootstrap.verify_routing", lambda: gates.append("PASS"))
+    if active_run:
+        with pytest.raises(BootstrapBlocked, match="active or incomplete"):
+            bootstrap(ENV, tmp_path / "key.json", cli=provider.cli, http=provider, deploy=True)
+        assert mutations(provider) == []
+    else:
+        bootstrap(ENV, tmp_path / "key.json", cli=provider.cli, http=provider, deploy=True)
+        assert provider.job is not None
+    assert gates == ["PASS"]
 
 
 @pytest.mark.parametrize("field", ["account", "resource_group", "region", "api_endpoint", "project", "group"])
@@ -173,12 +302,13 @@ def test_bootstrap_reconciles_without_rotation_and_deletes_local_key_before_job(
     provider.calls.clear()
     provider.job["run_env_variables"].reverse()
     run(provider, tmp_path)
-    assert len(provider.calls) == 3  # target, selected project and operator token; all read-only
+    assert mutations(provider) == []
     create_key = next(call for call in first if call[1] == "service-api-key-create")
     assert "--file" in create_key and provider.leaked not in str(first)
     policy = next(call for call in first if call[1] == "service-policy-create")
     assert policy[policy.index("--roles") + 1] == "Reader"
-    assert not any("cron" in call or "submit" in call for call in first)
+    assert all(call[3] == "list" for call in first if call[:2] == ("ce", "sub"))
+    assert not any("submit" in call for call in first)
     assert provider.leaked not in str(capsys.readouterr())
 
 
@@ -213,7 +343,7 @@ def test_stale_job_is_updated_only_after_bound_secret_readback(tmp_path):
     provider.calls.clear()
     provider.job["image_reference"] = "old-image"
     run(provider, tmp_path)
-    assert [call[:3] for call in provider.calls[3:]] == [("ce", "job", "update")]
+    assert [call[:3] for call in mutations(provider)] == [("ce", "job", "update")]
     assert provider.job["image_reference"] == IMAGE
 
 
@@ -249,7 +379,7 @@ def test_existing_broad_permissions_or_trust_fail_closed(tmp_path, change):
         provider.rules = [{"type": "Profile-CR", "cr_type": "CE"}]
     with pytest.raises(BootstrapBlocked):
         run(provider, tmp_path)
-    assert len(provider.calls) == 3
+    assert mutations(provider) == []
 
 
 @pytest.mark.parametrize("exit_code", [0, 1])

@@ -8,4 +8,4 @@ key_dir="$(mktemp -d "${TMPDIR:-/tmp}/watch-auth-registry.XXXXXX")"
 trap 'rm -f "$key_dir/key.json"; rmdir "$key_dir"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
-python3 -m infra.ibm_registry_bootstrap "$key_dir/key.json"
+python3 -m infra.ibm_registry_bootstrap "$key_dir/key.json" "$@"

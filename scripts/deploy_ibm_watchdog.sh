@@ -18,11 +18,8 @@ done
   exit 2
 }
 
-# Verify credentialless platform routing proof through authenticated provider readbacks before mutation.
-python3 -m infra.ibm_routing
-
-# Reuse the separately invocable, inert bootstrap after the platform routing gate.
-bash "$(dirname "$0")/bootstrap_ibm_watchdog.sh"
+# --deploy verifies credentialless platform routing proof before any bootstrap mutation.
+bash "$(dirname "$0")/bootstrap_ibm_watchdog.sh" --deploy
 
 cron_args=(
   --name watch-auth-watchdog-cron

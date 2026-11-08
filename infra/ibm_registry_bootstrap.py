@@ -12,6 +12,7 @@ from typing import Any, Callable, Mapping
 import requests
 
 from infra.ibm_routing import RoutingProofUnavailable, _json
+from infra.ibm_routing import main as verify_routing
 
 IMAGE = ("us.icr.io/watch-authenticity-3235996/watchdog@sha256:"
          "bf169b1164176e04d76b9d8cc1a86c1a552de218b8503a6dfe540c47e283f398")
@@ -59,7 +60,13 @@ def _items(document: dict[str, Any], field: str) -> list[dict[str, Any]]:
 
 
 def bootstrap(env: Mapping[str, str], key_file: Path, *,
-              cli: Callable[..., str] = _cli, http: Any = requests) -> None:
+              cli: Callable[..., str] = _cli, http: Any = requests, deploy: bool = False) -> None:
+    if deploy:
+        _require(all(env.get(f"WATCH_AUTH_{name}") == os.environ.get(f"WATCH_AUTH_{name}")
+                     for name in ENV_NAMES),
+                 "full deployment target differs from the routing gate environment")
+        # Full deployment may reconcile an existing trigger only after the real routing gate.
+        verify_routing()
     v = {}
     for name in ENV_NAMES:
         value = env.get(f"WATCH_AUTH_{name}", "")
@@ -72,7 +79,6 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
         _require(bool(re.fullmatch(r"[A-Za-z0-9_-]+", v[name])), "invalid target identifier")
     _require(not key_file.exists() and key_file.parent.stat().st_mode & 0o777 == 0o700,
              "key must use a new file in a private temporary directory")
-
     target = _json(cli("target", "--output", "json"))
     _require(target.get("api_endpoint") == "https://cloud.ibm.com"
              and target.get("account", {}).get("guid") == v["ACCOUNT_ID"]
@@ -93,7 +99,7 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
             response = http.get(
                 url, headers={"Authorization": token, "Accept": "application/json",
                               **(extra_headers or {})},
-                params={"version": "2026-09-04"} if url.startswith(ce) else params,
+                params={"version": "2026-09-04", **(params or {})} if url.startswith(ce) else params,
                 timeout=30, allow_redirects=False,
             )
             if optional and response.status_code == 404:
@@ -112,6 +118,34 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
              and instance.get("resource_group_id") == v["RESOURCE_GROUP_ID"]
              and instance.get("crn") == project_crn and instance.get("state") == "active",
              "Code Engine resource group or state differs")
+    for kind in ("cron", "cos", "kafka"):
+        inventory = _json(cli("ce", "sub", kind, "list", "--output", "json"))
+        subscriptions = _items(inventory, "items")
+        metadata = inventory.get("metadata", {})
+        _require(isinstance(metadata, dict) and not metadata.get("continue"),
+                 "malformed or paginated subscription inventory")
+        for subscription in subscriptions:
+            spec = subscription.get("spec")
+            _require(isinstance(spec, dict), "malformed subscription spec")
+            assert isinstance(spec, dict)
+            sink = spec.get("sink")
+            _require(isinstance(sink, dict), "malformed subscription sink")
+            assert isinstance(sink, dict)
+            ref = sink.get("ref", {})
+            _require(not sink.get("uri") and isinstance(ref, dict)
+                     and ref.get("kind") in {"Job", "Service"}
+                     and isinstance(ref.get("name"), str) and bool(ref["name"]),
+                     "malformed subscription destination")
+            _require(deploy or ref["kind"] != "Job" or ref["name"] != JOB,
+                     "existing subscription targets the watchdog job")
+    runs = _items(get(ce + "/job_runs", params={"job_name": JOB, "limit": "100"}) or {}, "job_runs")
+    for run in runs:
+        details = run.get("status_details", {})
+        _require(run.get("job_name") == JOB and run.get("status") in {"succeeded", "failed"}
+                 and isinstance(details, dict) and isinstance(details.get("completion_time"), str)
+                 and bool(details["completion_time"])
+                 and all(details.get(field, 0) == 0 for field in ("running", "pending", "unknown")),
+                 "active or incomplete watchdog job run")
     profile_url = f"{IAM}/v1/profiles/{v['TRUSTED_PROFILE_ID']}"
     profile = get(profile_url)
     _require(profile is not None and profile.get("id") == v["TRUSTED_PROFILE_ID"]
@@ -245,8 +279,9 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
 
 def main() -> None:
     try:
-        _require(len(sys.argv) == 2, "private temporary key path is required")
-        bootstrap(os.environ, Path(sys.argv[1]))
+        _require(len(sys.argv) == 2 or (len(sys.argv) == 3 and sys.argv[2] == "--deploy"),
+                 "private temporary key path and optional --deploy are required")
+        bootstrap(os.environ, Path(sys.argv[1]), deploy=len(sys.argv) == 3)
     except BootstrapBlocked as error:
         raise SystemExit(f"IBM registry bootstrap blocked: {error}") from None
     except (RoutingProofUnavailable, OSError, ValueError, TypeError, KeyError, AttributeError):
