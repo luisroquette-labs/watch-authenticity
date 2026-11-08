@@ -1,0 +1,4 @@
+ibm-vpc==0.36.1
+ibm-cos-sdk==2.16.2
+ibm-platform-services==0.77.1
+requests==2.34.2
