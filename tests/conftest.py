@@ -7,9 +7,22 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
+import pytest
+
+from acquisition.types import (
+    Angle,
+    CandidateRecord,
+    EvidenceRecord,
+    EvidenceTier,
+    RightsRecord,
+    RightsStatus,
+    TrainingRecord,
+)
+from core.types import Label
 from infra.ibm_evidence import run_spec_sha256
 from infra.ibm_types import (
     CreditEvidence,
+    ObjectRef,
     PostPromoEntry,
     PostPromoPlan,
     PriceLine,
@@ -20,6 +33,110 @@ from infra.ibm_types import (
 
 NOW = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)
 _SAFE_USER_DATA = "#!/bin/bash\nset -euo pipefail\n/opt/watch-auth/bootstrap-host\n"
+
+
+@pytest.fixture
+def candidate() -> CandidateRecord:
+    return CandidateRecord(
+        candidate_id="candidate-1",
+        acquisition_batch_id="batch-1",
+        source_policy_id="policy-1",
+        source_record_id="listing-1",
+        source_url="https://partner.example/listing-1",
+        collected_at=NOW,
+        declared_reference="rolex-submariner-126610ln",
+        proposed_label=Label.GENUINE,
+        proposed_grade=None,
+        factory=None,
+        price_usd=Decimal("12000.00"),
+        raw_sha256="a" * 64,
+        phash="0123456789abcdef",
+        rights_record_id="rights-1",
+    )
+
+
+@pytest.fixture
+def object_ref() -> ObjectRef:
+    return ObjectRef(
+        bucket="watch-auth-private",
+        key="datasets/derivatives/" + "b" * 64,
+        sha256="b" * 64,
+        length=1024,
+        etag="etag-1",
+    )
+
+
+@pytest.fixture
+def rights() -> RightsRecord:
+    return RightsRecord(
+        rights_record_id="rights-1",
+        source="partner-upload",
+        acquisition_method="partner-export",
+        allowed_purposes=("download", "train"),
+        effective_at=NOW,
+        expires_at=NOW + timedelta(days=30),
+        required_disposition="quarantine",
+        disposition_deadline=NOW + timedelta(days=60),
+        rightsholder="Partner Example",
+        evidence_sha256="c" * 64,
+        status=RightsStatus.ACTIVE,
+    )
+
+
+@pytest.fixture
+def expired_rights() -> RightsRecord:
+    return RightsRecord(
+        rights_record_id="rights-expired",
+        source="partner-upload",
+        acquisition_method="partner-export",
+        allowed_purposes=("download", "train"),
+        effective_at=NOW - timedelta(days=60),
+        expires_at=NOW - timedelta(days=30),
+        required_disposition="delete",
+        disposition_deadline=NOW + timedelta(days=1),
+        rightsholder="Expired Partner",
+        evidence_sha256="d" * 64,
+        status=RightsStatus.EXPIRED,
+    )
+
+
+@pytest.fixture
+def valid_contract_bundle(candidate, rights, object_ref):
+    evidence = EvidenceRecord(
+        evidence_record_id="evidence-1",
+        candidate_id=candidate.candidate_id,
+        accepted_label=Label.GENUINE,
+        accepted_grade=None,
+        reference_id="rolex-submariner-126610ln",
+        tier=EvidenceTier.A,
+        evidence_type="controlled-examination",
+        reviewer_ids=("reviewer-1",),
+        review_timestamps=(NOW,),
+        supporting_artifact_hashes=("e" * 64,),
+        decision_sha256="f" * 64,
+    )
+    training = TrainingRecord(
+        asset_id="asset-1",
+        candidate_id=candidate.candidate_id,
+        object_ref=object_ref,
+        reference_id=evidence.reference_id,
+        watch_entity_id="watch-1",
+        content_cluster_id="content-1",
+        seller_group_id="seller-1",
+        acquisition_batch_id=candidate.acquisition_batch_id,
+        angle=Angle.DIAL,
+        source_domain="partner.example",
+        capture_style="casual",
+        label=Label.GENUINE,
+        grade=None,
+        factory=None,
+        evidence_tier=EvidenceTier.A,
+        evidence_record_id=evidence.evidence_record_id,
+        rights_record_id=rights.rights_record_id,
+        image_sha256=object_ref.sha256,
+        phash="fedcba9876543210",
+    )
+    return candidate, rights, evidence, training
 
 
 def _sku(service: str) -> str:

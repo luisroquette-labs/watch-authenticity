@@ -42,11 +42,10 @@ class ModelClass(IntEnum):
 
 
 class Label(Enum):
-    """Source-trust-derived training label — never a human judgment call.
+    """Label vocabulary shared by candidate proposals and training.
 
-    The label comes from where/how a photo was sourced (e.g. a dealer
-    listing vs. a forum post naming a replica factory), not from someone
-    eyeballing the watch in the photo.
+    New acquisition code may only accept a training label through evidence
+    review; legacy manifests are migrated in acquisition Task 3.
     """
 
     GENUINE = "genuine"
