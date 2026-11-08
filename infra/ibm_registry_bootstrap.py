@@ -210,7 +210,9 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
                   "region": "us-south", "resourceType": "namespace", "resource": "watch-authenticity-3235996"}
 
     def policies() -> list[dict[str, Any]]:
-        items = _items(get(IAM + "/v1/policies", params={"iam_id": iam_id}) or {}, "policies")
+        items = _items(get(IAM + "/v1/policies", params={
+            "account_id": v["ACCOUNT_ID"], "iam_id": iam_id,
+        }) or {}, "policies")
         for policy in items:
             resources = policy.get("resources", [])
             observed = resources[0].get("attributes", []) if len(resources) == 1 else []
