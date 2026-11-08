@@ -420,7 +420,8 @@ def test_cli_failure_never_exposes_provider_output_or_trace(monkeypatch, capsys)
     assert "iam/service-api-key-create" in str(error.value)
 
 
-@pytest.mark.parametrize("change", ["wide-policy", "operator", "v2-policy", "inherited-group",
+@pytest.mark.parametrize("change", ["wide-policy", "operator", "duplicate-subject", "v2-policy",
+                                    "inherited-group",
                                     "public-policy-v1", "public-policy-v2", "other-job-link",
                                     "ce-rule"])
 def test_existing_broad_permissions_or_trust_fail_closed(tmp_path, change):
@@ -431,6 +432,9 @@ def test_existing_broad_permissions_or_trust_fail_closed(tmp_path, change):
         provider.policy_items[0]["resources"][0]["attributes"].pop()
     elif change == "operator":
         provider.policy_items[0]["resources"][0]["attributes"][0]["operator"] = "stringNotEquals"
+    elif change == "duplicate-subject":
+        provider.policy_items[0]["subjects"][0]["attributes"].insert(
+            0, {"name": "iam_id", "value": "other-principal"})
     elif change == "v2-policy":
         # IAM v1 inventories include placeholders for v2 policies; they cannot pass Reader validation.
         provider.policy_items.append({"href": "https://iam.cloud.ibm.com/v2/policies/policy-2"})

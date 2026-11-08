@@ -232,6 +232,7 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
             resources = policy.get("resources", [])
             observed = resources[0].get("attributes", []) if len(resources) == 1 else []
             _require(policy.get("type") == "access"
+                     and len(observed_subject) == 1
                      and {item.get("name"): item.get("value") for item in observed_subject}
                      == {"iam_id": iam_id}
                      and len(observed) == len(attributes)
