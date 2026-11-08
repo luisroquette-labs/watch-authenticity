@@ -9,6 +9,7 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import Mock
 
 import pytest
@@ -438,7 +439,10 @@ def test_authenticated_iam_failure_never_queries_logs(probe, providers, status):
     assert cli.call_count == 1
 
 
-@pytest.mark.parametrize("links", [None, [{}], [{"cr_type": []}], [{"cr_type": "CE", "link": None}]])
+@pytest.mark.parametrize(
+    "links",
+    cast(list[object], [None, [{}], [{"cr_type": []}], [{"cr_type": "CE", "link": None}]]),
+)
 def test_malformed_iam_links_fail_with_concrete_blocker(probe, provider_evidence, links):
     provider_evidence["trusted_profile_links"]["links"] = links
     with pytest.raises(RoutingProofUnavailable, match="IAM"):

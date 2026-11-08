@@ -24,7 +24,7 @@ One signal, two thresholds on it, per guided angle's predicted class:
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, cast
 
 import torch
 
@@ -62,7 +62,7 @@ def classify(
     Prediction`, so OOD input structurally cannot carry a fabricated
     genuine/fake score.
     """
-    predict_fn = predict if predict is not None else build_model()
+    predict_fn = predict if predict is not None else cast(AnglePredictor, build_model())
     logits_per_angle = predict_fn(pixel_values_per_angle)
 
     rejected_angles = [_predicted_class(logits) == REJECTION_CLASS_INDEX for logits in logits_per_angle.values()]
