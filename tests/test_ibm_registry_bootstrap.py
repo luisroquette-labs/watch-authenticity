@@ -331,9 +331,9 @@ def test_bootstrap_reconciles_without_rotation_and_deletes_local_key_before_job(
     run(provider, tmp_path)
     assert mutations(provider) == []
     create_key = next(call for call in first if call[1] == "service-api-key-create")
-    assert "--file" in create_key and provider.leaked not in str(first)
+    assert create_key[3] == SERVICE and "--file" in create_key and provider.leaked not in str(first)
     policy = next(call for call in first if call[1] == "service-policy-create")
-    assert policy[policy.index("--roles") + 1] == "Reader"
+    assert policy[2] == SERVICE and policy[policy.index("--roles") + 1] == "Reader"
     assert all(call[3] == "list" for call in first if call[:2] == ("ce", "sub"))
     assert not any("submit" in call for call in first)
     assert provider.leaked not in str(capsys.readouterr())
@@ -386,6 +386,7 @@ def test_cli_failure_never_exposes_provider_output_or_trace(monkeypatch, capsys)
     with pytest.raises(BootstrapBlocked, match="IBM CLI command failed") as error:
         _cli("iam", "service-api-key-create")
     assert "secret-value" not in str(error.value) + str(capsys.readouterr())
+    assert "iam/service-api-key-create" in str(error.value)
 
 
 @pytest.mark.parametrize("change", ["wide-policy", "v2-policy", "inherited-group",

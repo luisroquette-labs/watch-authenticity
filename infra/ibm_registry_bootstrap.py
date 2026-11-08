@@ -38,16 +38,18 @@ def _require(condition: bool, message: str) -> None:
 
 
 def _cli(*arguments: str) -> str:
+    operation = "/".join(arguments[:2])
     try:
         result = subprocess.run(
             ["ibmcloud", *arguments], capture_output=True, text=True, timeout=120,
             env={**os.environ, "IBMCLOUD_TRACE": "false"},
         )
-        _require(result.returncode == 0 and not result.stderr.strip(), "IBM CLI command failed")
+        _require(result.returncode == 0 and not result.stderr.strip(),
+                 f"IBM CLI command failed: {operation}")
         return result.stdout
     except (OSError, subprocess.SubprocessError):
         # CLI output, exceptions and request bodies can contain credentials.
-        raise BootstrapBlocked("IBM CLI command failed or timed out") from None
+        raise BootstrapBlocked(f"IBM CLI command failed or timed out: {operation}") from None
 
 
 def _items(document: dict[str, Any], field: str) -> list[dict[str, Any]]:
@@ -184,7 +186,7 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
     _require(len(ids) == 1 and ids[0].get("name") == SERVICE
              and ids[0].get("account_id") == v["ACCOUNT_ID"]
              and bool(ids[0].get("id")) and bool(ids[0].get("iam_id")), "service ID differs")
-    service_id, iam_id = ids[0]["id"], ids[0]["iam_id"]
+    iam_id = ids[0]["iam_id"]
     groups = get("https://iam.cloud.ibm.com/v2/groups", params={
         "account_id": v["ACCOUNT_ID"], "iam_id": iam_id,
     }) or {}
@@ -225,7 +227,7 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
         return items
 
     if not policies():
-        cli("iam", "service-policy-create", service_id, "--roles", "Reader", "--service-name",
+        cli("iam", "service-policy-create", SERVICE, "--roles", "Reader", "--service-name",
             "container-registry", "--region", "us-south", "--resource-type", "namespace",
             "--resource", "watch-authenticity-3235996", "--force", "--output", "json")
         _require(len(policies()) == 1, "registry Reader policy was not persisted")
@@ -237,7 +239,7 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
     if secret is None:
         _require(not keys, "orphan registry API key needs explicit revocation before retry")
         key_file.touch(mode=0o600)
-        cli("iam", "service-api-key-create", SERVICE, service_id, "--file", str(key_file),
+        cli("iam", "service-api-key-create", SERVICE, SERVICE, "--file", str(key_file),
             "--action-if-leaked", "disable", "--force", "--output", "json")
         _require(key_file.stat().st_mode & 0o777 == 0o600, "registry key file permissions differ")
         cli("ce", "registry", "create", "--name", SECRET, "--server", "us.icr.io", "--username",
