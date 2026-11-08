@@ -384,17 +384,16 @@ def test_main_uses_trusted_profile_and_info_logging(monkeypatch):
     run.assert_called_once()
 
 
-def test_deploy_script_is_digest_pinned_scoped_and_keyless():
+def test_deploy_script_reuses_inert_scoped_registry_bootstrap():
     script = (
         valid_run_spec.__code__.co_filename.rsplit("/tests/", 1)[0]
         + "/scripts/deploy_ibm_watchdog.sh"
     )
     body = __import__("pathlib").Path(script).read_text(encoding="utf-8")
     assert "@sha256:" in body
-    assert "ibmcloud ce job create" in body and "ibmcloud ce job update" in body
+    assert "bootstrap_ibm_watchdog.sh" in body
     assert "ibmcloud ce sub cron create" in body and "ibmcloud ce sub cron update" in body
     assert "*/15 * * * *" in body
-    assert "service-account" in body
     assert "WATCH_AUTH_TRUSTED_PROFILE_ID" in body
     assert "credentialless platform routing proof" in body
     assert "API_KEY" not in body and "INGESTION_KEY" not in body
