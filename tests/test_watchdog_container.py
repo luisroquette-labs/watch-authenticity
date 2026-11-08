@@ -7,8 +7,8 @@ def test_watchdog_container_is_minimal_pinned_and_non_root() -> None:
     containerfile = (ROOT / "Containerfile.watchdog").read_text()
     lock = (ROOT / "requirements-watchdog.lock").read_text()
 
-    assert containerfile.startswith("FROM --platform=linux/amd64 python:3.12-slim@sha256:")
-    assert "--create-home" in containerfile
+    assert containerfile.startswith("FROM --platform=linux/amd64 python:3.12-alpine@sha256:")
+    assert "adduser --uid 10001 --system --ingroup watch-auth" in containerfile
     assert "HOME=/home/watch-auth" in containerfile
     assert containerfile.count("--require-hashes") == 2
     assert "--no-build-isolation" in containerfile
