@@ -74,12 +74,7 @@ class Provider:
         if args[1] == "service-id-create":
             self.ids = [copy.deepcopy(SERVICE_ID)]
         elif args[1] == "service-policy-create":
-            attributes = {"accountId": "account-1", "serviceName": "container-registry",
-                          "region": "us-south", "resourceType": "namespace",
-                          "resource": "watch-authenticity-3235996"}
-            self.policy_items = [{"type": "access", "resources": [{"attributes": [
-                {"name": name, "value": value} for name, value in attributes.items()
-            ]}], "roles": [{"role_id": "crn:v1:bluemix:public:iam::::serviceRole:Reader"}]}]
+            raise AssertionError("policy creation must use the authenticated IAM API")
         elif args[1] == "service-api-key-create":
             self.key_path = Path(args[args.index("--file") + 1])
             assert self.key_path.stat().st_mode & 0o777 == 0o600
@@ -154,6 +149,34 @@ class Provider:
         else:
             raise AssertionError(url)
         return SimpleNamespace(status_code=404 if result is None else 200, text=json.dumps(result))
+
+    def post(self, url, **kwargs):
+        self.calls.append(("http", "post", url))
+        assert url == "https://iam.cloud.ibm.com/v1/policies"
+        assert kwargs["allow_redirects"] is False and kwargs["timeout"] == 30
+        assert kwargs["headers"] == {
+            "Authorization": "Bearer bootstrap-session", "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        body = kwargs["json"]
+        assert body["subjects"] == [{"attributes": [
+            {"name": "iam_id", "value": SERVICE_ID["iam_id"]},
+        ]}]
+        assert body["roles"] == [{
+            "role_id": "crn:v1:bluemix:public:iam::::serviceRole:Reader",
+        }]
+        assert {item["name"]: (item["value"], item["operator"])
+                for item in body["resources"][0]["attributes"]} == {
+            "accountId": ("account-1", "stringEquals"),
+            "serviceName": ("container-registry", "stringEquals"),
+            "region": ("us-south", "stringEquals"),
+            "resourceType": ("namespace", "stringEquals"),
+            "resource": ("watch-authenticity-3235996", "stringEquals"),
+        }
+        if self.fail == "policy":
+            return SimpleNamespace(status_code=403, text="sensitive-provider-error")
+        self.policy_items = [copy.deepcopy(body)]
+        return SimpleNamespace(status_code=201, text=json.dumps(body))
 
 
 def run(provider, tmp_path, env=None):
@@ -332,11 +355,19 @@ def test_bootstrap_reconciles_without_rotation_and_deletes_local_key_before_job(
     assert mutations(provider) == []
     create_key = next(call for call in first if call[1] == "service-api-key-create")
     assert create_key[3] == SERVICE and "--file" in create_key and provider.leaked not in str(first)
-    policy = next(call for call in first if call[1] == "service-policy-create")
-    assert policy[2] == SERVICE and policy[policy.index("--roles") + 1] == "Reader"
+    assert ("http", "post", "https://iam.cloud.ibm.com/v1/policies") in first
     assert all(call[3] == "list" for call in first if call[:2] == ("ce", "sub"))
     assert not any("submit" in call for call in first)
     assert provider.leaked not in str(capsys.readouterr())
+
+
+def test_policy_creation_failure_stops_before_key_secret_and_job(tmp_path, capsys):
+    provider = Provider()
+    provider.fail = "policy"
+    with pytest.raises(BootstrapBlocked, match="policy creation failed"):
+        run(provider, tmp_path)
+    assert provider.keys == [] and provider.secret is None and provider.job is None
+    assert "sensitive-provider-error" not in str(capsys.readouterr())
 
 
 @pytest.mark.parametrize("failure", ["secret", "secret-not-persisted"])
@@ -389,7 +420,7 @@ def test_cli_failure_never_exposes_provider_output_or_trace(monkeypatch, capsys)
     assert "iam/service-api-key-create" in str(error.value)
 
 
-@pytest.mark.parametrize("change", ["wide-policy", "v2-policy", "inherited-group",
+@pytest.mark.parametrize("change", ["wide-policy", "operator", "v2-policy", "inherited-group",
                                     "public-policy-v1", "public-policy-v2", "other-job-link",
                                     "ce-rule"])
 def test_existing_broad_permissions_or_trust_fail_closed(tmp_path, change):
@@ -398,6 +429,8 @@ def test_existing_broad_permissions_or_trust_fail_closed(tmp_path, change):
     provider.calls.clear()
     if change == "wide-policy":
         provider.policy_items[0]["resources"][0]["attributes"].pop()
+    elif change == "operator":
+        provider.policy_items[0]["resources"][0]["attributes"][0]["operator"] = "stringNotEquals"
     elif change == "v2-policy":
         # IAM v1 inventories include placeholders for v2 policies; they cannot pass Reader validation.
         provider.policy_items.append({"href": "https://iam.cloud.ibm.com/v2/policies/policy-2"})
