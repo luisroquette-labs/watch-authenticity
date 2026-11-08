@@ -136,6 +136,7 @@ class Provider:
             result = {"groups": self.groups, "limit": 50, "offset": 0,
                       "total_count": len(self.groups)}
         elif url.endswith("/v1/policies"):
+            assert kwargs["params"]["account_id"] == "account-1"
             result = {"policies": self.policy_items}
         elif url.endswith("/apikeys"):
             result = {"apikeys": self.keys}
