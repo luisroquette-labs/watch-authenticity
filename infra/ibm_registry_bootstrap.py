@@ -335,10 +335,12 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
              "malformed registry secret inventory")
     registry_items = _items(registry_inventory, "items")
     registry_metadata = registry_inventory.get("metadata")
+    continuation = (registry_metadata.get("continue", "")
+                    if isinstance(registry_metadata, dict) else None)
     _require(isinstance(registry_metadata, dict)
              and isinstance(registry_metadata.get("resourceVersion"), str)
              and bool(registry_metadata["resourceVersion"])
-             and not registry_metadata.get("continue"),
+             and isinstance(continuation, str) and not continuation,
              "malformed or paginated registry secret inventory")
     registry_names = []
     for item in registry_items:

@@ -519,6 +519,10 @@ def test_registry_cli_and_api_inventory_divergence_blocks_key_mutation(tmp_path)
     {"items": [{}], "metadata": {"resourceVersion": "fixture"}},
     {"items": [{"metadata": {"name": "../wrong"}}],
      "metadata": {"resourceVersion": "fixture"}},
+] + [
+    {"items": [], "metadata": {"resourceVersion": "fixture", "continue": value}}
+    for value in (None, False, 0, [], {})
+] + [
     {"items": [], "metadata": {"resourceVersion": "fixture", "continue": "next-page"}},
 ])
 def test_malformed_or_paginated_registry_inventory_blocks_key_mutation(tmp_path, inventory):
