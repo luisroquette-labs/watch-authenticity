@@ -45,7 +45,10 @@ class Provider:
         self.groups = []
         self.secret = None
         self.job = None
-        self.subscriptions = {kind: {"items": []} for kind in ("cron", "cos", "kafka")}
+        self.subscriptions = {
+            kind: {f"{kind}_subscriptions": [], "limit": 0}
+            for kind in ("cron", "cos", "kafka")
+        }
         self.job_runs = {"job_runs": []}
         self.fail = None
         self.key_path = None
@@ -160,9 +163,9 @@ def mutations(provider):
 @pytest.mark.parametrize("kind", ["cron", "cos", "kafka"])
 def test_existing_subscription_blocks_bootstrap_before_any_mutation(tmp_path, kind):
     provider = Provider()
-    provider.subscriptions[kind] = {"items": [{"spec": {"sink": {
+    provider.subscriptions[kind] = {f"{kind}_subscriptions": [{"spec": {"sink": {
         "ref": {"kind": "Job", "name": JOB},
-    }}}]}
+    }}}], "limit": 1}
     with pytest.raises(BootstrapBlocked, match="subscription"):
         run(provider, tmp_path)
     assert mutations(provider) == []
@@ -180,9 +183,12 @@ def test_active_or_incomplete_job_run_blocks_bootstrap_before_any_mutation(tmp_p
 
 
 @pytest.mark.parametrize("inventory", [
-    {}, {"items": None}, {"items": [None]}, {"items": [{}]},
-    {"items": [], "metadata": {"continue": "next-page"}},
-    {"items": [{"spec": {"sink": {"uri": "https://unknown-destination"}}}]},
+    {}, {"cron_subscriptions": None}, {"cron_subscriptions": [None]},
+    {"cron_subscriptions": [{}]},
+    {"cron_subscriptions": [], "metadata": {"continue": "next-page"}},
+    {"cron_subscriptions": [{"spec": {"sink": {
+        "uri": "https://unknown-destination",
+    }}}]},
 ])
 def test_missing_malformed_or_paginated_subscription_readback_blocks_all_mutation(tmp_path, inventory):
     provider = Provider()
@@ -213,9 +219,9 @@ def test_terminal_run_and_unrelated_subscription_allow_inert_bootstrap(tmp_path,
     provider.job_runs = {"job_runs": [{"job_name": JOB, "status": status, "status_details": {
         "completion_time": "2026-11-08T10:00:00Z", "running": 0, "pending": 0, "unknown": 0,
     }}]}
-    provider.subscriptions["cron"] = {"items": [{"spec": {"sink": {
+    provider.subscriptions["cron"] = {"cron_subscriptions": [{"spec": {"sink": {
         "ref": {"kind": "Job", "name": "unrelated-job"},
-    }}}]}
+    }}}], "limit": 1}
     run(provider, tmp_path)
     assert provider.job is not None
 
@@ -254,9 +260,9 @@ def test_full_deploy_existing_trigger_requires_real_gate_and_still_blocks_active
     tmp_path.chmod(0o700)
     for name, value in ENV.items():
         monkeypatch.setenv(name, value)
-    provider.subscriptions["cron"] = {"items": [{"spec": {"sink": {
+    provider.subscriptions["cron"] = {"cron_subscriptions": [{"spec": {"sink": {
         "ref": {"kind": "Job", "name": JOB},
-    }}}]}
+    }}}], "limit": 1}
     if active_run:
         provider.job_runs = {"job_runs": [{"job_name": JOB, "status": "running"}]}
     gates = []

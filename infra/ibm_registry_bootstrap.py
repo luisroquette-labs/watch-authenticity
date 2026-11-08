@@ -120,7 +120,7 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
              "Code Engine resource group or state differs")
     for kind in ("cron", "cos", "kafka"):
         inventory = _json(cli("ce", "sub", kind, "list", "--output", "json"))
-        subscriptions = _items(inventory, "items")
+        subscriptions = _items(inventory, f"{kind}_subscriptions")
         metadata = inventory.get("metadata", {})
         _require(isinstance(metadata, dict) and not metadata.get("continue"),
                  "malformed or paginated subscription inventory")
