@@ -99,7 +99,8 @@ class Provider:
             self.key_path.write_text(json.dumps({"apikey": self.leaked}))
             self.keys = [{"name": SERVICE, "id": API_KEY_ID, "iam_id": SERVICE_ID["iam_id"]}]
         elif args[:3] == ("ce", "registry", "list"):
-            return json.dumps([] if self.secret is None else [self.secret])
+            return json.dumps({"metadata": {"resourceVersion": "fixture"},
+                               "items": [] if self.secret is None else [self.secret]})
         elif args[:3] == ("ce", "registry", "create"):
             path = Path(args[args.index("--password-from-json-file") + 1])
             assert path == self.key_path and path.stat().st_mode & 0o777 == 0o600
@@ -500,13 +501,45 @@ def test_registry_cli_and_api_inventory_divergence_blocks_key_mutation(tmp_path)
     def divergent_cli(*args):
         if args[:3] == ("ce", "registry", "list"):
             provider.calls.append(args)
-            return json.dumps([{"name": SECRET}])
+            return json.dumps({"metadata": {"resourceVersion": "fixture"},
+                               "items": [{"name": SECRET}]})
         return original_cli(*args)
 
     provider.cli = divergent_cli
     with pytest.raises(BootstrapBlocked, match="inventories differ"):
         run(provider, tmp_path)
     assert not any(call[1] == "service-api-key-create" for call in provider.calls)
+
+
+@pytest.mark.parametrize("inventory", [
+    [], {}, {"items": None}, {"items": [None]}, {"items": []},
+    {"items": [], "metadata": []}, {"items": [], "metadata": {}},
+    {"items": [{}], "metadata": {"resourceVersion": "fixture"}},
+    {"items": [{"name": "../wrong"}], "metadata": {"resourceVersion": "fixture"}},
+    {"items": [], "metadata": {"resourceVersion": "fixture", "continue": "next-page"}},
+])
+def test_malformed_or_paginated_registry_inventory_blocks_key_mutation(tmp_path, inventory):
+    provider = Provider()
+    provider.fail = "secret"
+    with pytest.raises(BootstrapBlocked):
+        run(provider, tmp_path)
+    (tmp_path / "key.json").unlink(missing_ok=True)  # shell trap in production
+    provider.fail = None
+    original_cli = provider.cli
+
+    def malformed_cli(*args):
+        if args[:3] == ("ce", "registry", "list"):
+            provider.calls.append(args)
+            return json.dumps(inventory)
+        return original_cli(*args)
+
+    provider.cli = malformed_cli
+    with pytest.raises(BootstrapBlocked, match="inventory"):
+        run(provider, tmp_path)
+    assert provider.keys == [{"name": SERVICE, "id": API_KEY_ID,
+                              "iam_id": SERVICE_ID["iam_id"]}]
+    assert not any(call[:2] == ("http", "delete") for call in provider.calls)
+    assert sum(call[1] == "service-api-key-create" for call in provider.calls) == 1
 
 
 def test_lost_secret_create_response_is_reconciled_without_a_second_key(tmp_path):

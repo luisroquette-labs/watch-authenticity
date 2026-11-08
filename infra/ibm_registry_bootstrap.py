@@ -331,10 +331,19 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
         registry_inventory = json.loads(cli("ce", "registry", "list", "--output", "json"))
     except (TypeError, ValueError):
         raise BootstrapBlocked("malformed registry secret inventory") from None
-    _require(isinstance(registry_inventory, list)
-             and all(isinstance(item, dict) for item in registry_inventory),
+    _require(isinstance(registry_inventory, dict),
              "malformed registry secret inventory")
-    registry_matches = [item for item in registry_inventory if item.get("name") == SECRET]
+    registry_items = _items(registry_inventory, "items")
+    registry_metadata = registry_inventory.get("metadata")
+    _require(isinstance(registry_metadata, dict)
+             and isinstance(registry_metadata.get("resourceVersion"), str)
+             and bool(registry_metadata["resourceVersion"])
+             and not registry_metadata.get("continue")
+             and all(isinstance(item.get("name"), str)
+                     and bool(re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?", item["name"]))
+                     for item in registry_items),
+             "malformed or paginated registry secret inventory")
+    registry_matches = [item for item in registry_items if item.get("name") == SECRET]
     _require(len(registry_matches) == (1 if secret is not None else 0),
              "registry secret inventories differ")
     keys = _items(get(IAM + "/v1/apikeys", params={
