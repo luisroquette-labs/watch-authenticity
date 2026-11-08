@@ -113,6 +113,17 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
         except requests.RequestException:
             raise BootstrapBlocked("IBM provider readback failed") from None
 
+    def post(url: str, body: dict[str, Any]) -> None:
+        try:
+            response = http.post(
+                url, headers={"Authorization": token, "Accept": "application/json",
+                              "Content-Type": "application/json"},
+                json=body, timeout=30, allow_redirects=False,
+            )
+            _require(response.status_code == 201, "IBM policy creation failed")
+        except requests.RequestException:
+            raise BootstrapBlocked("IBM policy creation failed") from None
+
     project = get(ce)
     _require(project is not None and project.get("id") == v["CE_PROJECT_ID"]
              and project.get("name") == v["CE_PROJECT"] and project.get("crn") == project_crn,
@@ -216,9 +227,17 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
             "account_id": v["ACCOUNT_ID"], "iam_id": iam_id,
         }) or {}, "policies")
         for policy in items:
+            subjects = policy.get("subjects", [])
+            observed_subject = subjects[0].get("attributes", []) if len(subjects) == 1 else []
             resources = policy.get("resources", [])
             observed = resources[0].get("attributes", []) if len(resources) == 1 else []
-            _require(policy.get("type") == "access" and len(observed) == len(attributes)
+            _require(policy.get("type") == "access"
+                     and len(observed_subject) == 1
+                     and {item.get("name"): item.get("value") for item in observed_subject}
+                     == {"iam_id": iam_id}
+                     and len(observed) == len(attributes)
+                     and all(item.get("operator", "stringEquals") == "stringEquals"
+                             for item in observed)
                      and {item.get("name"): item.get("value") for item in observed} == attributes
                      and [role.get("role_id") for role in policy.get("roles", [])]
                      == ["crn:v1:bluemix:public:iam::::serviceRole:Reader"],
@@ -227,9 +246,15 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
         return items
 
     if not policies():
-        cli("iam", "service-policy-create", SERVICE, "--roles", "Reader", "--service-name",
-            "container-registry", "--region", "us-south", "--resource-type", "namespace",
-            "--resource", "watch-authenticity-3235996", "--force", "--output", "json")
+        post(IAM + "/v1/policies", {
+            "type": "access",
+            "subjects": [{"attributes": [{"name": "iam_id", "value": iam_id}]}],
+            "roles": [{"role_id": "crn:v1:bluemix:public:iam::::serviceRole:Reader"}],
+            "resources": [{"attributes": [
+                {"name": name, "value": value, "operator": "stringEquals"}
+                for name, value in attributes.items()
+            ]}],
+        })
         _require(len(policies()) == 1, "registry Reader policy was not persisted")
     keys = _items(get(IAM + "/v1/apikeys", params={
         "account_id": v["ACCOUNT_ID"], "iam_id": iam_id, "pagesize": "100",
