@@ -44,7 +44,7 @@ class Provider:
         self.links = []
         self.rules = []
         self.groups = [{"id": "AccessGroupId-PublicAccess", "name": "Public Access"}]
-        self.public_access_policies = []
+        self.public_access_policies = {"v1": [], "v2": []}
         self.secret = None
         self.job = None
         self.subscriptions = {
@@ -67,7 +67,8 @@ class Provider:
         if args[:2] == ("iam", "oauth-tokens"):
             return json.dumps({"iam_token": "Bearer bootstrap-session"})
         if args[:2] == ("iam", "access-group-policies"):
-            return json.dumps(self.public_access_policies)
+            version = args[args.index("--api-version") + 1]
+            return json.dumps(self.public_access_policies[version])
         if args[:2] == ("ce", "sub") and args[3] == "list":
             return json.dumps(self.subscriptions[args[2]])
         if args[1] == "service-id-create":
@@ -386,8 +387,9 @@ def test_cli_failure_never_exposes_provider_output_or_trace(monkeypatch, capsys)
     assert "secret-value" not in str(error.value) + str(capsys.readouterr())
 
 
-@pytest.mark.parametrize("change", ["wide-policy", "v2-policy", "inherited-group", "public-policy",
-                                    "other-job-link", "ce-rule"])
+@pytest.mark.parametrize("change", ["wide-policy", "v2-policy", "inherited-group",
+                                    "public-policy-v1", "public-policy-v2", "other-job-link",
+                                    "ce-rule"])
 def test_existing_broad_permissions_or_trust_fail_closed(tmp_path, change):
     provider = Provider()
     run(provider, tmp_path)
@@ -399,8 +401,8 @@ def test_existing_broad_permissions_or_trust_fail_closed(tmp_path, change):
         provider.policy_items.append({"href": "https://iam.cloud.ibm.com/v2/policies/policy-2"})
     elif change == "inherited-group":
         provider.groups = [{"id": "broad-group"}]
-    elif change == "public-policy":
-        provider.public_access_policies = [{"id": "wide"}]
+    elif change.startswith("public-policy-"):
+        provider.public_access_policies[change.removeprefix("public-policy-")] = [{"id": "wide"}]
     elif change == "other-job-link":
         provider.links[0]["link"]["component_name"] = "other-job"
     else:

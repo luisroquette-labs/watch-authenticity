@@ -195,14 +195,16 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
              and memberships[0].get("id") == "AccessGroupId-PublicAccess"
              and memberships[0].get("name") == "Public Access",
              "registry service ID inherits access-group permissions")
-    try:
-        public_policies = json.loads(cli(
-            "iam", "access-group-policies", "Public Access", "--output", "JSON",
-        ))
-    except (TypeError, ValueError):
-        raise BootstrapBlocked("malformed Public Access policy inventory") from None
-    _require(isinstance(public_policies, list) and not public_policies,
-             "Public Access group grants registry service ID permissions")
+    for api_version in ("v1", "v2"):
+        try:
+            public_policies = json.loads(cli(
+                "iam", "access-group-policies", "Public Access",
+                "--api-version", api_version, "--output", "JSON",
+            ))
+        except (TypeError, ValueError):
+            raise BootstrapBlocked("malformed Public Access policy inventory") from None
+        _require(isinstance(public_policies, list) and not public_policies,
+                 "Public Access group grants registry service ID permissions")
     # Registry IAM supports a regional namespace boundary, not a repository or digest boundary.
     attributes = {"accountId": v["ACCOUNT_ID"], "serviceName": "container-registry",
                   "region": "us-south", "resourceType": "namespace", "resource": "watch-authenticity-3235996"}
