@@ -31,8 +31,9 @@ class Provider:
     def __init__(self):
         self.calls = []
         self.target = {"api_endpoint": "https://cloud.ibm.com", "account": {"guid": "account-1"},
-                       "resource_group": {"id": "rg-1", "name": "watch-auth"},
+                       "resource_group": {"name": "watch-auth"},
                        "region": {"name": "us-south"}}
+        self.resource_group_id = "rg-1"
         self.selected = {"guid": "project-1", "name": "watch-auth"}
         self.project = {"id": "project-1", "name": "watch-auth", "crn": PROJECT_CRN}
         self.instance = {"account_id": "account-1", "resource_group_id": "rg-1",
@@ -58,6 +59,8 @@ class Provider:
         self.calls.append(args)
         if args[0] == "target":
             return json.dumps(self.target)
+        if args[:2] == ("resource", "group"):
+            return self.resource_group_id + "\n"
         if args[:3] == ("ce", "project", "current"):
             return json.dumps(self.selected)
         if args[:2] == ("iam", "oauth-tokens"):
@@ -155,6 +158,7 @@ def run(provider, tmp_path, env=None):
 def mutations(provider):
     return [call for call in provider.calls if not (
         call[0] == "target" or call[:3] == ("ce", "project", "current")
+        or call[:2] == ("resource", "group")
         or call[:2] == ("iam", "oauth-tokens")
         or (call[:2] == ("ce", "sub") and call[3] == "list")
     )]
@@ -289,7 +293,17 @@ def test_target_mismatch_stops_before_any_mutation(tmp_path, field):
     with pytest.raises(BootstrapBlocked):
         run(provider, tmp_path)
     assert all(args[0] == "target" or args[:3] == ("ce", "project", "current")
+               or args[:2] == ("resource", "group")
                or args[:2] == ("iam", "oauth-tokens") for args in provider.calls)
+
+
+@pytest.mark.parametrize("observed_id", ["", "other", "rg-1\nother"])
+def test_resource_group_readback_must_bind_selected_target_before_mutation(tmp_path, observed_id):
+    provider = Provider()
+    provider.resource_group_id = observed_id
+    with pytest.raises(BootstrapBlocked, match="resource group"):
+        run(provider, tmp_path)
+    assert mutations(provider) == []
 
 
 @pytest.mark.parametrize("image", [IMAGE.replace("bf169b", "af169b"), IMAGE + ":tag", "us.icr.io/watch/watchdog:latest"])

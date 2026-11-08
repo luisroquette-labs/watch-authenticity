@@ -82,9 +82,10 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
     target = _json(cli("target", "--output", "json"))
     _require(target.get("api_endpoint") == "https://cloud.ibm.com"
              and target.get("account", {}).get("guid") == v["ACCOUNT_ID"]
-             and target.get("resource_group", {}).get("id") == v["RESOURCE_GROUP_ID"]
              and target.get("resource_group", {}).get("name") == v["RESOURCE_GROUP"]
              and target.get("region", {}).get("name") == v["REGION"], "selected IBM target differs")
+    resource_group_id = cli("resource", "group", v["RESOURCE_GROUP"], "--id").strip()
+    _require(resource_group_id == v["RESOURCE_GROUP_ID"], "selected IBM resource group differs")
     selected = _json(cli("ce", "project", "current", "--output", "json"))
     _require(selected.get("guid") == v["CE_PROJECT_ID"]
              and selected.get("name") == v["CE_PROJECT"], "selected Code Engine project differs")
