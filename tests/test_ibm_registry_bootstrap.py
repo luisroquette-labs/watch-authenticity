@@ -25,14 +25,17 @@ ENV = {
 PROJECT_CRN = "crn:v1:bluemix:public:codeengine:us-south:a/account-1:project-1::"
 SERVICE_ID = {"id": "ServiceId-pull", "iam_id": "iam-ServiceId-pull", "name": SERVICE,
               "account_id": "account-1"}
+API_KEY_ID = "ApiKey-11111111-2222-3333-4444-555555555555"
 
 
 class Provider:
     def __init__(self):
         self.calls = []
         self.target = {"api_endpoint": "https://cloud.ibm.com", "account": {"guid": "account-1"},
+                       "user": {"user_email": "owner@example.com"},
                        "resource_group": {"name": "watch-auth"},
                        "region": {"name": "us-south"}}
+        self.target["account"]["owner"] = "owner@example.com"
         self.resource_group_id = "rg-1"
         self.selected = {"guid": "project-1", "name": "watch-auth"}
         self.project = {"id": "project-1", "name": "watch-auth", "crn": PROJECT_CRN}
@@ -45,6 +48,7 @@ class Provider:
         self.rules = []
         self.groups = [{"id": "AccessGroupId-PublicAccess", "name": "Public Access"}]
         self.public_access_policies = {"v1": [], "v2": []}
+        self.operator_policies = []
         self.secret = None
         self.job = None
         self.subscriptions = {
@@ -69,17 +73,33 @@ class Provider:
         if args[:2] == ("iam", "access-group-policies"):
             version = args[args.index("--api-version") + 1]
             return json.dumps(self.public_access_policies[version])
+        if args[:2] == ("iam", "user-policies"):
+            assert args[2] == "owner@example.com"
+            return json.dumps(self.operator_policies)
         if args[:2] == ("ce", "sub") and args[3] == "list":
             return json.dumps(self.subscriptions[args[2]])
         if args[1] == "service-id-create":
             self.ids = [copy.deepcopy(SERVICE_ID)]
+        elif args[1] == "user-policy-create":
+            assert args == (
+                "iam", "user-policy-create", "owner@example.com", "--roles", "Writer",
+                "--service-name", "codeengine", "--service-instance", "project-1",
+                "--output", "JSON",
+            )
+            self.operator_policies = [{"resources": [{"attributes": [
+                {"name": "accountId", "value": "account-1"},
+                {"name": "serviceName", "value": "codeengine"},
+                {"name": "serviceInstance", "value": "project-1"},
+            ]}], "roles": [{"role_id": "crn:v1:bluemix:public:iam::::serviceRole:Writer"}]}]
         elif args[1] == "service-policy-create":
             raise AssertionError("policy creation must use the authenticated IAM API")
         elif args[1] == "service-api-key-create":
             self.key_path = Path(args[args.index("--file") + 1])
             assert self.key_path.stat().st_mode & 0o777 == 0o600
             self.key_path.write_text(json.dumps({"apikey": self.leaked}))
-            self.keys = [{"name": SERVICE, "id": "ApiKey-pull"}]
+            self.keys = [{"name": SERVICE, "id": API_KEY_ID, "iam_id": SERVICE_ID["iam_id"]}]
+        elif args[:3] == ("ce", "registry", "list"):
+            return json.dumps([] if self.secret is None else [self.secret])
         elif args[:3] == ("ce", "registry", "create"):
             path = Path(args[args.index("--password-from-json-file") + 1])
             assert path == self.key_path and path.stat().st_mode & 0o777 == 0o600
@@ -137,7 +157,7 @@ class Provider:
             result = {"apikeys": self.keys}
         elif url.endswith("/apikeys/details"):
             assert kwargs["headers"]["IAM-ApiKey"] == self.leaked
-            result = {"name": SERVICE, "id": "ApiKey-pull", "account_id": "account-1",
+            result = {"name": SERVICE, "id": API_KEY_ID, "account_id": "account-1",
                       "iam_id": SERVICE_ID["iam_id"]}
         elif url.endswith(f"/secrets/{SECRET}"):
             result = self.secret
@@ -178,6 +198,16 @@ class Provider:
         self.policy_items = [copy.deepcopy(body)]
         return SimpleNamespace(status_code=201, text=json.dumps(body))
 
+    def delete(self, url, **kwargs):
+        self.calls.append(("http", "delete", url))
+        assert kwargs["allow_redirects"] is False and kwargs["timeout"] == 30
+        assert kwargs["headers"]["Authorization"] == "Bearer bootstrap-session"
+        if self.fail == "key-delete":
+            return SimpleNamespace(status_code=403, text="sensitive-provider-error")
+        assert url == "https://iam.cloud.ibm.com/v1/apikeys/" + API_KEY_ID
+        self.keys = []
+        return SimpleNamespace(status_code=204, text="")
+
 
 def run(provider, tmp_path, env=None):
     tmp_path.chmod(0o700)
@@ -190,7 +220,9 @@ def mutations(provider):
         or call[:2] == ("resource", "group")
         or call[:2] == ("iam", "oauth-tokens")
         or call[:2] == ("iam", "access-group-policies")
+        or call[:2] == ("iam", "user-policies")
         or (call[:2] == ("ce", "sub") and call[3] == "list")
+        or call[:3] == ("ce", "registry", "list")
     )]
 
 
@@ -371,16 +403,110 @@ def test_policy_creation_failure_stops_before_key_secret_and_job(tmp_path, capsy
 
 
 @pytest.mark.parametrize("failure", ["secret", "secret-not-persisted"])
-def test_secret_failure_never_mutates_job_or_retries_key_creation(tmp_path, failure):
+def test_secret_failure_replaces_orphan_key_once_before_retrying_secret(tmp_path, failure):
     provider = Provider()
     provider.fail = failure
     with pytest.raises(BootstrapBlocked):
         run(provider, tmp_path)
     assert not any(call[:2] == ("ce", "job") for call in provider.calls)
     (tmp_path / "key.json").unlink(missing_ok=True)  # shell trap in production
-    with pytest.raises(BootstrapBlocked, match="orphan registry API key"):
+    provider.fail = None
+    run(provider, tmp_path)
+    assert sum(call[:2] == ("http", "delete") for call in provider.calls) == 1
+    assert sum(call[1] == "service-api-key-create" for call in provider.calls) == 2
+    assert provider.job is not None
+
+
+def test_orphan_key_deletion_failure_blocks_before_new_key_secret_or_job(tmp_path):
+    provider = Provider()
+    provider.fail = "secret"
+    with pytest.raises(BootstrapBlocked):
+        run(provider, tmp_path)
+    (tmp_path / "key.json").unlink(missing_ok=True)  # shell trap in production
+    provider.fail = "key-delete"
+    with pytest.raises(BootstrapBlocked, match="key deletion failed"):
         run(provider, tmp_path)
     assert sum(call[1] == "service-api-key-create" for call in provider.calls) == 1
+    assert provider.secret is None and provider.job is None
+
+
+@pytest.mark.parametrize("change", ["role", "scope", "operator", "duplicate", "broad"])
+def test_divergent_or_duplicate_code_engine_operator_policy_blocks(tmp_path, change):
+    provider = Provider()
+    exact = {"resources": [{"attributes": [
+        {"name": "accountId", "operator": "stringEquals", "value": "account-1"},
+        {"name": "serviceName", "operator": "stringEquals", "value": "codeengine"},
+        {"name": "serviceInstance", "operator": "stringEquals", "value": "project-1"},
+    ]}], "roles": [{"role_id": "crn:v1:bluemix:public:iam::::serviceRole:Writer"}]}
+    provider.operator_policies = [copy.deepcopy(exact)]
+    if change == "role":
+        provider.operator_policies[0]["roles"][0]["role_id"] = "crn:v1:bluemix:public:iam::::serviceRole:Manager"
+    elif change == "scope":
+        provider.operator_policies[0]["resources"][0]["attributes"].append(
+            {"name": "resourceGroupId", "operator": "stringEquals", "value": "rg-1"})
+    elif change == "operator":
+        provider.operator_policies[0]["resources"][0]["attributes"][0]["operator"] = "stringNotEquals"
+    elif change == "duplicate":
+        provider.operator_policies.append(copy.deepcopy(exact))
+    else:
+        provider.operator_policies[0]["resources"][0]["attributes"].pop()
+    with pytest.raises(BootstrapBlocked, match="operator polic|duplicate Code Engine|broad Code Engine"):
+        run(provider, tmp_path)
+    assert not any(call[1] == "service-api-key-create" for call in provider.calls)
+
+
+@pytest.mark.parametrize("value,operator", [
+    (None, "stringEquals"), ("", "stringEquals"), ("*", "stringEquals"),
+    ("other-project", "stringNotEquals"),
+])
+def test_nonconcrete_code_engine_policy_scope_blocks(tmp_path, value, operator):
+    provider = Provider()
+    provider.operator_policies = [{"resources": [{"attributes": [
+        {"name": "accountId", "operator": "stringEquals", "value": "account-1"},
+        {"name": "serviceName", "operator": "stringEquals", "value": "codeengine"},
+        {"name": "serviceInstance", "operator": operator, "value": value},
+    ]}], "roles": [{"role_id": "crn:v1:bluemix:public:iam::::serviceRole:Writer"}]}]
+    with pytest.raises(BootstrapBlocked, match="broad Code Engine"):
+        run(provider, tmp_path)
+    assert not any(call[1] == "service-api-key-create" for call in provider.calls)
+
+
+def test_non_owner_session_blocks_operator_policy_creation(tmp_path):
+    provider = Provider()
+    provider.target["user"]["user_email"] = "member@example.com"
+    with pytest.raises(BootstrapBlocked, match="not the account owner"):
+        run(provider, tmp_path)
+    assert mutations(provider) == []
+
+
+@pytest.mark.parametrize("bad_id", ["", "ApiKey-pull", "../profiles/target", API_KEY_ID + "/../other"])
+def test_malformed_or_pathlike_orphan_key_id_blocks_deletion(tmp_path, bad_id):
+    provider = Provider()
+    provider.fail = "secret"
+    with pytest.raises(BootstrapBlocked):
+        run(provider, tmp_path)
+    (tmp_path / "key.json").unlink(missing_ok=True)  # shell trap in production
+    provider.keys[0]["id"] = bad_id
+    provider.fail = None
+    with pytest.raises(BootstrapBlocked, match="unexpected registry API keys"):
+        run(provider, tmp_path)
+    assert not any(call[:2] == ("http", "delete") for call in provider.calls)
+
+
+def test_registry_cli_and_api_inventory_divergence_blocks_key_mutation(tmp_path):
+    provider = Provider()
+    original_cli = provider.cli
+
+    def divergent_cli(*args):
+        if args[:3] == ("ce", "registry", "list"):
+            provider.calls.append(args)
+            return json.dumps([{"name": SECRET}])
+        return original_cli(*args)
+
+    provider.cli = divergent_cli
+    with pytest.raises(BootstrapBlocked, match="inventories differ"):
+        run(provider, tmp_path)
+    assert not any(call[1] == "service-api-key-create" for call in provider.calls)
 
 
 def test_lost_secret_create_response_is_reconciled_without_a_second_key(tmp_path):
