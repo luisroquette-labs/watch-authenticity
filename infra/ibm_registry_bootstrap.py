@@ -335,15 +335,24 @@ def bootstrap(env: Mapping[str, str], key_file: Path, *,
              "malformed registry secret inventory")
     registry_items = _items(registry_inventory, "items")
     registry_metadata = registry_inventory.get("metadata")
+    continuation = (registry_metadata.get("continue", "")
+                    if isinstance(registry_metadata, dict) else None)
     _require(isinstance(registry_metadata, dict)
              and isinstance(registry_metadata.get("resourceVersion"), str)
              and bool(registry_metadata["resourceVersion"])
-             and not registry_metadata.get("continue")
-             and all(isinstance(item.get("name"), str)
-                     and bool(re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?", item["name"]))
-                     for item in registry_items),
+             and isinstance(continuation, str) and not continuation,
              "malformed or paginated registry secret inventory")
-    registry_matches = [item for item in registry_items if item.get("name") == SECRET]
+    registry_names = []
+    for item in registry_items:
+        item_metadata = item.get("metadata")
+        registry_name = item_metadata.get("name") if isinstance(item_metadata, dict) else None
+        _require(isinstance(registry_name, str)
+                 and bool(re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?",
+                                       registry_name)),
+                 "malformed registry secret inventory")
+        assert isinstance(registry_name, str)
+        registry_names.append(registry_name)
+    registry_matches = [name for name in registry_names if name == SECRET]
     _require(len(registry_matches) == (1 if secret is not None else 0),
              "registry secret inventories differ")
     keys = _items(get(IAM + "/v1/apikeys", params={

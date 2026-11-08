@@ -100,7 +100,9 @@ class Provider:
             self.keys = [{"name": SERVICE, "id": API_KEY_ID, "iam_id": SERVICE_ID["iam_id"]}]
         elif args[:3] == ("ce", "registry", "list"):
             return json.dumps({"metadata": {"resourceVersion": "fixture"},
-                               "items": [] if self.secret is None else [self.secret]})
+                               "items": [] if self.secret is None else [
+                                   {"metadata": {"name": self.secret["name"]}},
+                               ]})
         elif args[:3] == ("ce", "registry", "create"):
             path = Path(args[args.index("--password-from-json-file") + 1])
             assert path == self.key_path and path.stat().st_mode & 0o777 == 0o600
@@ -502,7 +504,7 @@ def test_registry_cli_and_api_inventory_divergence_blocks_key_mutation(tmp_path)
         if args[:3] == ("ce", "registry", "list"):
             provider.calls.append(args)
             return json.dumps({"metadata": {"resourceVersion": "fixture"},
-                               "items": [{"name": SECRET}]})
+                               "items": [{"metadata": {"name": SECRET}}]})
         return original_cli(*args)
 
     provider.cli = divergent_cli
@@ -515,7 +517,13 @@ def test_registry_cli_and_api_inventory_divergence_blocks_key_mutation(tmp_path)
     [], {}, {"items": None}, {"items": [None]}, {"items": []},
     {"items": [], "metadata": []}, {"items": [], "metadata": {}},
     {"items": [{}], "metadata": {"resourceVersion": "fixture"}},
-    {"items": [{"name": "../wrong"}], "metadata": {"resourceVersion": "fixture"}},
+    {"items": [{"metadata": {"name": "../wrong"}}],
+     "metadata": {"resourceVersion": "fixture"}},
+    {"items": [], "metadata": {"resourceVersion": "fixture", "continue": None}},
+    {"items": [], "metadata": {"resourceVersion": "fixture", "continue": False}},
+    {"items": [], "metadata": {"resourceVersion": "fixture", "continue": 0}},
+    {"items": [], "metadata": {"resourceVersion": "fixture", "continue": []}},
+    {"items": [], "metadata": {"resourceVersion": "fixture", "continue": {}}},
     {"items": [], "metadata": {"resourceVersion": "fixture", "continue": "next-page"}},
 ])
 def test_malformed_or_paginated_registry_inventory_blocks_key_mutation(tmp_path, inventory):
