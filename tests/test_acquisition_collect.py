@@ -6,6 +6,7 @@ import io
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from threading import Barrier
 from unittest.mock import MagicMock
@@ -23,7 +24,7 @@ from acquisition.collect import (
     collect_batch,
     sanitize_image,
 )
-from acquisition.partner_import import import_partner_export
+from acquisition.partner_import import collect_partner_batch, import_partner_export
 from tests.conftest import NOW, _Response
 
 
@@ -325,6 +326,80 @@ def test_partner_import_hashes_declared_image(tmp_path: Path, rights):
 
     assert candidate.raw_sha256 == hashlib.sha256(image_path.read_bytes()).hexdigest()
     assert candidate.rights_record_id == rights.rights_record_id
+
+
+def test_partner_batch_persists_twenty_images_and_resumes_without_duplicates(
+    tmp_path: Path, allowed_policy, rights, cos
+):
+    evidence = b'{"permission":"owner-authorized","purpose":["download","train"]}'
+    evidence_path = tmp_path / "rights-evidence.json"
+    evidence_path.write_bytes(evidence)
+    rows = []
+    for index in range(20):
+        filename = f"image-{index}.png"
+        Image.new("RGB", (4, 4), (index, index * 2, index * 3)).save(tmp_path / filename)
+        row = _partner_row(filename)
+        row["candidate_id"] = f"partner-candidate-{index}"
+        row["source_record_id"] = "partner-listing-1"
+        rows.append(row)
+    manifest = tmp_path / "export.jsonl"
+    manifest.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    declared_rights = replace(
+        rights,
+        evidence_sha256=hashlib.sha256(evidence).hexdigest(),
+    )
+
+    first = collect_partner_batch(
+        manifest,
+        evidence_path,
+        allowed_policy,
+        declared_rights,
+        cos_client=cos,
+        bucket="private",
+        batch_id="partner-batch-1",
+        now=NOW,
+    )
+    writes = cos.write_count
+    second = collect_partner_batch(
+        manifest,
+        evidence_path,
+        allowed_policy,
+        declared_rights,
+        cos_client=cos,
+        bucket="private",
+        batch_id="partner-batch-1",
+        now=NOW,
+    )
+
+    assert len(first.accepted_candidate_ids) == 20
+    assert second == first
+    assert cos.write_count == writes
+    assert f"datasets/evidence/{declared_rights.evidence_sha256}" in cos.bodies
+
+
+def test_partner_batch_refuses_missing_or_mismatched_rights_evidence_before_cos(
+    tmp_path: Path, allowed_policy, rights, cos
+):
+    image = tmp_path / "image.png"
+    Image.new("RGB", (4, 4), "red").save(image)
+    manifest = tmp_path / "export.jsonl"
+    manifest.write_text(json.dumps(_partner_row(image.name)) + "\n")
+    evidence_path = tmp_path / "rights-evidence.json"
+    evidence_path.write_text("{}")
+
+    with pytest.raises(ValueError, match="rights evidence hash"):
+        collect_partner_batch(
+            manifest,
+            evidence_path,
+            allowed_policy,
+            rights,
+            cos_client=cos,
+            bucket="private",
+            batch_id="partner-batch-1",
+            now=NOW,
+        )
+
+    assert cos.write_count == 0
 
 
 def _partner_row(file: str) -> dict[str, object]:

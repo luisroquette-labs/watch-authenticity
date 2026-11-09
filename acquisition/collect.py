@@ -171,38 +171,15 @@ def collect_batch(
             phash=phash,
             rights_record_id=rights.rights_record_id,
         )
-        receipt = _receipt_bytes(candidate)
-        receipt_sha256 = hashlib.sha256(receipt).hexdigest()
-        receipt_prefix = f"datasets/receipts/{batch_id}/{candidate_id}-"
-        receipt_key = f"{receipt_prefix}{receipt_sha256}.json"
-        receipt_exists = _verify_receipt_inventory(
+        receipt_sha256 = persist_candidate_payload(
             cos_client,
             bucket,
-            receipt_prefix,
-            receipt_key,
-            receipt,
-        )
-
-        _upload_bytes(cos_client, bucket, f"datasets/raw/{raw_sha256}", payload, raw_sha256)
-        _upload_bytes(
-            cos_client,
-            bucket,
-            f"datasets/derivatives/{derivative_sha256}",
+            candidate,
+            payload,
             derivative,
-            derivative_sha256,
-        )
-        if not receipt_exists:
-            _write_receipt(cos_client, bucket, receipt_key, receipt)
-        _verify_receipt_inventory(
-            cos_client,
-            bucket,
-            receipt_prefix,
-            receipt_key,
-            receipt,
-            require_one=True,
         )
         accepted.append(candidate_id)
-        receipt_hashes.append(hashlib.sha256(receipt).hexdigest())
+        receipt_hashes.append(receipt_sha256)
 
     batch_sha256 = hashlib.sha256(
         json.dumps(receipt_hashes, separators=(",", ":")).encode()
@@ -215,6 +192,58 @@ def collect_batch(
         accepted_candidate_ids=tuple(accepted),
         refused_candidate_ids=(),
     )
+
+
+def persist_candidate_payload(
+    cos_client: Any,
+    bucket: str,
+    candidate: CandidateRecord,
+    raw: bytes,
+    derivative: bytes,
+) -> str:
+    """Persist verified candidate bytes and one immutable receipt."""
+    raw_sha256 = hashlib.sha256(raw).hexdigest()
+    derivative_sha256 = hashlib.sha256(derivative).hexdigest()
+    if raw_sha256 != candidate.raw_sha256 or derivative_sha256 != candidate.derivative_sha256:
+        raise IntegrityError("candidate hashes differ from supplied image bytes")
+    receipt = _receipt_bytes(candidate)
+    receipt_sha256 = hashlib.sha256(receipt).hexdigest()
+    receipt_prefix = (
+        f"datasets/receipts/{candidate.acquisition_batch_id}/{candidate.candidate_id}-"
+    )
+    receipt_key = f"{receipt_prefix}{receipt_sha256}.json"
+    receipt_exists = _verify_receipt_inventory(
+        cos_client,
+        bucket,
+        receipt_prefix,
+        receipt_key,
+        receipt,
+    )
+    _upload_bytes(
+        cos_client,
+        bucket,
+        f"datasets/raw/{raw_sha256}",
+        raw,
+        raw_sha256,
+    )
+    _upload_bytes(
+        cos_client,
+        bucket,
+        f"datasets/derivatives/{derivative_sha256}",
+        derivative,
+        derivative_sha256,
+    )
+    if not receipt_exists:
+        _write_receipt(cos_client, bucket, receipt_key, receipt)
+    _verify_receipt_inventory(
+        cos_client,
+        bucket,
+        receipt_prefix,
+        receipt_key,
+        receipt,
+        require_one=True,
+    )
+    return receipt_sha256
 
 
 def sanitize_image(payload: bytes) -> tuple[bytes, str]:
