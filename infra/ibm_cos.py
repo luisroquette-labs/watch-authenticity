@@ -289,7 +289,8 @@ def _content_key(key: str, digest: str) -> str:
     base = key.strip("/")
     if not base:
         raise ValueError("key must be non-empty")
-    return base if base.rsplit("/", 1)[-1] == digest else f"{base}/{digest}"
+    leaf = base.rsplit("/", 1)[-1]
+    return base if leaf in {digest, f"{digest}.json"} else f"{base}/{digest}"
 
 
 def _verify_remote_bytes(

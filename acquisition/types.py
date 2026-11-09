@@ -235,6 +235,10 @@ class ReviewDecision:
     supporting_artifact_hashes: tuple[str, ...]
     reviewed_at: datetime
     decision_sha256: str
+    candidate_sha256: str
+    proposed_reference_id: str
+    reviewer_registry_sha256: str
+    adjudicator: bool
 
     def __post_init__(self) -> None:
         _nonempty(self.candidate_id, "candidate_id")
@@ -249,6 +253,11 @@ class ReviewDecision:
         _hashes(self.supporting_artifact_hashes, "supporting_artifact_hashes")
         _aware(self.reviewed_at, "reviewed_at")
         _sha256(self.decision_sha256, "decision_sha256")
+        _sha256(self.candidate_sha256, "candidate_sha256")
+        _nonempty(self.proposed_reference_id, "proposed_reference_id")
+        _sha256(self.reviewer_registry_sha256, "reviewer_registry_sha256")
+        if not isinstance(self.adjudicator, bool):
+            raise ValueError("adjudicator must be bool")
 
 
 @dataclass(frozen=True)

@@ -267,6 +267,23 @@ def test_upload_uses_digest_key_and_verifies_remote_object(tmp_path: Path):
     assert all(".upload-" not in key for key in cos.objects)
 
 
+def test_upload_preserves_explicit_content_addressed_json_key(tmp_path: Path):
+    source = tmp_path / "review.json"
+    source.write_bytes(b'{"review":"accepted"}')
+    digest = _sha256(source)
+    cos = FakeCOS(prefix="datasets")
+
+    ref = upload_verified(
+        cos,
+        source,
+        "private",
+        f"datasets/reviews/candidate/reviewer/{digest}.json",
+        digest,
+    )
+
+    assert ref.key == f"datasets/reviews/candidate/reviewer/{digest}.json"
+
+
 def test_cos_operations_reject_destinations_outside_client_binding(tmp_path: Path):
     source = tmp_path / "artifact.bin"
     source.write_bytes(b"artifact")

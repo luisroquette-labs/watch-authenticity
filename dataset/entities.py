@@ -69,6 +69,7 @@ class GroupingDecision:
     content_cluster_id: str
     watch_entity_id: str
     split_family_id: str
+    seller_group_id: str
     quarantined: bool
     conflict_candidate_ids: tuple[str, ...] = ()
     conflict_evidence_ids: tuple[str, ...] = ()
@@ -81,10 +82,12 @@ class EntityAssignments(dict[str, str]):
         self,
         entities: Mapping[str, str],
         split_families: Mapping[str, str],
+        seller_groups: Mapping[str, str],
         conflicts: Mapping[str, ClusterConflict],
     ):
         super().__init__(entities)
         self.split_families = dict(split_families)
+        self.seller_groups = dict(seller_groups)
         self.conflicts = dict(conflicts)
 
 
@@ -252,8 +255,21 @@ def assign_watch_entities(
         for members in split_groups.values()
         for member in members
     }
+    seller_union = _UnionFind(candidate_ids)
+    _union_shared_value(
+        seller_union,
+        records,
+        lambda record: evidence.get(record.candidate_id, EntityEvidence()).seller_account_id,
+        ignore_none=True,
+    )
+    seller_groups = _groups(seller_union, candidate_ids)
+    seller_ids = {
+        member: _stable_id("seller", members)
+        for members in seller_groups.values()
+        for member in members
+    }
     conflicts = detect_cluster_conflicts(records, content_clusters, evidence)
-    return EntityAssignments(entity_ids, split_ids, conflicts)
+    return EntityAssignments(entity_ids, split_ids, seller_ids, conflicts)
 
 
 def detect_cluster_conflicts(
@@ -305,6 +321,7 @@ def build_grouping_decision(
         content_cluster_id=cluster_id,
         watch_entity_id=entities[candidate.candidate_id],
         split_family_id=entities.split_families[candidate.candidate_id],
+        seller_group_id=entities.seller_groups[candidate.candidate_id],
         quarantined=conflict is not None,
         conflict_candidate_ids=() if conflict is None else conflict.candidate_ids,
         conflict_evidence_ids=() if conflict is None else conflict.evidence_ids,
