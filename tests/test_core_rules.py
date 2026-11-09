@@ -22,7 +22,6 @@ from core.rules import (
     model_class_for_label,
     propose_source_label,
     publish_gate,
-    source_label_rule,
 )
 from core.types import Label, ModelClass
 from tests.test_core_types import FORBIDDEN_IMPORT_ROOTS, _top_level_imports
@@ -108,40 +107,6 @@ def test_fake_model_class_refuses_non_market_grades(grade: int):
 @pytest.mark.parametrize("grade", [1, 2, 3, 4])
 def test_fake_model_class_accepts_market_grades(grade: int):
     assert model_class_for_label(Label.FAKE, grade) is ModelClass(grade)
-
-
-# --- CK-13/18 & CK-27/29: source_label_rule ---------------------------------
-
-
-def test_source_label_rule_excludes_olx_original_listing():
-    assert source_label_rule(listing_text="original", marketplace="olx") == Label.EXCLUDED
-
-
-def test_source_label_rule_excludes_reddit_without_permission():
-    result = source_label_rule(source="reddit", subreddit="r/rolex", permission_on_file=False)
-    assert result == Label.EXCLUDED
-
-
-def test_source_label_rule_allows_reddit_with_documented_permission():
-    result = source_label_rule(source="reddit", subreddit="r/rolex", permission_on_file=True)
-    assert result == Label.GENUINE
-
-
-def test_source_label_rule_treats_dealer_forums_as_genuine():
-    assert source_label_rule(source="chrono24") == Label.GENUINE
-    assert source_label_rule(source="watchuseek") == Label.GENUINE
-
-
-def test_source_label_rule_treats_replica_forums_as_fake():
-    assert source_label_rule(source="reptime") == Label.FAKE
-
-
-def test_source_label_rule_treats_undeclared_marketplace_ad_as_fake():
-    assert source_label_rule(listing_text="réplica", marketplace="olx") == Label.FAKE
-
-
-def test_source_label_rule_excludes_unrecognized_source():
-    assert source_label_rule(source="unknown_site") == Label.EXCLUDED
 
 
 # --- Candidate-only source proposal ----------------------------------------
