@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 from itertools import combinations
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -79,11 +80,19 @@ def test_conflicting_labels_quarantine_entire_content_cluster(grouped_records):
     }
 
     entity_ids = assign_watch_entities(grouped_records, clusters, evidence)
-    decision = build_grouping_decision(grouped_records[0], clusters, entity_ids, evidence)
+    decision = build_grouping_decision(grouped_records[0], clusters, entity_ids)
 
     assert decision.quarantined
     assert decision.conflict_candidate_ids == ("front", "repost")
     assert decision.conflict_evidence_ids == ("evidence-fake", "evidence-genuine")
+
+
+def test_grouping_decision_fails_closed_when_conflict_metadata_is_dropped(grouped_records):
+    clusters = build_content_clusters(grouped_records)
+    entity_ids = assign_watch_entities(grouped_records, clusters)
+
+    with pytest.raises(ValueError, match="conflict evidence is required"):
+        build_grouping_decision(grouped_records[0], clusters, dict(entity_ids))
 
 
 @given(st.lists(st.integers(min_value=0, max_value=2**64 - 1), min_size=1, max_size=30, unique=True))

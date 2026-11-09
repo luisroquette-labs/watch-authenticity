@@ -277,12 +277,16 @@ def build_grouping_decision(
     candidate: CandidateRecord,
     clusters: Mapping[str, str],
     entities: Mapping[str, str],
-    evidence: Mapping[str, EntityEvidence] | None = None,
     conflicts: Mapping[str, ClusterConflict] | None = None,
 ) -> GroupingDecision:
-    del evidence  # evidence is consumed while assigning entities and detecting conflicts.
     cluster_id = clusters[candidate.candidate_id]
-    conflict_map = conflicts if conflicts is not None else getattr(entities, "conflicts", {})
+    embedded_conflicts = getattr(entities, "conflicts", None)
+    if conflicts is None:
+        if not isinstance(embedded_conflicts, Mapping):
+            raise ValueError("conflict evidence is required for a grouping decision")
+        conflict_map = embedded_conflicts
+    else:
+        conflict_map = conflicts
     conflict = conflict_map.get(cluster_id)
     split_families = getattr(entities, "split_families", {})
     split_family_id = split_families.get(
