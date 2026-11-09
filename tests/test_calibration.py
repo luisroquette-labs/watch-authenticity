@@ -42,7 +42,8 @@ from core.rules import CONFIDENCE_CEILING, CONFIDENCE_FLOOR, GRADE4_GENUINE_CEIL
 from core.rules import apply_grade4_ceiling as core_apply_grade4_ceiling  # noqa: E402
 from core.rules import clip_confidence as core_clip_confidence  # noqa: E402
 from core.types import Grade, Label, ManifestRecord  # noqa: E402
-from dataset.splits import TEST, VAL, build_splits  # noqa: E402
+from dataset.splits import TEST, VAL  # noqa: E402
+from dataset.splits import build_manifest_splits as build_splits
 from model.heads import GENUINE_CLASS_INDEX, NUM_CLASSES  # noqa: E402
 
 # A dedicated marketplace source avoids the cross-source split's

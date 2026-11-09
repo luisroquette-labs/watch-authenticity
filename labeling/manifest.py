@@ -102,6 +102,9 @@ def build_training_record(
     reviews: Sequence[ReviewDecision],
     reviewer_registry: Mapping[str, ReviewerRecord],
     gold_candidate_ids: frozenset[str] = frozenset(),
+    is_augmented: bool = False,
+    rejection_subtype: str | None = None,
+    rejection_reference_id: str | None = None,
 ) -> TrainingRecord:
     """Build a training row only from accepted evidence, never price guesses."""
     if now.tzinfo is None or now.utcoffset() is None:
@@ -153,7 +156,13 @@ def build_training_record(
         content_cluster_id=grouping.content_cluster_id,
         seller_group_id=grouping.seller_group_id,
         acquisition_batch_id=candidate.acquisition_batch_id,
-        angle=angle,
+        angle=None if evidence.accepted_label is Label.REJECTION else angle,
+        collected_at=candidate.collected_at,
+        original_sha256=candidate.raw_sha256,
+        is_augmented=is_augmented,
+        is_gold=candidate.candidate_id in gold_candidate_ids,
+        rejection_subtype=rejection_subtype,
+        rejection_reference_id=rejection_reference_id,
         source_domain=domain.rstrip(".").lower(),
         capture_style=capture_style,
         label=evidence.accepted_label,

@@ -319,7 +319,13 @@ class TrainingRecord:
     content_cluster_id: str
     seller_group_id: str
     acquisition_batch_id: str
-    angle: Angle
+    angle: Angle | None
+    collected_at: datetime
+    original_sha256: str
+    is_augmented: bool
+    is_gold: bool
+    rejection_subtype: str | None
+    rejection_reference_id: str | None
     source_domain: str
     capture_style: str
     label: Label
@@ -348,10 +354,29 @@ class TrainingRecord:
             _nonempty(value, field)
         if not isinstance(self.object_ref, ObjectRef):
             raise ValueError("object_ref must be ObjectRef")
-        if not isinstance(self.angle, Angle):
-            raise ValueError("angle must be Angle")
+        _aware(self.collected_at, "collected_at")
+        _sha256(self.original_sha256, "original_sha256")
+        if not isinstance(self.is_augmented, bool) or not isinstance(self.is_gold, bool):
+            raise ValueError("augmentation and gold flags must be bool")
         if self.label not in {Label.GENUINE, Label.FAKE, Label.REJECTION}:
             raise ValueError("training label must be genuine, fake or rejection")
+        if self.label is Label.REJECTION:
+            if self.angle is not None:
+                raise ValueError("rejection records cannot claim a guided angle")
+            if self.rejection_subtype not in {"no-watch", "non-submariner"}:
+                raise ValueError("rejection_subtype is required for rejection records")
+            if self.rejection_subtype == "non-submariner":
+                if self.rejection_reference_id is None:
+                    raise ValueError("non-submariner records require a reference")
+                _nonempty(self.rejection_reference_id, "rejection_reference_id")
+            elif self.rejection_reference_id is not None:
+                raise ValueError("no-watch records cannot claim a reference")
+        elif (
+            not isinstance(self.angle, Angle)
+            or self.rejection_subtype is not None
+            or self.rejection_reference_id is not None
+        ):
+            raise ValueError("authenticity records require an angle and no rejection metadata")
         _label_grade(self.label, self.grade, fake_grade_required=True)
         if self.factory is not None:
             _nonempty(self.factory, "factory")
@@ -420,6 +445,11 @@ class DatasetFreeze:
     eligible_asset_ids: tuple[str, ...]
     excluded_asset_ids: tuple[str, ...]
     exclusion_reason_counts: tuple[tuple[str, int], ...]
+    readiness_sha256: str | None = None
+    rights_sha256: str | None = None
+    exclusions: tuple[tuple[str, str], ...] = ()
+    blocked: bool = False
+    asset_rights: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         _sha256(self.manifest_sha256, "manifest_sha256")
@@ -436,6 +466,32 @@ class DatasetFreeze:
             _nonempty(reason, "exclusion reason")
             if isinstance(count, bool) or not isinstance(count, int) or count < 1:
                 raise ValueError("exclusion reason count must be a positive integer")
+        for value, field in (
+            (self.readiness_sha256, "readiness_sha256"),
+            (self.rights_sha256, "rights_sha256"),
+        ):
+            if value is not None:
+                _sha256(value, field)
+        if len({asset_id for asset_id, _ in self.exclusions}) != len(self.exclusions):
+            raise ValueError("freeze exclusions must contain unique assets")
+        if self.exclusions and {asset_id for asset_id, _ in self.exclusions} != set(
+            self.excluded_asset_ids
+        ):
+            raise ValueError("freeze exclusion details must match excluded assets")
+        for asset_id, reason in self.exclusions:
+            _nonempty(asset_id, "excluded asset")
+            _nonempty(reason, "exclusion reason")
+        if not isinstance(self.blocked, bool):
+            raise ValueError("blocked must be bool")
+        if len({asset_id for asset_id, _ in self.asset_rights}) != len(self.asset_rights):
+            raise ValueError("freeze asset rights must contain unique assets")
+        if self.asset_rights and {asset_id for asset_id, _ in self.asset_rights} != set(
+            self.eligible_asset_ids
+        ):
+            raise ValueError("freeze asset rights must match eligible assets")
+        for asset_id, rights_id in self.asset_rights:
+            _nonempty(asset_id, "rights asset")
+            _nonempty(rights_id, "rights record")
 
 
 @dataclass(frozen=True)
