@@ -119,7 +119,7 @@ def _source_record(record: dict[str, object], spec: RunSpec) -> dict[str, object
         "candidate_id": f"candidate-{record['asset_id']}",
         "object_ref": {
             "bucket": spec.bucket,
-            "key": record["object_key"],
+            "key": f"datasets/derivatives/{digest}",
             "sha256": digest,
             "length": 1,
             "etag": "fixture",

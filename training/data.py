@@ -525,7 +525,7 @@ def _parse_freeze(
         object_ref = source.get("object_ref")
         if (
             not isinstance(object_ref, dict)
-            or object_ref.get("key") != record.object_key
+            or object_ref.get("key") != f"datasets/derivatives/{record.image_sha256}"
             or object_ref.get("sha256") != record.image_sha256
             or source.get("watch_entity_id") != record.subject_id
             or source.get("source_domain") != record.source_domain

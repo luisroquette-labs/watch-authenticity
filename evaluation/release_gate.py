@@ -8,7 +8,15 @@ from dataclasses import dataclass
 from core.rules import goldset_regression_gate, publish_gate
 from core.types import Label
 from dataset.crop import ANGLE_CROP_FRACTIONS
-from dataset.splits import FACTORY_HOLDOUT, TRAIN, VAL
+from dataset.splits import (
+    CROSS_SOURCE,
+    FACTORY_HOLDOUT,
+    GOLD,
+    TEMPORAL_HOLDOUT,
+    TEST,
+    TRAIN,
+    VAL,
+)
 from evaluation.evaluate import SourceProbeReport
 from training.data import TrainingBundle
 
@@ -39,15 +47,21 @@ class SliceMetric:
 @dataclass(frozen=True)
 class SliceCensus:
     freeze_sha256: str
-    names: tuple[str, ...]
+    counts: tuple[tuple[str, int], ...]
 
     def __post_init__(self) -> None:
         if (
             _SHA256.fullmatch(self.freeze_sha256) is None
-            or not self.names
-            or tuple(sorted(set(self.names))) != self.names
+            or not self.counts
+            or tuple(sorted(self.counts)) != self.counts
+            or len({name for name, _ in self.counts}) != len(self.counts)
+            or any(count < 0 for _, count in self.counts)
         ):
             raise ValueError("slice census is invalid")
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(name for name, _ in self.counts)
 
 
 @dataclass(frozen=True)
@@ -78,22 +92,35 @@ class ReleaseDecision:
 
 def build_slice_census(bundle: TrainingBundle) -> SliceCensus:
     """Derive every required evaluation slice from the frozen dataset."""
-    names = set(_AGGREGATE_SLICES)
+    counts = {name: 0 for name in _AGGREGATE_SLICES}
+    aggregate_by_split = {
+        TEST: "standard",
+        CROSS_SOURCE: "cross-source",
+        FACTORY_HOLDOUT: "unseen-factory",
+        TEMPORAL_HOLDOUT: "temporal",
+        GOLD: "gold",
+    }
     for record in bundle.records:
         split = bundle.split_by_asset[record.asset_id]
         if split in {TRAIN, VAL}:
             continue
+        aggregate = aggregate_by_split[split]
+        counts[aggregate] += 1
         angles = ANGLE_CROP_FRACTIONS if record.label is Label.REJECTION else (record.angle,)
         for angle in angles:
             assert isinstance(angle, str)
-            names.add(f"class-angle:{record.model_class.name.lower()}:{angle}")
-        names.add(f"source:{record.source_domain}")
-        names.add(f"entity:{record.subject_id}")
+            name = f"class-angle:{record.model_class.name.lower()}:{angle}"
+            counts[name] = counts.get(name, 0) + 1
+        source_name = f"source:{record.source_domain}"
+        entity_name = f"entity:{record.subject_id}"
+        counts[source_name] = counts.get(source_name, 0) + 1
+        counts[entity_name] = counts.get(entity_name, 0) + 1
         if split == FACTORY_HOLDOUT and record.label is Label.FAKE:
             if record.factory is None:
                 raise ValueError("factory holdout record lacks a named factory")
-            names.add(f"factory-grade:{record.factory}:{record.grade}")
-    return SliceCensus(bundle.freeze_sha256, tuple(sorted(names)))
+            name = f"factory-grade:{record.factory}:{record.grade}"
+            counts[name] = counts.get(name, 0) + 1
+    return SliceCensus(bundle.freeze_sha256, tuple(sorted(counts.items())))
 
 
 def release_gate(
@@ -124,9 +151,20 @@ def release_gate(
     metrics = {metric.name: metric for metric in report.slices}
     missing = sorted(set(census.names) - set(metrics))
     reasons.extend(f"required evaluation slice is missing: {name}" for name in missing)
+    expected_counts = dict(census.counts)
+    for name in sorted(_AGGREGATE_SLICES):
+        if expected_counts[name] == 0:
+            reasons.append(f"required evaluation split is empty: {name}")
     for metric in report.slices:
         name = metric.name
-        if metric.count < minimum_slice_count or metric.ci_low is None or metric.ci_high is None:
+        expected_count = expected_counts.get(name)
+        if expected_count is not None and metric.count != expected_count:
+            reasons.append(f"required slice count differs from freeze: {name}")
+        if (
+            (name in _AGGREGATE_SLICES and metric.count < minimum_slice_count)
+            or metric.ci_low is None
+            or metric.ci_high is None
+        ):
             reasons.append(f"required slice lacks uncertainty evidence: {name}")
         if metric.balanced_accuracy < minimum_slice_accuracy:
             reasons.append(f"weak required slice: {name}")
