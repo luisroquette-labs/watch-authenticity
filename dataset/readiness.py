@@ -120,7 +120,7 @@ def evaluate_readiness(
 
 
 def _append_dominance_reasons(records: Sequence[TrainingRecord], reasons: list[str]) -> None:
-    records = _unique_entity_records(records)
+    records = [record for record in records if not record.is_augmented]
     by_label: dict[Label, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     seller_entities: dict[str, set[str]] = defaultdict(set)
     all_entities = {record.watch_entity_id for record in records}
@@ -148,11 +148,4 @@ def _unique_content_records(records: Iterable[TrainingRecord]) -> list[TrainingR
     unique: dict[str, TrainingRecord] = {}
     for record in sorted(records, key=lambda item: item.asset_id):
         unique.setdefault(record.content_cluster_id, record)
-    return list(unique.values())
-
-
-def _unique_entity_records(records: Sequence[TrainingRecord]) -> list[TrainingRecord]:
-    unique: dict[str, TrainingRecord] = {}
-    for record in sorted(records, key=lambda item: item.asset_id):
-        unique.setdefault(record.watch_entity_id, record)
     return list(unique.values())

@@ -142,6 +142,30 @@ def test_exactly_forty_percent_source_share_is_allowed():
     assert not any("boundary.example.co.za exceeds 40%" in reason for reason in report.reasons)
 
 
+def test_dominant_source_and_seller_are_seen_across_multiple_photos_per_entity():
+    records: list[TrainingRecord] = []
+    for entity in range(1, 11):
+        dominant = replace(
+            _record(entity * 2),
+            watch_entity_id=f"watch-{entity}",
+            source_domain="dominant.co.za",
+            seller_group_id="dominant-seller",
+        )
+        alternate = replace(
+            _record(entity * 2 + 1),
+            watch_entity_id=f"watch-{entity}",
+            source_domain=f"other-{entity}.co.za",
+            seller_group_id=f"other-seller-{entity}",
+        )
+        records.extend((alternate, dominant))
+    splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
+
+    report = evaluate_readiness(records, records[0].reference_id, splits=splits)
+
+    assert any("source dominant.co.za exceeds 40%" in reason for reason in report.reasons)
+    assert any("seller dominant-seller exceeds 10%" in reason for reason in report.reasons)
+
+
 def test_grouped_splits_keep_transitive_relations_together():
     first = _record(1)
     second = replace(_record(2), watch_entity_id=first.watch_entity_id)
