@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from urllib.parse import urljoin, urlsplit
 
 import requests
@@ -45,6 +45,20 @@ class AcquisitionRefused(PermissionError):
 
 class UnsafeImage(ValueError):
     """Downloaded bytes are not a safe, complete single-frame image."""
+
+
+class PinnedHTTPClient(Protocol):
+    def get_pinned(
+        self,
+        url: str,
+        *,
+        resolved_addresses: tuple[str, ...],
+        stream: bool,
+        timeout: tuple[int, int],
+        allow_redirects: bool,
+    ) -> Any:
+        """Connect only to a supplied address while validating TLS for the URL host."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -126,7 +140,7 @@ def collect_batch(
     rights: RightsRecord | None,
     *,
     access: SourceAccessRecord | None,
-    http_client: Any,
+    http_client: PinnedHTTPClient,
     cos_client: Any,
     bucket: str,
     batch_id: str,
@@ -299,20 +313,21 @@ def sanitize_image(payload: bytes) -> tuple[bytes, str]:
 
 
 def _download_image(
-    http_client: Any,
+    http_client: PinnedHTTPClient,
     metadata: CandidateMetadata,
     allowed_hosts: tuple[str, ...],
     dns_resolver: Any,
 ) -> tuple[bytes, str]:
     url = metadata.image_url
     for redirect_count in range(MAX_REDIRECTS + 1):
-        _validate_download_target(url, allowed_hosts, dns_resolver)
+        resolved_addresses = _validate_download_target(url, allowed_hosts, dns_resolver)
         redirect_url: str | None = None
         last_status: int | None = None
         for attempt in range(1, MAX_HTTP_ATTEMPTS + 1):
             try:
-                response = http_client.get(
+                response = http_client.get_pinned(
                     url,
+                    resolved_addresses=resolved_addresses,
                     stream=True,
                     timeout=HTTP_TIMEOUT,
                     allow_redirects=False,
@@ -352,7 +367,9 @@ def _download_image(
     raise IntegrityError("image download exceeded redirect limit")
 
 
-def _validate_download_target(url: str, allowed_hosts: tuple[str, ...], resolver: Any) -> None:
+def _validate_download_target(
+    url: str, allowed_hosts: tuple[str, ...], resolver: Any
+) -> tuple[str, ...]:
     try:
         parsed = urlsplit(url)
         port = parsed.port
@@ -391,6 +408,7 @@ def _validate_download_target(url: str, allowed_hosts: tuple[str, ...], resolver
             or ip.is_unspecified
         ):
             raise AcquisitionRefused("image host resolves to a non-public address")
+    return tuple(sorted(addresses))
 
 
 def _read_image_response(response: Any) -> tuple[bytes, str]:

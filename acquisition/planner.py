@@ -17,6 +17,7 @@ class AcquisitionTarget:
     missing_entities: int
     source: str
     seller_group_id: str
+    planned_new_entities: int
 
 
 def plan_acquisition(
@@ -33,7 +34,9 @@ def plan_acquisition(
     seller = _least_used_eligible(seller_entity_counts, 10)
     if source is None or seller is None:
         return ()
-    targets: list[AcquisitionTarget] = []
+    source_capacity = _additional_capacity(source_entity_counts, source, 40)
+    seller_capacity = _additional_capacity(seller_entity_counts, seller, 10)
+    pending: list[tuple[str, str, int, int]] = []
     for cell, images, entities in report.cell_counts:
         missing_images = max(0, MIN_CELL_IMAGES - images)
         missing_entities = max(0, MIN_CELL_ENTITIES - entities)
@@ -42,6 +45,21 @@ def plan_acquisition(
         output, separator, angle = cell.partition("/")
         if not separator or not output or not angle:
             raise ValueError("readiness cell name must be output/angle")
+        pending.append((output, angle, missing_images, missing_entities))
+    ordered = sorted(
+        pending,
+        key=lambda target: (
+            -target[3] / MIN_CELL_ENTITIES,
+            -target[2] / MIN_CELL_IMAGES,
+            target[0],
+            target[1],
+        ),
+    )
+    targets: list[AcquisitionTarget] = []
+    remaining_capacity = min(source_capacity, seller_capacity)
+    for output, angle, missing_images, missing_entities in ordered:
+        planned = min(missing_entities, remaining_capacity)
+        remaining_capacity -= planned
         targets.append(
             AcquisitionTarget(
                 output,
@@ -50,19 +68,10 @@ def plan_acquisition(
                 missing_entities,
                 source,
                 seller,
+                planned,
             )
         )
-    return tuple(
-        sorted(
-            targets,
-            key=lambda target: (
-                -target.missing_entities / MIN_CELL_ENTITIES,
-                -target.missing_images / MIN_CELL_IMAGES,
-                target.output,
-                target.angle,
-            ),
-        )
-    )
+    return tuple(targets)
 
 
 def _least_used_eligible(counts: Mapping[str, int], maximum_percent: int) -> str | None:
@@ -82,3 +91,12 @@ def _least_used_eligible(counts: Mapping[str, int], maximum_percent: int) -> str
         if total == 0 or (count + 1) * 100 <= (total + 1) * maximum_percent
     ]
     return min(eligible, key=lambda name: (counts[name], name)) if eligible else None
+
+
+def _additional_capacity(counts: Mapping[str, int], name: str, maximum_percent: int) -> int:
+    total = sum(counts.values())
+    current = counts[name]
+    capacity = 0
+    while (current + capacity + 1) * 100 <= (total + capacity + 1) * maximum_percent:
+        capacity += 1
+    return capacity

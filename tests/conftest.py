@@ -302,7 +302,7 @@ def collector_fixture(allowed_policy, rights, http_client, cos):
                 _Response(body, content_type, status_code=status, length=length)
                 for status in self.statuses
             ]
-            self.http_client.get.side_effect = responses
+            self.http_client.get_pinned.side_effect = responses
             record = {
                 "source_record_id": "record-1",
                 "source_url": "https://partner.example/record-1",

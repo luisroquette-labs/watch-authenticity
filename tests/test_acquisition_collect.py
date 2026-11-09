@@ -43,7 +43,7 @@ def test_blocked_policy_makes_no_http_or_cos_call(blocked_policy, rights, http_c
             now=NOW,
         )
 
-    http_client.get.assert_not_called()
+    http_client.get_pinned.assert_not_called()
     assert cos.write_count == 0
 
 
@@ -162,7 +162,7 @@ def test_mixed_source_batch_refuses_before_any_io(
             now=NOW,
         )
 
-    http_client.get.assert_not_called()
+    http_client.get_pinned.assert_not_called()
     assert cos.write_count == 0
 
 
@@ -212,7 +212,7 @@ def test_429_retries_are_bounded_and_do_not_write(collector_fixture, cos):
     with pytest.raises(IntegrityError, match="after 3 attempts"):
         collector_fixture.collect("valid")
 
-    assert collector_fixture.http_client.get.call_count == 3
+    assert collector_fixture.http_client.get_pinned.call_count == 3
     assert cos.write_count == 0
 
 
@@ -230,7 +230,7 @@ def test_missing_rights_refuses_before_network(allowed_policy, http_client, cos)
             now=NOW,
         )
 
-    http_client.get.assert_not_called()
+    http_client.get_pinned.assert_not_called()
     assert cos.write_count == 0
 
 
@@ -251,7 +251,7 @@ def test_external_download_rejects_url_tricks_before_http(
     with pytest.raises(AcquisitionRefused):
         _collect_url(image_url, http, allowed_policy, rights, cos, _public_dns)
 
-    http.get.assert_not_called()
+    http.get_pinned.assert_not_called()
     assert cos.write_count == 0
 
 
@@ -277,14 +277,14 @@ def test_external_download_rejects_non_public_dns(
             resolver,
         )
 
-    http.get.assert_not_called()
+    http.get_pinned.assert_not_called()
 
 
 def test_redirect_is_revalidated_before_second_connection(allowed_policy, rights, cos):
     redirect = _Response(b"", "image/png", status_code=302, length=0)
     redirect.headers["Location"] = "https://evil.example/internal.png"
     http = MagicMock()
-    http.get.return_value = redirect
+    http.get_pinned.return_value = redirect
 
     with pytest.raises(AcquisitionRefused, match="host is not approved"):
         _collect_url(
@@ -296,8 +296,11 @@ def test_redirect_is_revalidated_before_second_connection(allowed_policy, rights
             _public_dns,
         )
 
-    assert http.get.call_count == 1
-    assert http.get.call_args.kwargs["allow_redirects"] is False
+    assert http.get_pinned.call_count == 1
+    assert http.get_pinned.call_args.kwargs["allow_redirects"] is False
+    assert http.get_pinned.call_args.kwargs["resolved_addresses"] == (
+        "93.184.216.34",
+    )
     assert cos.write_count == 0
 
 
@@ -494,7 +497,7 @@ def _png(color: str) -> bytes:
 
 def _collect_body(body, policy, rights, cos):
     http = MagicMock()
-    http.get.return_value = _Response(body, "image/png")
+    http.get_pinned.return_value = _Response(body, "image/png")
     return collect_batch(
         [
             {

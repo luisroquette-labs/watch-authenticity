@@ -98,11 +98,20 @@ def append_discovery_page(
     previous: DiscoveryCommit | None = None,
 ) -> DiscoveryCommit:
     """Persist a complete page before returning its resumable cursor commit."""
+    root = prefix.rstrip("/")
     if previous is not None:
         if previous.source != page.source or previous.access_record_id != page.access_record_id:
             raise DiscoveryConflict("discovery page belongs to another ledger")
         if previous.next_cursor is None or page.cursor != previous.next_cursor:
             raise DiscoveryConflict("discovery cursor fork")
+        parent = previous.previous_sha256 or "root"
+        authoritative = _read_if_present(
+            cos_client,
+            bucket,
+            f"{root}/{page.source}/children/{parent}.json",
+        )
+        if authoritative != _commit_bytes(previous):
+            raise DiscoveryConflict("previous discovery commit is not authoritative")
     elif page.cursor is not None:
         raise DiscoveryConflict("first discovery page must use an empty cursor")
 
@@ -130,7 +139,6 @@ def append_discovery_page(
     }
     page_bytes = _canonical(page_document)
     page_sha256 = hashlib.sha256(page_bytes).hexdigest()
-    root = prefix.rstrip("/")
     _put_immutable(
         cos_client,
         bucket,
@@ -156,6 +164,14 @@ def append_discovery_page(
         commit_bytes,
         commit_sha256,
     )
+    parent = previous.sha256 if previous else "root"
+    _put_immutable(
+        cos_client,
+        bucket,
+        f"{root}/{page.source}/children/{parent}.json",
+        commit_bytes,
+        commit_sha256,
+    )
     return DiscoveryCommit(
         source=page.source,
         access_record_id=page.access_record_id,
@@ -164,6 +180,19 @@ def append_discovery_page(
         next_cursor=page.next_cursor,
         record_hashes=tuple(sorted(record_hashes.items())),
         sha256=commit_sha256,
+    )
+
+
+def _commit_bytes(commit: DiscoveryCommit) -> bytes:
+    return _canonical(
+        {
+            "source": commit.source,
+            "access_record_id": commit.access_record_id,
+            "previous_sha256": commit.previous_sha256,
+            "page_sha256": commit.page_sha256,
+            "next_cursor": commit.next_cursor,
+            "record_hashes": list(commit.record_hashes),
+        }
     )
 
 

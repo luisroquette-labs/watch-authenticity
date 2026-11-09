@@ -93,3 +93,28 @@ def test_discovery_refuses_cursor_fork_and_divergent_record(cos):
             _page(NOW + timedelta(minutes=1), [changed], cursor="page-2"),
             previous=first,
         )
+
+
+def test_discovery_allows_only_one_child_for_each_committed_cursor(cos):
+    root = append_discovery_page(
+        cos,
+        "private",
+        "datasets/discovery",
+        _page(NOW, [_record("MLB-1")]),
+    )
+    append_discovery_page(
+        cos,
+        "private",
+        "datasets/discovery",
+        _page(NOW + timedelta(minutes=1), [_record("MLB-2")], cursor="page-2"),
+        previous=root,
+    )
+
+    with pytest.raises(DiscoveryConflict, match="immutable discovery object diverged"):
+        append_discovery_page(
+            cos,
+            "private",
+            "datasets/discovery",
+            _page(NOW + timedelta(minutes=1), [_record("MLB-3")], cursor="page-2"),
+            previous=root,
+        )

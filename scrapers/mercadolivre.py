@@ -71,6 +71,7 @@ def discover_mercadolivre(
             params={"q": _QUERY, "offset": offset, "limit": limit},
             headers=headers,
             timeout=30,
+            allow_redirects=False,
         ),
         "search",
     )
@@ -91,6 +92,7 @@ def discover_mercadolivre(
                         _ITEM_URL.format(item_id=result_id),
                         headers=headers,
                         timeout=30,
+                        allow_redirects=False,
                     ),
                     "item",
                 ),
