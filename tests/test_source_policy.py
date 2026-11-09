@@ -221,3 +221,21 @@ def test_active_source_access_requires_real_evidence_and_network_limits(rights):
             requests_per_minute=None,
             reason="missing proof",
         )
+
+
+@pytest.mark.parametrize("host", ["*.mlstatic.com", "localhost", "mlstatic.com:443"])
+def test_source_access_rejects_non_exact_hostnames(rights, host):
+    with pytest.raises(ValueError, match="exact lowercase hostnames"):
+        SourceAccessRecord(
+            access_record_id="access-invalid-host",
+            source="mercadolivre",
+            acquisition_method="official-api",
+            status=SourceAccessStatus.ACTIVE,
+            evidence_url="https://developers.mercadolivre.com.br/itens-e-buscas",
+            evidence_sha256="a" * 64,
+            verified_at=rights.effective_at,
+            expires_at=rights.expires_at,
+            allowed_image_hosts=(host,),
+            requests_per_minute=60,
+            reason="invalid host test",
+        )

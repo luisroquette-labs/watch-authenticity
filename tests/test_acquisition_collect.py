@@ -25,6 +25,7 @@ from acquisition.collect import (
     sanitize_image,
 )
 from acquisition.partner_import import collect_partner_batch, import_partner_export
+from acquisition.types import SourceAccessRecord, SourceAccessStatus
 from tests.conftest import NOW, _Response
 
 
@@ -34,6 +35,7 @@ def test_blocked_policy_makes_no_http_or_cos_call(blocked_policy, rights, http_c
             [],
             blocked_policy,
             rights,
+            access=None,
             http_client=http_client,
             cos_client=cos,
             bucket="private",
@@ -152,6 +154,7 @@ def test_mixed_source_batch_refuses_before_any_io(
             [valid, wrong_source],
             allowed_policy,
             rights,
+            access=_access(rights),
             http_client=http_client,
             cos_client=cos,
             bucket="private",
@@ -219,6 +222,7 @@ def test_missing_rights_refuses_before_network(allowed_policy, http_client, cos)
             [],
             allowed_policy,
             None,
+            access=None,
             http_client=http_client,
             cos_client=cos,
             bucket="private",
@@ -227,6 +231,73 @@ def test_missing_rights_refuses_before_network(allowed_policy, http_client, cos)
         )
 
     http_client.get.assert_not_called()
+    assert cos.write_count == 0
+
+
+@pytest.mark.parametrize(
+    "image_url",
+    [
+        "http://partner.example/image.png",
+        "https://user@partner.example/image.png",
+        "https://partner.example:8443/image.png",
+        "https://partner.example.evil.test/image.png",
+    ],
+)
+def test_external_download_rejects_url_tricks_before_http(
+    image_url, allowed_policy, rights, cos
+):
+    http = MagicMock()
+
+    with pytest.raises(AcquisitionRefused):
+        _collect_url(image_url, http, allowed_policy, rights, cos, _public_dns)
+
+    http.get.assert_not_called()
+    assert cos.write_count == 0
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["127.0.0.1", "10.0.0.1", "169.254.169.254", "224.0.0.1", "0.0.0.0"],
+)
+def test_external_download_rejects_non_public_dns(
+    address, allowed_policy, rights, cos
+):
+    http = MagicMock()
+
+    def resolver(*_args, **_kwargs):
+        return [(2, 1, 6, "", (address, 443))]
+
+    with pytest.raises(AcquisitionRefused, match="non-public"):
+        _collect_url(
+            "https://partner.example/image.png",
+            http,
+            allowed_policy,
+            rights,
+            cos,
+            resolver,
+        )
+
+    http.get.assert_not_called()
+
+
+def test_redirect_is_revalidated_before_second_connection(allowed_policy, rights, cos):
+    redirect = _Response(b"", "image/png", status_code=302, length=0)
+    redirect.headers["Location"] = "https://evil.example/internal.png"
+    http = MagicMock()
+    http.get.return_value = redirect
+
+    with pytest.raises(AcquisitionRefused, match="host is not approved"):
+        _collect_url(
+            "https://partner.example/image.png",
+            http,
+            allowed_policy,
+            rights,
+            cos,
+            _public_dns,
+        )
+
+    assert http.get.call_count == 1
+    assert http.get.call_args.kwargs["allow_redirects"] is False
     assert cos.write_count == 0
 
 
@@ -435,12 +506,56 @@ def _collect_body(body, policy, rights, cos):
         ],
         policy,
         rights,
+        access=_access(rights),
         http_client=http,
         cos_client=cos,
         bucket="private",
         batch_id="b1",
         now=NOW,
+        dns_resolver=_public_dns,
     )
+
+
+def _collect_url(image_url, http, policy, rights, cos, resolver):
+    return collect_batch(
+        [
+            {
+                "source_record_id": "record-1",
+                "source_url": "https://partner.example/record-1",
+                "image_url": image_url,
+                "declared_reference": "rolex-submariner-126610ln",
+            }
+        ],
+        policy,
+        rights,
+        access=_access(rights),
+        http_client=http,
+        cos_client=cos,
+        bucket="private",
+        batch_id="b1",
+        now=NOW,
+        dns_resolver=resolver,
+    )
+
+
+def _access(rights) -> SourceAccessRecord:
+    return SourceAccessRecord(
+        access_record_id="access-partner-test",
+        source="partner-upload",
+        acquisition_method="partner-export",
+        status=SourceAccessStatus.ACTIVE,
+        evidence_url="https://partner.example/access-evidence",
+        evidence_sha256="9" * 64,
+        verified_at=rights.effective_at,
+        expires_at=rights.expires_at,
+        allowed_image_hosts=("partner.example",),
+        requests_per_minute=60,
+        reason="test fixture",
+    )
+
+
+def _public_dns(*_args, **_kwargs):
+    return [(2, 1, 6, "", ("93.184.216.34", 443))]
 
 
 def _receipt_keys(cos, candidate_id: str) -> list[str]:

@@ -16,6 +16,10 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _PHASH = re.compile(r"[0-9a-f]+")
 _DISPOSITIONS = {"retain", "quarantine", "delete"}
 _DISPOSITION_STATES = {"pending", "completed", "blocked"}
+_HOSTNAME = re.compile(
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+)
 
 
 def _nonempty(value: str, field: str) -> None:
@@ -171,7 +175,12 @@ class SourceAccessRecord:
             raise ValueError("source access expiry must follow verification")
         _unique_nonempty(self.allowed_image_hosts, "allowed_image_hosts", allow_empty=True)
         for host in self.allowed_image_hosts:
-            if host != host.lower() or urlsplit(f"//{host}").hostname != host or ":" in host:
+            if (
+                host != host.lower()
+                or _HOSTNAME.fullmatch(host) is None
+                or urlsplit(f"//{host}").hostname != host
+                or ":" in host
+            ):
                 raise ValueError("allowed_image_hosts must contain exact lowercase hostnames")
         if self.requests_per_minute is not None and (
             isinstance(self.requests_per_minute, bool)

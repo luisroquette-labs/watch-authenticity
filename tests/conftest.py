@@ -26,6 +26,8 @@ from acquisition.types import (
     EvidenceTier,
     RightsRecord,
     RightsStatus,
+    SourceAccessRecord,
+    SourceAccessStatus,
     TrainingRecord,
 )
 from core.types import Label
@@ -312,11 +314,27 @@ def collector_fixture(allowed_policy, rights, http_client, cos):
                 [record],
                 allowed_policy,
                 rights,
+                access=SourceAccessRecord(
+                    access_record_id="access-partner-test",
+                    source="partner-upload",
+                    acquisition_method="partner-export",
+                    status=SourceAccessStatus.ACTIVE,
+                    evidence_url="https://partner.example/access-evidence",
+                    evidence_sha256="9" * 64,
+                    verified_at=rights.effective_at,
+                    expires_at=rights.expires_at,
+                    allowed_image_hosts=("partner.example",),
+                    requests_per_minute=60,
+                    reason="test fixture",
+                ),
                 http_client=self.http_client,
                 cos_client=cos,
                 bucket="private",
                 batch_id="b1",
                 now=NOW,
+                dns_resolver=lambda *_args, **_kwargs: [
+                    (2, 1, 6, "", ("93.184.216.34", 443))
+                ],
             )
 
     return CollectorFixture()
