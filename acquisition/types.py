@@ -190,6 +190,7 @@ class CandidateRecord:
     factory: str | None
     price_usd: Decimal | None
     raw_sha256: str
+    derivative_sha256: str
     phash: str
     rights_record_id: str
 
@@ -220,6 +221,7 @@ class CandidateRecord:
         ):
             raise ValueError("price_usd must be a finite non-negative Decimal")
         _sha256(self.raw_sha256, "raw_sha256")
+        _sha256(self.derivative_sha256, "derivative_sha256")
         if not isinstance(self.phash, str) or _PHASH.fullmatch(self.phash) is None:
             raise ValueError("phash must be lowercase hexadecimal")
 
@@ -235,6 +237,10 @@ class ReviewDecision:
     supporting_artifact_hashes: tuple[str, ...]
     reviewed_at: datetime
     decision_sha256: str
+    candidate_sha256: str
+    proposed_reference_id: str
+    reviewer_registry_sha256: str
+    adjudicator: bool
 
     def __post_init__(self) -> None:
         _nonempty(self.candidate_id, "candidate_id")
@@ -249,12 +255,18 @@ class ReviewDecision:
         _hashes(self.supporting_artifact_hashes, "supporting_artifact_hashes")
         _aware(self.reviewed_at, "reviewed_at")
         _sha256(self.decision_sha256, "decision_sha256")
+        _sha256(self.candidate_sha256, "candidate_sha256")
+        _nonempty(self.proposed_reference_id, "proposed_reference_id")
+        _sha256(self.reviewer_registry_sha256, "reviewer_registry_sha256")
+        if not isinstance(self.adjudicator, bool):
+            raise ValueError("adjudicator must be bool")
 
 
 @dataclass(frozen=True)
 class EvidenceRecord:
     evidence_record_id: str
     candidate_id: str
+    candidate_sha256: str
     accepted_label: Label | None
     accepted_grade: int | None
     reference_id: str
@@ -263,11 +275,13 @@ class EvidenceRecord:
     reviewer_ids: tuple[str, ...]
     review_timestamps: tuple[datetime, ...]
     supporting_artifact_hashes: tuple[str, ...]
+    review_decision_sha256s: tuple[str, ...]
     decision_sha256: str
 
     def __post_init__(self) -> None:
         _nonempty(self.evidence_record_id, "evidence_record_id")
         _nonempty(self.candidate_id, "candidate_id")
+        _sha256(self.candidate_sha256, "candidate_sha256")
         _nonempty(self.reference_id, "reference_id")
         if not isinstance(self.tier, EvidenceTier):
             raise ValueError("tier must be EvidenceTier")
@@ -286,9 +300,12 @@ class EvidenceRecord:
         _unique_nonempty(self.reviewer_ids, "reviewer_ids")
         if len(self.review_timestamps) != len(self.reviewer_ids):
             raise ValueError("review_timestamps must align with reviewer_ids")
+        if len(self.review_decision_sha256s) != len(self.reviewer_ids):
+            raise ValueError("review decision hashes must align with reviewer_ids")
         for timestamp in self.review_timestamps:
             _aware(timestamp, "review_timestamps")
         _hashes(self.supporting_artifact_hashes, "supporting_artifact_hashes")
+        _hashes(self.review_decision_sha256s, "review_decision_sha256s")
         _sha256(self.decision_sha256, "decision_sha256")
 
 

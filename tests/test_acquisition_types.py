@@ -124,6 +124,10 @@ def test_policy_receipt_freeze_and_reports_are_frozen_real_contracts(
         supporting_artifact_hashes=("2" * 64,),
         reviewed_at=valid_contract_bundle[2].review_timestamps[0],
         decision_sha256="3" * 64,
+        candidate_sha256="4" * 64,
+        proposed_reference_id="rolex-submariner-126610ln",
+        reviewer_registry_sha256="5" * 64,
+        adjudicator=False,
     )
     receipt = BatchReceipt(
         "batch-1", "4" * 64, "5" * 64, "6" * 64, ("candidate-1",), (),

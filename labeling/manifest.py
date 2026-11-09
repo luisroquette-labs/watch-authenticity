@@ -11,13 +11,29 @@ SKILL.md:135).
 
 from __future__ import annotations
 
+import hashlib
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from core.rules import grade_map
+from acquisition.types import (
+    Angle,
+    CandidateRecord,
+    EvidenceRecord,
+    ReviewDecision,
+    RightsRecord,
+    RightsStatus,
+    TrainingRecord,
+    validate_contract_bundle,
+)
 from core.types import Label, ManifestRecord
+from dataset.entities import GroupingDecision
+from infra.ibm_types import ObjectRef
+from labeling.adjudicate import NotTrainingEligible, adjudicate, verify_evidence_record
+from labeling.review import ReviewerRecord, candidate_digest
 
 # Each dataset version is its own file, not a flag on a row — this is what
 # makes "append a version" structurally unable to mutate an earlier version.
@@ -36,23 +52,18 @@ def build_fake_row(
     url: str,
     phash: str,
     scraped_at: date,
-    factory: str | None = None,
-    price: float | None = None,
+    accepted_grade: int,
     blur_score: float | None = None,
 ) -> ManifestRecord:
-    """Builds a FAKE manifest row, assigning its grade via `core.grade_map`.
-
-    This is the only place a fake photo's grade is decided (CK-22): callers
-    supply the raw `factory`/`price` signal and get back a complete,
-    already-graded `ManifestRecord` — no stage downstream re-implements
-    the factory/price -> grade mapping itself.
-    """
+    """Legacy row builder requiring an already adjudicated fake grade."""
+    if isinstance(accepted_grade, bool) or accepted_grade not in {1, 2, 3, 4}:
+        raise ValueError("accepted_grade must be between 1 and 4")
     return ManifestRecord(
         path=path,
         source=source,
         url=url,
         label=Label.FAKE,
-        grade=grade_map(factory=factory, price=price),
+        grade=accepted_grade,
         phash=phash,
         scraped_at=scraped_at,
         blur_score=blur_score,
@@ -76,6 +87,86 @@ def append(record: ManifestRecord, *, manifest_dir: Path, version: int) -> Path:
 # The Expected Output names both "write_row" and "append" for this
 # operation; `append` is the one implementation, `write_row` its alias.
 write_row = append
+
+
+def build_training_record(
+    candidate: CandidateRecord,
+    evidence: EvidenceRecord,
+    grouping: GroupingDecision,
+    rights: RightsRecord,
+    *,
+    object_ref: ObjectRef,
+    angle: Angle,
+    capture_style: str,
+    now: datetime,
+    reviews: Sequence[ReviewDecision],
+    reviewer_registry: Mapping[str, ReviewerRecord],
+    gold_candidate_ids: frozenset[str] = frozenset(),
+) -> TrainingRecord:
+    """Build a training row only from accepted evidence, never price guesses."""
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
+    if (
+        rights.status is not RightsStatus.ACTIVE
+        or "train" not in rights.allowed_purposes
+        or rights.rights_record_id != candidate.rights_record_id
+        or not rights.effective_at <= now < rights.expires_at
+    ):
+        raise NotTrainingEligible("active training rights are required")
+    verify_evidence_record(evidence)
+    if evidence.candidate_sha256 != candidate_digest(candidate):
+        raise NotTrainingEligible("reviewed candidate content differs")
+    expected_evidence = adjudicate(
+        candidate,
+        reviews,
+        reviewer_registry,
+        gold_candidate_ids=gold_candidate_ids,
+    )
+    if expected_evidence != evidence:
+        raise NotTrainingEligible("evidence differs from immutable review decisions")
+    if grouping.quarantined or not evidence.tier.training_eligible:
+        raise NotTrainingEligible("candidate evidence is not training eligible")
+    if (
+        evidence.candidate_id != candidate.candidate_id
+        or grouping.candidate_id != candidate.candidate_id
+        or evidence.accepted_label is None
+    ):
+        raise NotTrainingEligible("accepted evidence lineage is required")
+    if (
+        object_ref.sha256 != candidate.derivative_sha256
+        or object_ref.key
+        != f"datasets/derivatives/{candidate.derivative_sha256}"
+    ):
+        raise NotTrainingEligible("verified candidate derivative is required")
+    domain = urlsplit(candidate.source_url).hostname
+    if domain is None:
+        raise ValueError("candidate source domain is missing")
+    asset_digest = hashlib.sha256(
+        f"{candidate.candidate_id}\0{object_ref.sha256}\0{angle.value}".encode()
+    ).hexdigest()
+    record = TrainingRecord(
+        asset_id=f"asset-{asset_digest[:24]}",
+        candidate_id=candidate.candidate_id,
+        object_ref=object_ref,
+        reference_id=evidence.reference_id,
+        watch_entity_id=grouping.watch_entity_id,
+        content_cluster_id=grouping.content_cluster_id,
+        seller_group_id=grouping.seller_group_id,
+        acquisition_batch_id=candidate.acquisition_batch_id,
+        angle=angle,
+        source_domain=domain.rstrip(".").lower(),
+        capture_style=capture_style,
+        label=evidence.accepted_label,
+        grade=evidence.accepted_grade,
+        factory=candidate.factory if evidence.accepted_label is Label.FAKE else None,
+        evidence_tier=evidence.tier,
+        evidence_record_id=evidence.evidence_record_id,
+        rights_record_id=rights.rights_record_id,
+        image_sha256=object_ref.sha256,
+        phash=candidate.phash,
+    )
+    validate_contract_bundle(candidate, rights, evidence, record)
+    return record
 
 
 def read_manifest(manifest_dir: Path, version: int) -> list[ManifestRecord]:

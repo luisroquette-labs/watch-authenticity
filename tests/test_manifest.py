@@ -1,17 +1,14 @@
 """Tests for the versioned manifest I/O in `labeling/manifest.py`.
 
-Covers this step's Success Criteria: complete non-empty fields on a written
-row (CK-10), grade assignment routed through `core.grade_map` only (CK-22),
-and versioning that never mutates a prior version's file in place.
+Covers complete non-empty fields, evidence-supplied grades and versioning
+that never mutates a prior version's file in place.
 """
 
 from datetime import date
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from core.rules import grade_map
 from core.types import Label, ManifestRecord
 from labeling.manifest import append, build_fake_row, read_manifest, write_row
 
@@ -25,7 +22,7 @@ def fixture_photo() -> dict:
         "url": "https://reptime.example/thread/1234",
         "phash": "a1b2c3d4e5f6",
         "scraped_at": date(2026, 11, 3),
-        "factory": "vsf",
+        "accepted_grade": 4,
     }
 
 
@@ -51,28 +48,18 @@ def test_append_then_read_round_trips_every_field(tmp_path: Path, fixture_photo:
     assert rows == [row]
 
 
-# --- Grade assignment routes through core.grade_map only (CK-22) ----------
+# --- Grade assignment comes only from accepted evidence --------------------
 
 
-def test_build_fake_row_grade_matches_core_grade_map_for_the_same_factory(
-    fixture_photo: dict,
-):
+def test_build_fake_row_uses_the_already_accepted_grade(fixture_photo: dict):
     row = build_fake_row(**fixture_photo)
 
-    assert row.grade == grade_map(factory=fixture_photo["factory"])
+    assert row.grade == fixture_photo["accepted_grade"]
 
 
-def test_build_fake_row_delegates_grade_assignment_to_core_grade_map(
-    fixture_photo: dict,
-):
-    # Patching `core.grade_map` (the single permitted call site, per CK-22)
-    # and asserting it fires proves `build_fake_row` has no inline fallback
-    # grade logic of its own.
-    with patch("labeling.manifest.grade_map", return_value=3) as mock_grade_map:
-        row = build_fake_row(**fixture_photo)
-
-    mock_grade_map.assert_called_once_with(factory=fixture_photo["factory"], price=None)
-    assert row.grade == 3
+def test_build_fake_row_rejects_unknown_grade(fixture_photo: dict):
+    with pytest.raises(ValueError):
+        build_fake_row(**{**fixture_photo, "accepted_grade": 0})
 
 
 def test_write_row_is_the_same_implementation_as_append():

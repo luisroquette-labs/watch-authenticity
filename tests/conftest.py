@@ -264,6 +264,7 @@ def candidate() -> CandidateRecord:
         factory=None,
         price_usd=Decimal("12000.00"),
         raw_sha256="a" * 64,
+        derivative_sha256="b" * 64,
         phash="0123456789abcdef",
         rights_record_id="rights-1",
     )
@@ -397,6 +398,7 @@ def valid_contract_bundle(candidate, rights, object_ref):
     evidence = EvidenceRecord(
         evidence_record_id="evidence-1",
         candidate_id=candidate.candidate_id,
+        candidate_sha256="0" * 64,
         accepted_label=Label.GENUINE,
         accepted_grade=None,
         reference_id="rolex-submariner-126610ln",
@@ -405,6 +407,7 @@ def valid_contract_bundle(candidate, rights, object_ref):
         reviewer_ids=("reviewer-1",),
         review_timestamps=(NOW,),
         supporting_artifact_hashes=("e" * 64,),
+        review_decision_sha256s=("f" * 64,),
         decision_sha256="f" * 64,
     )
     training = TrainingRecord(
