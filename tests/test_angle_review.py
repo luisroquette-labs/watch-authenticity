@@ -52,3 +52,10 @@ def test_human_review_binds_reviewer_and_image_hash():
     assert review.angle is None
     assert review.review_sha256 != changed.review_sha256
     assert review.reviewer_id == "reviewer-1"
+
+
+def test_duplicate_review_does_not_inflate_bootstrap_count():
+    one_per_angle = tuple(_reviews(1))
+    repeated = tuple(review for review in one_per_angle for _ in range(100))
+
+    assert suggest_angle("f" * 64, _scores(), repeated).angle is None
