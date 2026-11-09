@@ -1,8 +1,8 @@
 """Tests for `dataset/dedup.py`.
 
 Covers this step's Success Criteria and the CK-11 Test Cases to Cover:
-`dedup_filter` drops a near-duplicate, `studio_photo_filter` flags a
-catalog photo, and `hash_distance` is symmetric.
+`dedup_filter` drops a near-duplicate, capture style is classified without
+deleting confirmed evaluation photos, and `hash_distance` is symmetric.
 """
 
 import io
@@ -12,7 +12,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from PIL import Image, ImageDraw
 
-from dataset.dedup import dedup_filter, hash_distance, studio_photo_filter
+from dataset.dedup import classify_capture_style, dedup_filter, hash_distance, route_capture
 
 
 def _textured_photo_fixture(seed: int, size: int = 128) -> Image.Image:
@@ -72,12 +72,35 @@ def test_dedup_filter_keeps_two_genuinely_different_photos():
     assert deduped == [photo_a, photo_b]
 
 
-def test_studio_photo_filter_flags_white_background_catalog_photo():
-    assert studio_photo_filter(_studio_catalog_fixture()) is True
+def test_studio_photo_is_classified_without_using_source_domain():
+    image = _studio_catalog_fixture()
+
+    assert classify_capture_style(image, {"source_domain": "replica.example"}) == "studio"
+    assert classify_capture_style(image, {"source_domain": "dealer.example"}) == "studio"
 
 
-def test_studio_photo_filter_does_not_flag_a_textured_photo():
-    assert studio_photo_filter(_textured_photo_fixture(seed=1)) is False
+def test_textured_photo_is_classified_as_casual():
+    assert classify_capture_style(_textured_photo_fixture(seed=1), {}) == "casual"
+
+
+def test_confirmed_rights_cleared_studio_replica_is_retained_for_cross_source_evaluation():
+    style = classify_capture_style(_studio_catalog_fixture(), {})
+
+    assert route_capture(
+        style,
+        {
+            "rights_cleared": True,
+            "evidence_confirmed": True,
+            "accepted_label": "fake",
+            "repeated_catalog": True,
+        },
+    ) == "cross_source_evaluation"
+
+
+def test_repeated_catalog_photo_with_uncertain_provenance_is_excluded():
+    style = classify_capture_style(_studio_catalog_fixture(), {})
+
+    assert route_capture(style, {"repeated_catalog": True}) == "exclude"
 
 
 @given(st.integers(min_value=0, max_value=2**32 - 1), st.integers(min_value=0, max_value=2**32 - 1))

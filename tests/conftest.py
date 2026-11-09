@@ -270,6 +270,33 @@ def candidate() -> CandidateRecord:
 
 
 @pytest.fixture
+def grouped_records(candidate: CandidateRecord) -> list[CandidateRecord]:
+    return [
+        replace(
+            candidate,
+            candidate_id="front",
+            source_record_id="listing-front",
+            raw_sha256="1" * 64,
+            phash="0123456789abcdef",
+        ),
+        replace(
+            candidate,
+            candidate_id="repost",
+            source_record_id="listing-repost",
+            raw_sha256="2" * 64,
+            phash="0123456789abcdee",
+        ),
+        replace(
+            candidate,
+            candidate_id="clasp",
+            source_record_id="listing-clasp",
+            raw_sha256="3" * 64,
+            phash="fedcba9876543210",
+        ),
+    ]
+
+
+@pytest.fixture
 def object_ref() -> ObjectRef:
     return ObjectRef(
         bucket="watch-auth-private",
