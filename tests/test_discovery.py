@@ -20,6 +20,7 @@ def _record(record_id: str, *, image: str | None = None) -> DiscoveryRecord:
         source_url=f"https://produto.mercadolivre.com.br/{record_id}",
         seller_group_id="seller-1",
         declared_reference="rolex-submariner-126610ln",
+        image_ids=(f"picture-{record_id}",),
         image_urls=(image or f"https://http2.mlstatic.com/{record_id}.jpg",),
     )
 

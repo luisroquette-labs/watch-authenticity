@@ -23,6 +23,7 @@ class DiscoveryRecord:
     source_url: str
     seller_group_id: str
     declared_reference: str
+    image_ids: tuple[str, ...]
     image_urls: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -35,6 +36,14 @@ class DiscoveryRecord:
         ):
             _single_line(getattr(self, field), field)
         _https_url(self.source_url, "source_url")
+        if not isinstance(self.image_ids, tuple) or not self.image_ids:
+            raise ValueError("image_ids must be a non-empty tuple")
+        if len(set(self.image_ids)) != len(self.image_ids):
+            raise ValueError("image_ids must not contain duplicates")
+        for image_id in self.image_ids:
+            _single_line(image_id, "image_id")
+        if len(self.image_ids) != len(self.image_urls):
+            raise ValueError("image_ids must align with image_urls")
         if not isinstance(self.image_urls, tuple) or not self.image_urls:
             raise ValueError("image_urls must be a non-empty tuple")
         if len(set(self.image_urls)) != len(self.image_urls):
@@ -166,7 +175,8 @@ def _record_document(record: DiscoveryRecord) -> dict[str, object]:
         "source_url": record.source_url,
         "seller_group_id": record.seller_group_id,
         "declared_reference": record.declared_reference,
-        "image_urls": sorted(record.image_urls),
+        "image_ids": list(record.image_ids),
+        "image_urls": list(record.image_urls),
     }
 
 
