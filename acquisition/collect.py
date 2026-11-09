@@ -88,6 +88,9 @@ def normalize_candidate_metadata(source: str, record: Mapping[str, object]) -> C
         return value.strip()
 
     price = record.get("price_usd", record.get("price"))
+    record_source = record.get("source", source)
+    if not isinstance(record_source, str) or not record_source.strip():
+        raise ValueError("source must be a non-empty string")
     expected = record.get("expected_sha256")
     if expected is not None and (
         not isinstance(expected, str)
@@ -96,7 +99,7 @@ def normalize_candidate_metadata(source: str, record: Mapping[str, object]) -> C
     ):
         raise ValueError("expected_sha256 must be a lowercase SHA-256")
     return CandidateMetadata(
-        source=source.strip().lower(),
+        source=record_source.strip().lower(),
         source_record_id=required("source_record_id"),
         source_url=required("source_url"),
         image_url=required("image_url"),
@@ -127,16 +130,19 @@ def collect_batch(
     assert rights is not None  # authorize_candidate proved this before any I/O
     _safe_id(batch_id, "batch_id")
 
+    normalized_records = tuple(
+        record
+        if isinstance(record, CandidateMetadata)
+        else normalize_candidate_metadata(policy.source, record)
+        for record in records
+    )
+    authorized_source = policy.source.strip().lower()
+    if any(record.source != authorized_source for record in normalized_records):
+        raise AcquisitionRefused("record source differs from authorized policy")
+
     accepted: list[str] = []
     receipt_hashes: list[str] = []
-    for record in records:
-        metadata = (
-            record
-            if isinstance(record, CandidateMetadata)
-            else normalize_candidate_metadata(policy.source, record)
-        )
-        if metadata.source != policy.source.strip().lower():
-            raise AcquisitionRefused("record source differs from authorized policy")
+    for metadata in normalized_records:
         payload, raw_sha256 = _download_image(http_client, metadata)
         if metadata.expected_sha256 is not None and raw_sha256 != metadata.expected_sha256:
             raise IntegrityError("downloaded image hash does not match expected_sha256")
@@ -201,8 +207,6 @@ def sanitize_image(payload: bytes) -> tuple[bytes, str]:
 
     image_format = _magic_format(payload)
     _require_exact_container(payload, image_format)
-    original_limit = Image.MAX_IMAGE_PIXELS
-    Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -228,8 +232,6 @@ def sanitize_image(payload: bytes) -> tuple[bytes, str]:
         if isinstance(exc, UnsafeImage):
             raise
         raise UnsafeImage("image decode or verification failed") from exc
-    finally:
-        Image.MAX_IMAGE_PIXELS = original_limit
 
 
 def _download_image(http_client: Any, metadata: CandidateMetadata) -> tuple[bytes, str]:
@@ -448,13 +450,21 @@ def _read_receipt(cos_client: Any, bucket: str, key: str) -> bytes | None:
 
 def _write_receipt(cos_client: Any, bucket: str, key: str, body: bytes) -> None:
     digest = hashlib.sha256(body).hexdigest()
-    cos_client.put_object(
-        Bucket=bucket,
-        Key=key,
-        Body=body,
-        Metadata={"sha256": digest, "length": str(len(body))},
-        ContentType="application/json",
-    )
+    try:
+        cos_client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=body,
+            Metadata={"sha256": digest, "length": str(len(body))},
+            ContentType="application/json",
+            IfNoneMatch="*",
+        )
+    except Exception as exc:
+        if not _is_precondition_conflict(exc):
+            raise
+        if _read_receipt(cos_client, bucket, key) != body:
+            raise IntegrityError(f"receipt collision: {key}") from exc
+        return
     if _read_receipt(cos_client, bucket, key) != body:
         raise IntegrityError(f"receipt collision: {key}")
 
@@ -463,6 +473,20 @@ def _is_not_found(exc: Exception) -> bool:
     response = getattr(exc, "response", None)
     error = response.get("Error") if isinstance(response, dict) else None
     return isinstance(error, dict) and str(error.get("Code")) in {"404", "NoSuchKey", "NotFound"}
+
+
+def _is_precondition_conflict(exc: Exception) -> bool:
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return False
+    metadata = response.get("ResponseMetadata")
+    error = response.get("Error")
+    return (
+        isinstance(metadata, dict)
+        and metadata.get("HTTPStatusCode") == 412
+        or isinstance(error, dict)
+        and str(error.get("Code")) in {"412", "PreconditionFailed"}
+    )
 
 
 def _optional_string(value: object) -> str | None:

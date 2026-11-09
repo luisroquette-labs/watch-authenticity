@@ -63,11 +63,20 @@ class _NotFound(Exception):
         self.response = {"Error": {"Code": "NoSuchKey"}}
 
 
+class _PreconditionFailed(Exception):
+    def __init__(self):
+        self.response = {
+            "Error": {"Code": "PreconditionFailed"},
+            "ResponseMetadata": {"HTTPStatusCode": 412},
+        }
+
+
 class _CollectorCOS:
     def __init__(self):
         self.bodies: dict[str, bytes] = {}
         self.metadata: dict[str, dict[str, str]] = {}
         self.write_count = 0
+        self.race_receipt_body: bytes | None = None
         self._watch_auth_bucket = "private"
         self._watch_auth_prefix = "datasets"
         self._watch_auth_configuration_verified = True
@@ -88,8 +97,27 @@ class _CollectorCOS:
             raise _NotFound
         return {"Body": io.BytesIO(self.bodies[Key])}
 
-    def put_object(self, *, Bucket: str, Key: str, Body: bytes, Metadata=None, **_kwargs):
+    def put_object(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        Body: bytes,
+        Metadata=None,
+        IfNoneMatch: str | None = None,
+        **_kwargs,
+    ):
         del Bucket
+        if IfNoneMatch == "*" and (Key in self.bodies or self.race_receipt_body is not None):
+            if self.race_receipt_body is not None:
+                raced = self.race_receipt_body
+                self.race_receipt_body = None
+                self.bodies[Key] = raced
+                self.metadata[Key] = {
+                    "sha256": hashlib.sha256(raced).hexdigest(),
+                    "length": str(len(raced)),
+                }
+            raise _PreconditionFailed
         self.bodies[Key] = Body
         self.metadata[Key] = Metadata or {}
         self.write_count += 1
@@ -131,6 +159,21 @@ def _image_bytes(fmt: str = "PNG", *, metadata: bool = False, frames: int = 1) -
         append_images=images[1:],
         pnginfo=pnginfo,
     )
+    return output.getvalue()
+
+
+@pytest.fixture
+def jpeg_with_gps() -> bytes:
+    exif = Image.Exif()
+    exif[0x010E] = "Private contributor"
+    exif[0x8825] = {
+        1: "N",
+        2: (33.9249, 0.0, 0.0),
+        3: "E",
+        4: (18.4241, 0.0, 0.0),
+    }
+    output = io.BytesIO()
+    Image.new("RGB", (8, 8), "red").save(output, format="JPEG", exif=exif)
     return output.getvalue()
 
 

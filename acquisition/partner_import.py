@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
 
-from acquisition.collect import sanitize_image
+from acquisition.collect import MAX_IMAGE_BYTES, sanitize_image
 from acquisition.types import CandidateRecord, RightsRecord
 from core.rules import propose_source_label
 
@@ -39,7 +41,7 @@ def import_partner_export(path: Path, declaration: RightsRecord) -> list[Candida
     candidates: list[CandidateRecord] = []
     for row in rows:
         image_path = declared[str(row["file"])]
-        payload = image_path.read_bytes()
+        payload = _read_regular_file(image_path)
         _, phash = sanitize_image(payload)
         listing_text = row.get("listing_text")
         if listing_text is not None and not isinstance(listing_text, str):
@@ -101,6 +103,32 @@ def _safe_file(root: Path, relative: str) -> Path:
     except ValueError as exc:
         raise ValueError("file must be a safe relative path") from exc
     return candidate
+
+
+def _read_regular_file(path: Path) -> bytes:
+    try:
+        before = path.lstat()
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError("declared partner file must remain a non-symlink regular file") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or not stat.S_ISREG(opened.st_mode)
+            or (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)
+        ):
+            raise ValueError("declared partner file must remain a non-symlink regular file")
+        with os.fdopen(descriptor, "rb", closefd=True) as source:
+            descriptor = -1
+            payload = source.read(MAX_IMAGE_BYTES + 1)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if len(payload) > MAX_IMAGE_BYTES:
+        raise ValueError("declared partner file exceeds 25 MiB")
+    return payload
 
 
 def _required(row: dict[str, object], field: str) -> str:
