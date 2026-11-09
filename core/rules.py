@@ -10,6 +10,8 @@ module exists at all.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections.abc import Mapping
 
 from core.types import Grade, Label, ModelClass
@@ -37,6 +39,10 @@ _GENUINE_FORUM_SOURCES = frozenset({"chrono24", "watchuseek"})
 _REPLICA_SOURCES = frozenset({"reptime", "chinese_replica"})
 
 _REDDIT_SOURCES = frozenset({"reddit"})
+
+_KNOWN_CANDIDATE_SOURCES = (
+    _MARKETPLACE_SOURCES | _GENUINE_FORUM_SOURCES | _REPLICA_SOURCES | _REDDIT_SOURCES
+)
 
 # Named superclone factories (Requirements item 3: "Clean, VSF — clone até
 # do movimento"). ponytail: extend this set as new factories surface; any
@@ -144,6 +150,21 @@ def source_label_rule(
         return Label.FAKE
 
     return Label.EXCLUDED  # unrecognized source — never fabricate a label
+
+
+def propose_source_label(
+    source: str | None = None,
+    *,
+    listing_text: str | None = None,
+) -> Label | None:
+    """Propose FAKE only when a known source explicitly declares a replica."""
+    normalized_source = (source or "").strip().lower()
+    if normalized_source not in _KNOWN_CANDIDATE_SOURCES or not listing_text:
+        return None
+    normalized_text = unicodedata.normalize("NFKD", listing_text).encode("ascii", "ignore").decode()
+    if re.search(r"\b(replica|inspirado)\b", normalized_text, flags=re.IGNORECASE):
+        return Label.FAKE
+    return None
 
 
 def aggregate_angles(scores_per_angle: dict[str, float]) -> dict[str, float]:

@@ -20,6 +20,7 @@ from core.rules import (
     goldset_regression_gate,
     grade_map,
     model_class_for_label,
+    propose_source_label,
     publish_gate,
     source_label_rule,
 )
@@ -141,6 +142,27 @@ def test_source_label_rule_treats_undeclared_marketplace_ad_as_fake():
 
 def test_source_label_rule_excludes_unrecognized_source():
     assert source_label_rule(source="unknown_site") == Label.EXCLUDED
+
+
+# --- Candidate-only source proposal ----------------------------------------
+
+
+@pytest.mark.parametrize("claim", ["réplica", "REPLICA", "modelo inspirado"])
+def test_propose_source_label_only_proposes_explicit_fake_claims(claim):
+    assert propose_source_label(source="olx", listing_text=claim) is Label.FAKE
+
+
+@pytest.mark.parametrize(
+    ("source", "claim"),
+    [
+        ("olx", "original com nota"),
+        ("watchuseek", "my new Submariner"),
+        ("unknown_site", "réplica"),
+        (None, "réplica"),
+    ],
+)
+def test_propose_source_label_never_uses_source_or_original_claim_as_truth(source, claim):
+    assert propose_source_label(source=source, listing_text=claim) is None
 
 
 # --- CK-19: aggregate_angles ------------------------------------------------

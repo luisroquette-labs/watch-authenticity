@@ -1,0 +1,92 @@
+[
+  {
+    "policy_id": "partner-upload-v1",
+    "source": "partner-upload",
+    "allowed_methods": ["partner-export"],
+    "may_download": true,
+    "may_train": true,
+    "required_rights_purposes": ["download", "train"],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  {
+    "policy_id": "owner-authorized-upload-v1",
+    "source": "owner-authorized-upload",
+    "allowed_methods": ["owner-upload"],
+    "may_download": true,
+    "may_train": true,
+    "required_rights_purposes": ["download", "train"],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  {
+    "policy_id": "mercadolivre-official-api-v1",
+    "source": "mercadolivre",
+    "allowed_methods": ["official-api"],
+    "may_download": true,
+    "may_train": true,
+    "required_rights_purposes": ["download", "train"],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  {
+    "policy_id": "reddit-blocked-v1",
+    "source": "reddit",
+    "allowed_methods": [],
+    "may_download": false,
+    "may_train": false,
+    "required_rights_purposes": [],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  {
+    "policy_id": "olx-rights-cleared-v1",
+    "source": "olx",
+    "allowed_methods": ["official-api", "rights-cleared-export"],
+    "may_download": true,
+    "may_train": true,
+    "required_rights_purposes": ["download", "train"],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  {
+    "policy_id": "chrono24-rights-cleared-v1",
+    "source": "chrono24",
+    "allowed_methods": ["official-api", "licensed-feed", "rights-cleared-export"],
+    "may_download": true,
+    "may_train": true,
+    "required_rights_purposes": ["download", "train"],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+  },
+  {
+    "policy_id": "watchuseek-rights-cleared-v1",
+    "source": "watchuseek",
+    "allowed_methods": ["official-api", "licensed-feed", "rights-cleared-export"],
+    "may_download": true,
+    "may_train": true,
+    "required_rights_purposes": ["download", "train"],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+  },
+  {
+    "policy_id": "reptime-rights-cleared-v1",
+    "source": "reptime",
+    "allowed_methods": ["official-api", "licensed-feed", "rights-cleared-export"],
+    "may_download": true,
+    "may_train": true,
+    "required_rights_purposes": ["download", "train"],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+  },
+  {
+    "policy_id": "chinese-replica-rights-cleared-v1",
+    "source": "chinese_replica",
+    "allowed_methods": ["official-api", "licensed-feed", "rights-cleared-export"],
+    "may_download": true,
+    "may_train": true,
+    "required_rights_purposes": ["download", "train"],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "9999999999999999999999999999999999999999999999999999999999999999"
+  }
+]
