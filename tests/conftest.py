@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID
 
 import pytest
 
+from acquisition.source_policy import authorize_candidate, get_source_policy, load_source_policies
 from acquisition.types import (
     Angle,
     CandidateRecord,
@@ -98,6 +101,57 @@ def expired_rights() -> RightsRecord:
         evidence_sha256="d" * 64,
         status=RightsStatus.EXPIRED,
     )
+
+
+@pytest.fixture
+def policy_set():
+    return load_source_policies(Path("config/source_policies.json"))
+
+
+@pytest.fixture
+def policy_case(policy_set, rights):
+    def decide(case: str):
+        policy = get_source_policy(policy_set, "partner-upload")
+        case_rights = rights
+        if case == "reddit_missing_rightsholder":
+            policy = get_source_policy(policy_set, "reddit")
+            case_rights = replace(
+                rights,
+                source="reddit",
+                acquisition_method="official-api",
+                rightsholder="Reddit",
+            )
+        elif case == "mercadolivre_scrape":
+            policy = get_source_policy(policy_set, "mercadolivre")
+            case_rights = replace(
+                rights,
+                source="mercadolivre",
+                acquisition_method="raw-scrape",
+            )
+        elif case == "olx_original_claim":
+            policy = get_source_policy(policy_set, "olx")
+            case_rights = replace(
+                rights,
+                source="olx",
+                acquisition_method="seller-original-claim",
+            )
+        elif case == "missing_policy_hash":
+            policy = get_source_policy(policy_set, "unregistered-source")
+        elif case == "purpose_mismatch":
+            case_rights = replace(rights, allowed_purposes=("download",))
+        elif case == "revoked":
+            case_rights = replace(rights, status=RightsStatus.REVOKED)
+        elif case == "expires_exactly_now":
+            case_rights = replace(
+                rights,
+                effective_at=NOW - timedelta(days=1),
+                expires_at=NOW,
+            )
+        elif case != "partner_export_with_grant":
+            raise AssertionError(f"unknown policy case: {case}")
+        return authorize_candidate(policy, case_rights, now=NOW)
+
+    return decide
 
 
 @pytest.fixture
