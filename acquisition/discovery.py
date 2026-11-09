@@ -100,6 +100,8 @@ def append_discovery_page(
     """Persist a complete page before returning its resumable cursor commit."""
     root = prefix.rstrip("/")
     if previous is not None:
+        if hashlib.sha256(_commit_bytes(previous)).hexdigest() != previous.sha256:
+            raise DiscoveryConflict("previous discovery commit hash is invalid")
         if previous.source != page.source or previous.access_record_id != page.access_record_id:
             raise DiscoveryConflict("discovery page belongs to another ledger")
         if previous.next_cursor is None or page.cursor != previous.next_cursor:
@@ -139,7 +141,7 @@ def append_discovery_page(
     }
     page_bytes = _canonical(page_document)
     page_sha256 = hashlib.sha256(page_bytes).hexdigest()
-    _put_immutable(
+    _put_authoritative(
         cos_client,
         bucket,
         f"{root}/{page.source}/pages/{page_sha256}.json",
@@ -232,6 +234,25 @@ def _put_immutable(client: Any, bucket: str, key: str, body: bytes, digest: str)
     )
     if _read_if_present(client, bucket, key) != body:
         raise DiscoveryConflict(f"discovery object readback failed: {key}")
+
+
+def _put_authoritative(
+    client: Any, bucket: str, key: str, body: bytes, digest: str
+) -> None:
+    create = getattr(client, "put_object_if_absent", None)
+    if not callable(create):
+        raise DiscoveryConflict("discovery ledger requires atomic create-if-absent")
+    created = create(
+        Bucket=bucket,
+        Key=key,
+        Body=body,
+        Metadata={"sha256": digest},
+        ContentType="application/json",
+    )
+    if not isinstance(created, bool):
+        raise DiscoveryConflict("atomic create-if-absent returned an invalid result")
+    if _read_if_present(client, bucket, key) != body:
+        raise DiscoveryConflict(f"immutable discovery object diverged: {key}")
 
 
 def _read_if_present(client: Any, bucket: str, key: str) -> bytes | None:

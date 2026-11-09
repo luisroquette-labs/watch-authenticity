@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -118,3 +120,48 @@ def test_discovery_allows_only_one_child_for_each_committed_cursor(cos):
             _page(NOW + timedelta(minutes=1), [_record("MLB-3")], cursor="page-2"),
             previous=root,
         )
+
+
+def test_discovery_rejects_forged_parent_hash(cos):
+    root = append_discovery_page(
+        cos,
+        "private",
+        "datasets/discovery",
+        _page(NOW, [_record("MLB-1")]),
+    )
+
+    with pytest.raises(DiscoveryConflict, match="commit hash is invalid"):
+        append_discovery_page(
+            cos,
+            "private",
+            "datasets/discovery",
+            _page(NOW + timedelta(minutes=1), [_record("MLB-2")], cursor="page-2"),
+            previous=replace(root, sha256="f" * 64),
+        )
+
+
+def test_concurrent_children_leave_exactly_one_authoritative_commit(cos):
+    root = append_discovery_page(
+        cos,
+        "private",
+        "datasets/discovery",
+        _page(NOW, [_record("MLB-1")]),
+    )
+
+    def append(record_id):
+        try:
+            return append_discovery_page(
+                cos,
+                "private",
+                "datasets/discovery",
+                _page(NOW + timedelta(minutes=1), [_record(record_id)], cursor="page-2"),
+                previous=root,
+            )
+        except DiscoveryConflict as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(append, ("MLB-2", "MLB-3")))
+
+    assert sum(not isinstance(result, Exception) for result in results) == 1
+    assert sum(isinstance(result, DiscoveryConflict) for result in results) == 1

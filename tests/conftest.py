@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from unittest.mock import MagicMock
 from uuid import UUID
@@ -144,6 +145,7 @@ class _CollectorCOS:
         self.metadata: dict[str, dict[str, str]] = {}
         self.write_count = 0
         self.receipt_write_barrier = None
+        self.atomic_create_lock = Lock()
         self._watch_auth_bucket = "private"
         self._watch_auth_prefix = "datasets"
         self._watch_auth_configuration_verified = True
@@ -186,6 +188,13 @@ class _CollectorCOS:
         self.write_count += 1
         if Key.startswith("datasets/receipts/") and self.receipt_write_barrier is not None:
             self.receipt_write_barrier.wait(timeout=5)
+
+    def put_object_if_absent(self, **kwargs):
+        with self.atomic_create_lock:
+            if kwargs["Key"] in self.bodies:
+                return False
+            self.put_object(**kwargs)
+            return True
 
     def upload_file(self, filename: str, bucket: str, key: str, ExtraArgs):
         del bucket
