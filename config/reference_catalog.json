@@ -12,7 +12,7 @@
       "brand": "rolex",
       "family": "submariner",
       "reference": "126610ln",
-      "aliases": ["rolex-submariner"],
+      "aliases": [],
       "identity_evidence_sha256": null,
       "required_angles": ["dial", "cyclops", "rehaut", "crown", "clasp", "caseback"],
       "gold_freeze_sha256": null,

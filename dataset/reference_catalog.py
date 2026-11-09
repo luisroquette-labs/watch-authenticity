@@ -151,6 +151,7 @@ def parse_reference_catalog(
             aliases[alias] = entry.reference_id
     if baseline_reference_id not in entries:
         raise ReferenceCatalogError("baseline reference is absent")
+    _validate_catalog_invariants(entries, baseline_reference_id)
     if previous is not None:
         for reference_id, prior in previous.entries.items():
             if prior.status == "admitted" and entries.get(reference_id) != prior:
@@ -178,6 +179,12 @@ def admit_reference(
         return ReferenceAdmission(reference_id, False, ("reference is absent from catalog",), catalog.sha256)
     if entry.reference_id != reference_id or report.reference_id != entry.reference_id:
         reasons.append("readiness report belongs to another reference")
+    baseline = catalog.entries[catalog.baseline_reference_id]
+    if (
+        entry.reference_id != catalog.baseline_reference_id
+        and (baseline.status != "admitted" or baseline.head is None)
+    ):
+        reasons.append("trained baseline head is not admitted")
     if not report.ready or report.reasons:
         reasons.append("readiness report failed")
     if entry.status != "admitted" or entry.head is None:
@@ -202,6 +209,8 @@ def _parse_entry(raw: object, generation: int) -> ReferenceEntry:
     aliases = tuple(_slug(alias, "alias") for alias in aliases_raw)
     if len(set(aliases)) != len(aliases) or reference_id in aliases:
         raise ReferenceCatalogError("aliases must be unique and non-canonical")
+    if any(not alias.endswith(f"-{reference}") for alias in aliases):
+        raise ReferenceCatalogError("alias must preserve the exact reference")
     identity_hash = _optional_hash(raw["identity_evidence_sha256"], "identity evidence")
     angles_raw = raw["required_angles"]
     if not isinstance(angles_raw, list) or not angles_raw:
@@ -237,6 +246,36 @@ def _parse_entry(raw: object, generation: int) -> ReferenceEntry:
         status,
         head,
     )
+
+
+def _validate_catalog_invariants(
+    entries: dict[str, ReferenceEntry], baseline_reference_id: str
+) -> None:
+    baseline = entries[baseline_reference_id]
+    if any(
+        entry.reference_id != baseline_reference_id and entry.status == "admitted"
+        for entry in entries.values()
+    ) and (baseline.status != "admitted" or baseline.head is None):
+        raise ReferenceCatalogError("later reference requires an admitted baseline head")
+
+    owners: dict[str, tuple[str, str]] = {}
+    for entry in entries.values():
+        artifacts = {
+            "identity evidence": entry.identity_evidence_sha256,
+            "gold freeze": entry.gold_freeze_sha256,
+            "holdout freeze": entry.holdout_freeze_sha256,
+            "head checkpoint": entry.head.checkpoint_sha256 if entry.head else None,
+            "calibration": entry.head.calibration_sha256 if entry.head else None,
+        }
+        for kind, digest in artifacts.items():
+            if digest is None:
+                continue
+            prior = owners.get(digest)
+            if prior is not None:
+                raise ReferenceCatalogError(
+                    f"{kind} reuses {prior[1]} from reference {prior[0]}"
+                )
+            owners[digest] = (entry.reference_id, kind)
 
 
 def _parse_head(raw: object, reference_id: str, generation: int) -> HeadConfig | None:
