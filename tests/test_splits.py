@@ -18,7 +18,9 @@ from dataset.splits import (
     TEST,
     TRAIN,
     VAL,
-    build_splits,
+)
+from dataset.splits import (
+    build_manifest_splits as build_splits,
 )
 
 
