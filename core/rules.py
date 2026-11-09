@@ -31,17 +31,20 @@ GRADE4_GENUINE_CEILING = 0.60
 # an "original" claim here is the single pitfall CK-13/CK-18 exist to block.
 _MARKETPLACE_SOURCES = frozenset({"olx", "mercadolivre"})
 
-# Owner-forum sources treated as routine genuine photos (Requirements item 5).
-_GENUINE_FORUM_SOURCES = frozenset({"chrono24", "watchuseek"})
+# Owner-forum sources retained only as candidate-discovery identifiers.
+_OWNER_FORUM_SOURCES = frozenset({"chrono24", "watchuseek"})
 
 # Dedicated replica-forum / replica-site sources — a named factory or site
 # that sells/discusses replicas, as opposed to an ambiguous marketplace ad.
-_REPLICA_SOURCES = frozenset({"reptime", "chinese_replica"})
+_REPLICA_DISCOVERY_SOURCES = frozenset({"reptime", "chinese_replica"})
 
 _REDDIT_SOURCES = frozenset({"reddit"})
 
 _KNOWN_CANDIDATE_SOURCES = (
-    _MARKETPLACE_SOURCES | _GENUINE_FORUM_SOURCES | _REPLICA_SOURCES | _REDDIT_SOURCES
+    _MARKETPLACE_SOURCES
+    | _OWNER_FORUM_SOURCES
+    | _REPLICA_DISCOVERY_SOURCES
+    | _REDDIT_SOURCES
 )
 
 # Named superclone factories (Requirements item 3: "Clean, VSF — clone até
@@ -114,42 +117,6 @@ def grade_map(*, factory: str | None = None, price: float | None = None) -> int:
         return int(Grade.STREET_FAKE if price < PRICE_GRADE_1_CEILING else Grade.COMMON_REPLICA)
 
     raise ValueError("grade_map requires factory or price")
-
-
-def source_label_rule(
-    source: str | None = None,
-    *,
-    subreddit: str | None = None,
-    marketplace: str | None = None,
-    listing_text: str | None = None,
-    permission_on_file: bool = False,
-) -> Label:
-    """Derives a training label from WHERE a photo was sourced (CK-13/27).
-
-    The label comes from the source's trustworthiness, never from someone
-    eyeballing the watch (Requirements item 5). EXCLUDED checks run first
-    and unconditionally, before any GENUINE/FAKE branch, so neither a
-    seller's "original" lie nor an unpermitted Reddit scrape can ever fall
-    through to a genuine label (the CK-18/CK-29 pitfalls).
-    """
-    is_marketplace_ad = (marketplace or source or "").strip().lower() in _MARKETPLACE_SOURCES
-    if is_marketplace_ad and listing_text and "original" in listing_text.lower():
-        return Label.EXCLUDED  # seller claims genuine — poisons training (CK-13)
-
-    is_reddit_source = (source or "").strip().lower() in _REDDIT_SOURCES or bool(subreddit)
-    if is_reddit_source:
-        return Label.GENUINE if permission_on_file else Label.EXCLUDED  # CK-27
-
-    if is_marketplace_ad:
-        return Label.FAKE  # declared réplica/inspirado listing
-
-    normalized_source = (source or "").strip().lower()
-    if normalized_source in _GENUINE_FORUM_SOURCES:
-        return Label.GENUINE
-    if normalized_source in _REPLICA_SOURCES:
-        return Label.FAKE
-
-    return Label.EXCLUDED  # unrecognized source — never fabricate a label
 
 
 def propose_source_label(

@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
+from PIL import Image, PngImagePlugin
 
+from acquisition.collect import collect_batch
 from acquisition.source_policy import authorize_candidate, get_source_policy, load_source_policies
 from acquisition.types import (
     Angle,
@@ -36,6 +40,213 @@ from infra.ibm_types import (
 
 NOW = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)
 _SAFE_USER_DATA = "#!/bin/bash\nset -euo pipefail\n/opt/watch-auth/bootstrap-host\n"
+
+
+class _Response:
+    def __init__(self, body: bytes, content_type: str, status_code: int = 200, length=None):
+        self.body = body
+        self.status_code = status_code
+        self.headers = {
+            "Content-Type": content_type,
+            "Content-Length": str(len(body) if length is None else length),
+        }
+
+    def iter_content(self, chunk_size: int):
+        yield from (self.body[index : index + chunk_size] for index in range(0, len(self.body), chunk_size))
+
+    def close(self):
+        return None
+
+
+class _NotFound(Exception):
+    def __init__(self):
+        self.response = {"Error": {"Code": "NoSuchKey"}}
+
+
+class _CollectorCOS:
+    def __init__(self):
+        self.bodies: dict[str, bytes] = {}
+        self.metadata: dict[str, dict[str, str]] = {}
+        self.write_count = 0
+        self.receipt_write_barrier = None
+        self._watch_auth_bucket = "private"
+        self._watch_auth_prefix = "datasets"
+        self._watch_auth_configuration_verified = True
+
+    def head_object(self, *, Bucket: str, Key: str):
+        del Bucket
+        if Key not in self.bodies:
+            raise _NotFound
+        return {
+            "ContentLength": len(self.bodies[Key]),
+            "Metadata": self.metadata[Key],
+            "ETag": f'"etag-{hashlib.sha256(self.bodies[Key]).hexdigest()}"',
+        }
+
+    def get_object(self, *, Bucket: str, Key: str):
+        del Bucket
+        if Key not in self.bodies:
+            raise _NotFound
+        return {"Body": io.BytesIO(self.bodies[Key])}
+
+    def list_objects_v2(self, *, Bucket: str, Prefix: str):
+        del Bucket
+        return {
+            "Contents": [{"Key": key} for key in sorted(self.bodies) if key.startswith(Prefix)],
+            "IsTruncated": False,
+        }
+
+    def put_object(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        Body: bytes,
+        Metadata=None,
+        ContentType: str | None = None,
+    ):
+        del Bucket, ContentType
+        self.bodies[Key] = Body
+        self.metadata[Key] = Metadata or {}
+        self.write_count += 1
+        if Key.startswith("datasets/receipts/") and self.receipt_write_barrier is not None:
+            self.receipt_write_barrier.wait(timeout=5)
+
+    def upload_file(self, filename: str, bucket: str, key: str, ExtraArgs):
+        del bucket
+        self.bodies[key] = Path(filename).read_bytes()
+        self.metadata[key] = ExtraArgs["Metadata"]
+        self.write_count += 1
+
+    def download_file(self, bucket: str, key: str, filename: str):
+        del bucket
+        Path(filename).write_bytes(self.bodies[key])
+
+    def copy_object(self, *, Bucket: str, Key: str, CopySource, MetadataDirective: str):
+        del Bucket, MetadataDirective
+        source = CopySource["Key"]
+        self.bodies[Key] = self.bodies[source]
+        self.metadata[Key] = self.metadata[source]
+
+    def delete_object(self, *, Bucket: str, Key: str):
+        del Bucket
+        self.bodies.pop(Key, None)
+        self.metadata.pop(Key, None)
+
+
+def _image_bytes(fmt: str = "PNG", *, metadata: bool = False, frames: int = 1) -> bytes:
+    output = io.BytesIO()
+    images = [Image.new("RGB", (8, 8), color) for color in ("red", "blue")[:frames]]
+    pnginfo = None
+    if metadata:
+        pnginfo = PngImagePlugin.PngInfo()
+        pnginfo.add_text("contributor", "Private Person")
+        pnginfo.add_text("serial", "12345678")
+    images[0].save(
+        output,
+        format=fmt,
+        save_all=frames > 1,
+        append_images=images[1:],
+        pnginfo=pnginfo,
+    )
+    return output.getvalue()
+
+
+@pytest.fixture
+def jpeg_with_gps() -> bytes:
+    exif = Image.Exif()
+    exif[0x010E] = "Private contributor"
+    exif[0x8825] = {
+        1: "N",
+        2: (33.9249, 0.0, 0.0),
+        3: "E",
+        4: (18.4241, 0.0, 0.0),
+    }
+    output = io.BytesIO()
+    Image.new("RGB", (8, 8), "red").save(output, format="JPEG", exif=exif)
+    return output.getvalue()
+
+
+@pytest.fixture
+def cos():
+    return _CollectorCOS()
+
+
+@pytest.fixture
+def http_client():
+    return MagicMock()
+
+
+@pytest.fixture
+def allowed_policy(policy_set):
+    return get_source_policy(policy_set, "partner-upload")
+
+
+@pytest.fixture
+def blocked_policy(policy_set):
+    return get_source_policy(policy_set, "reddit")
+
+
+@pytest.fixture
+def collector_fixture(allowed_policy, rights, http_client, cos):
+    class CollectorFixture:
+        def __init__(self):
+            self.http_client = http_client
+            self.statuses = [200]
+
+        def set_statuses(self, *statuses: int):
+            self.statuses = list(statuses)
+
+        def collect(self, payload_case: str):
+            body = _image_bytes(metadata=payload_case == "metadata")
+            content_type = "image/png"
+            length = None
+            expected_sha256 = hashlib.sha256(body).hexdigest()
+            if payload_case == "partial":
+                length = len(body) + 10
+            elif payload_case == "hash_mismatch":
+                expected_sha256 = "0" * 64
+            elif payload_case == "oversized":
+                length = 25 * 1024 * 1024 + 1
+            elif payload_case == "non_image":
+                body, content_type = b"<html>error</html>", "text/html"
+            elif payload_case == "mime_magic_mismatch":
+                content_type = "image/jpeg"
+            elif payload_case == "truncated":
+                body = body[:-12]
+            elif payload_case == "polyglot":
+                body += b"<script>alert(1)</script>"
+            elif payload_case == "multi_frame":
+                body = _image_bytes(frames=2)
+            elif payload_case == "decompression_bomb":
+                body = bytearray(body)
+                body[16:24] = (10001).to_bytes(4, "big") + (10000).to_bytes(4, "big")
+                body = bytes(body)
+
+            responses = [
+                _Response(body, content_type, status_code=status, length=length)
+                for status in self.statuses
+            ]
+            self.http_client.get.side_effect = responses
+            record = {
+                "source_record_id": "record-1",
+                "source_url": "https://partner.example/record-1",
+                "image_url": "https://partner.example/image-1.png",
+                "declared_reference": "rolex-submariner-126610ln",
+                "expected_sha256": expected_sha256,
+            }
+            return collect_batch(
+                [record],
+                allowed_policy,
+                rights,
+                http_client=self.http_client,
+                cos_client=cos,
+                bucket="private",
+                batch_id="b1",
+                now=NOW,
+            )
+
+    return CollectorFixture()
 
 
 @pytest.fixture
