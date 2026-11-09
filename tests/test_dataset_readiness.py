@@ -147,12 +147,14 @@ def test_dominant_source_and_seller_are_seen_across_multiple_photos_per_entity()
     for entity in range(1, 11):
         dominant = replace(
             _record(entity * 2),
+            asset_id=f"z-dominant-{entity}",
             watch_entity_id=f"watch-{entity}",
             source_domain="dominant.co.za",
             seller_group_id="dominant-seller",
         )
         alternate = replace(
             _record(entity * 2 + 1),
+            asset_id=f"a-alternate-{entity}",
             watch_entity_id=f"watch-{entity}",
             source_domain=f"other-{entity}.co.za",
             seller_group_id=f"other-seller-{entity}",
