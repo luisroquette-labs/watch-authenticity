@@ -13,10 +13,12 @@ import pytest
 
 from acquisition.source_policy import (
     authorize_candidate,
+    authorize_discovery,
     get_source_policy,
+    load_source_access_registry,
     load_source_policies,
 )
-from acquisition.types import RightsStatus
+from acquisition.types import RightsStatus, SourceAccessRecord, SourceAccessStatus
 
 
 def policy_content_hash(entry):
@@ -159,3 +161,63 @@ def test_status_and_source_mismatches_fail_closed(policy_set, rights):
 
     assert revoked.reasons == ("rights revoked",)
     assert wrong_source.reasons == ("rights source mismatch",)
+
+
+def test_versioned_access_registry_keeps_unproven_sources_inactive():
+    registry = load_source_access_registry(Path("config/source_access.json"))
+
+    assert set(registry) == {
+        "partner-upload",
+        "owner-authorized-upload",
+        "mercadolivre",
+        "reddit",
+        "olx",
+        "chrono24",
+        "watchuseek",
+        "reptime",
+        "chinese_replica",
+    }
+    assert all(record.status is not SourceAccessStatus.ACTIVE for record in registry.values())
+
+
+def test_discovery_requires_current_bound_access_evidence(policy_set, rights):
+    policy = get_source_policy(policy_set, "mercadolivre")
+    active = SourceAccessRecord(
+        access_record_id="access-ml-1",
+        source="mercadolivre",
+        acquisition_method="official-api",
+        status=SourceAccessStatus.ACTIVE,
+        evidence_url="https://developers.mercadolivre.com.br/itens-e-buscas",
+        evidence_sha256="a" * 64,
+        verified_at=rights.effective_at,
+        expires_at=rights.expires_at,
+        allowed_image_hosts=("http2.mlstatic.com",),
+        requests_per_minute=60,
+        reason="official API access verified for discovery",
+    )
+
+    assert not authorize_discovery(policy, None, now=rights.effective_at).allowed
+    assert authorize_discovery(policy, active, now=rights.effective_at).allowed
+    expired = authorize_discovery(policy, active, now=active.expires_at)
+    assert expired.reasons == ("source access expired",)
+
+    no_rights = authorize_candidate(policy, None, now=rights.effective_at)
+    assert not no_rights.may_download
+    assert not no_rights.may_train
+
+
+def test_active_source_access_requires_real_evidence_and_network_limits(rights):
+    with pytest.raises(ValueError, match="active source access"):
+        SourceAccessRecord(
+            access_record_id="access-invalid",
+            source="mercadolivre",
+            acquisition_method="official-api",
+            status=SourceAccessStatus.ACTIVE,
+            evidence_url=None,
+            evidence_sha256="a" * 64,
+            verified_at=rights.effective_at,
+            expires_at=rights.expires_at,
+            allowed_image_hosts=(),
+            requests_per_minute=None,
+            reason="missing proof",
+        )
