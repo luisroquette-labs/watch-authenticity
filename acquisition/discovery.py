@@ -141,7 +141,7 @@ def append_discovery_page(
     }
     page_bytes = _canonical(page_document)
     page_sha256 = hashlib.sha256(page_bytes).hexdigest()
-    _put_authoritative(
+    _put_immutable(
         cos_client,
         bucket,
         f"{root}/{page.source}/pages/{page_sha256}.json",
@@ -167,7 +167,7 @@ def append_discovery_page(
         commit_sha256,
     )
     parent = previous.sha256 if previous else "root"
-    _put_immutable(
+    _put_authoritative(
         cos_client,
         bucket,
         f"{root}/{page.source}/children/{parent}.json",
