@@ -88,6 +88,7 @@ def _record(
     subject_id: str,
     provenance_id: str,
     rights: str = "licensed",
+    factory: str | None = None,
     rejection_subtype: str | None = None,
 ) -> dict[str, object]:
     digest = _sha256(image)
@@ -102,7 +103,9 @@ def _record(
         "subject_id": subject_id,
         "provenance_id": provenance_id,
         "rights": rights,
+        "rights_record_id": f"rights-{asset_id}",
         "evidence_tier": "b",
+        "factory": factory,
         "rejection_subtype": rejection_subtype,
     }
 
@@ -140,6 +143,7 @@ def _valid_payloads(spec: RunSpec) -> tuple[dict[str, object], dict[str, object]
                 source_domain="replica-one.com" if grade % 2 else "replica-two.com",
                 subject_id=f"fake-watch-{grade}-{angle}",
                 provenance_id=f"fake-proof-{grade}-{angle}",
+                factory="vsf" if grade == 4 else None,
             )
             records.append(fake_record)
             images[str(fake_record["object_key"])] = fake
@@ -189,7 +193,6 @@ def _valid_payloads(spec: RunSpec) -> tuple[dict[str, object], dict[str, object]
         images[str(validation_record["object_key"])] = validation
     records.extend(validation_records)
 
-    manifest = {"schema_version": 1, "records": records}
     splits = {
         "schema_version": 1,
         "splits": {
@@ -198,9 +201,27 @@ def _valid_payloads(spec: RunSpec) -> tuple[dict[str, object], dict[str, object]
             "test": [],
             "cross_source": [],
             "factory_holdout": [],
+            "temporal_holdout": [],
             "gold": [],
         },
     }
+    split_sha256 = _sha256(_canonical(splits))
+    freeze = {
+        "manifest_sha256": _sha256(_canonical(records)),
+        "split_sha256": split_sha256,
+        "policy_set_sha256": "a" * 64,
+        "eligible_asset_ids": sorted(str(record["asset_id"]) for record in records),
+        "excluded_asset_ids": [],
+        "exclusion_reason_counts": [],
+        "readiness_sha256": "b" * 64,
+        "rights_sha256": "c" * 64,
+        "exclusions": [],
+        "blocked": False,
+        "asset_rights": sorted(
+            [str(record["asset_id"]), str(record["rights_record_id"])] for record in records
+        ),
+    }
+    manifest = {"schema_version": 2, "freeze": freeze, "records": records}
     return manifest, splits, images
 
 
@@ -211,7 +232,19 @@ def _seed(
     *,
     missing_key: str | None = None,
     bad_image_metadata_key: str | None = None,
+    refresh_freeze: bool = True,
 ) -> tuple[FakeCOS, RunSpec]:
+    if refresh_freeze and isinstance(manifest.get("freeze"), dict):
+        records = manifest["records"]
+        assert isinstance(records, list)
+        freeze = manifest["freeze"]
+        assert isinstance(freeze, dict)
+        freeze["manifest_sha256"] = _sha256(_canonical(records))
+        freeze["split_sha256"] = _sha256(_canonical(splits))
+        freeze["eligible_asset_ids"] = sorted(str(record["asset_id"]) for record in records)
+        freeze["asset_rights"] = sorted(
+            [str(record["asset_id"]), str(record["rights_record_id"])] for record in records
+        )
     manifest_bytes = _canonical(manifest)
     splits_bytes = _canonical(splits)
     spec = replace(
@@ -250,6 +283,16 @@ def test_loader_accepts_complete_content_addressed_freeze(training_fixture):
     )
     assert bundle.manifest_sha256 == spec.manifest_sha256
     assert bundle.splits_sha256 == spec.splits_sha256
+    assert bundle.freeze.split_sha256 == spec.splits_sha256
+
+
+def test_loader_refuses_missing_or_blocked_dataset_freeze(training_fixture):
+    _cos, spec, manifest, splits, images = training_fixture
+    manifest["freeze"]["blocked"] = True
+    cos, spec = _seed(manifest, splits, images)
+
+    with pytest.raises(TrainingDataRefused, match="freeze is blocked"):
+        load_training_data(cos, spec)
 
 
 def test_wave_runner_uses_four_nested_entity_waves(training_fixture, monkeypatch, tmp_path):

@@ -135,6 +135,7 @@ def _lineage(bundle: TrainingBundle, spec: RunSpec, class_map_sha256: str) -> di
         "manifest_sha256": spec.manifest_sha256,
         "splits_sha256": spec.splits_sha256,
         "class_map_sha256": class_map_sha256,
+        "freeze_sha256": bundle.freeze_sha256,
         "train_assets_sha256": hashlib.sha256(
             _canonical(sorted(bundle.splits[TRAIN]))
         ).hexdigest(),

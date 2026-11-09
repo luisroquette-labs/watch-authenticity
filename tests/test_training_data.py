@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from types import MappingProxyType
+
 import pytest
 
 from tests.conftest import valid_run_spec
@@ -40,4 +43,26 @@ def test_entity_waves_count_entities_instead_of_duplicate_photos(training_fixtur
 
     final_bundle = training_wave_bundle(bundle, waves[1.0])
     assert set(final_bundle.splits["train"]) == set(bundle.splits["train"])
+
+
+def test_entity_wave_never_splits_one_watch_across_angles(training_fixture):
+    cos, spec, _manifest, _splits, _images = training_fixture
+    bundle = load_training_data(cos, spec)
+    genuine = [record for record in bundle.records if record.label.value == "genuine"][:3]
+    records = (
+        replace(genuine[0], asset_id="a-dial", subject_id="a", angle="dial"),
+        replace(genuine[1], asset_id="z-dial", subject_id="z", angle="dial"),
+        replace(genuine[2], asset_id="z-caseback", subject_id="z", angle="caseback"),
+    )
+    split_ids = tuple(record.asset_id for record in records)
+    small = replace(
+        bundle,
+        records=records,
+        splits=MappingProxyType({**bundle.splits, "train": split_ids}),
+        split_by_asset=MappingProxyType({asset_id: "train" for asset_id in split_ids}),
+    )
+
+    first_wave = set(entity_wave_asset_ids(small)[0.25])
+
+    assert {"z-dial", "z-caseback"} <= first_wave
 

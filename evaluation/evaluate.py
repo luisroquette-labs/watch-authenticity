@@ -4,24 +4,33 @@ from __future__ import annotations
 
 import math
 import random
+import re
 from dataclasses import dataclass
 from statistics import mean
+
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_MIN_GROUPS_PER_SOURCE = 5
 
 
 @dataclass(frozen=True)
 class SourceEmbedding:
     vector: tuple[float, ...]
     source_domain: str
+    leakage_group_id: str
 
     def __post_init__(self) -> None:
         if not self.vector or not all(math.isfinite(value) for value in self.vector):
             raise ValueError("embedding must contain finite values")
         if not self.source_domain.strip():
             raise ValueError("source domain is required")
+        if not self.leakage_group_id.strip():
+            raise ValueError("leakage group is required")
 
 
 @dataclass(frozen=True)
 class SourceProbeReport:
+    freeze_sha256: str
+    model_sha256: str
     real_accuracy: float
     real_ci_low: float
     real_ci_high: float
@@ -38,7 +47,9 @@ class SourceProbeReport:
             self.shuffled_ci_high,
         )
         if (
-            not all(math.isfinite(value) and 0 <= value <= 1 for value in values)
+            _SHA256.fullmatch(self.freeze_sha256) is None
+            or _SHA256.fullmatch(self.model_sha256) is None
+            or not all(math.isfinite(value) and 0 <= value <= 1 for value in values)
             or not self.real_ci_low <= self.real_accuracy <= self.real_ci_high
             or self.shuffled_accuracy > self.shuffled_ci_high
             or not self.driving_sources
@@ -97,18 +108,25 @@ class LearningCurvePoint:
 
 @dataclass(frozen=True)
 class LearningCurveReport:
+    freeze_sha256: str
+    model_sha256: str
     points: tuple[LearningCurvePoint, ...]
 
 
 def learning_curve_report(
     points: list[LearningCurvePoint] | tuple[LearningCurvePoint, ...],
+    *,
+    freeze_sha256: str,
+    model_sha256: str,
 ) -> LearningCurveReport:
     ordered = tuple(sorted(points, key=lambda point: point.fraction))
     if tuple(point.fraction for point in ordered) != (0.25, 0.5, 0.75, 1.0):
         raise ValueError("learning curve requires the 25/50/75/100% entity waves")
     if any(left.entity_count > right.entity_count for left, right in zip(ordered, ordered[1:])):
         raise ValueError("learning-curve entity counts must be monotonic")
-    return LearningCurveReport(ordered)
+    if _SHA256.fullmatch(freeze_sha256) is None or _SHA256.fullmatch(model_sha256) is None:
+        raise ValueError("learning curve requires freeze and model SHA-256 identities")
+    return LearningCurveReport(freeze_sha256, model_sha256, ordered)
 
 
 def evaluate_source_probe(
@@ -116,20 +134,39 @@ def evaluate_source_probe(
     *,
     permutations: int = 1_000,
     seed: int = 42,
+    freeze_sha256: str,
+    model_sha256: str,
 ) -> SourceProbeReport:
     """Compare a leave-one-out source probe with shuffled-source controls."""
     rows = tuple(embeddings)
     if permutations < 20:
         raise ValueError("at least 20 permutations are required")
-    if len(rows) < 4 or len({row.vector for row in rows}) < 2:
+    if (
+        _SHA256.fullmatch(freeze_sha256) is None
+        or _SHA256.fullmatch(model_sha256) is None
+        or len(rows) < 4
+        or len({row.vector for row in rows}) < 2
+    ):
         raise ValueError("source probe requires varied embeddings")
     dimensions = {len(row.vector) for row in rows}
-    labels = [row.source_domain for row in rows]
+    grouped: dict[str, list[SourceEmbedding]] = {}
+    for row in rows:
+        grouped.setdefault(row.leakage_group_id, []).append(row)
+    if any(len({row.source_domain for row in members}) != 1 for members in grouped.values()):
+        raise ValueError("one leakage group cannot claim multiple sources")
+    vectors = [
+        tuple(mean(values) for values in zip(*(row.vector for row in members), strict=True))
+        for _, members in sorted(grouped.items())
+    ]
+    labels = [members[0].source_domain for _, members in sorted(grouped.items())]
     sources = sorted(set(labels))
-    if len(dimensions) != 1 or len(sources) < 2 or any(labels.count(source) < 2 for source in sources):
-        raise ValueError("source probe requires two samples for each source in one vector space")
+    if (
+        len(dimensions) != 1
+        or len(sources) < 2
+        or any(labels.count(source) < _MIN_GROUPS_PER_SOURCE for source in sources)
+    ):
+        raise ValueError("source probe requires five leakage groups per source")
 
-    vectors = [row.vector for row in rows]
     real_correct = _leave_one_out_correct(vectors, labels)
     rng = random.Random(seed)
     bootstrap = [
@@ -155,6 +192,8 @@ def evaluate_source_probe(
         >= real_accuracy
     )
     return SourceProbeReport(
+        freeze_sha256,
+        model_sha256,
         real_accuracy,
         real_ci_low,
         real_ci_high,
