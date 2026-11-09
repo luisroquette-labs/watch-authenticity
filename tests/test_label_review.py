@@ -14,7 +14,13 @@ from dataset.entities import (
     build_content_clusters,
     build_grouping_decision,
 )
-from labeling.adjudicate import EvidenceTampered, NotTrainingEligible, ReviewerConflict, adjudicate
+from labeling.adjudicate import (
+    EvidenceTampered,
+    NotTrainingEligible,
+    ReviewerConflict,
+    _digest,
+    adjudicate,
+)
 from labeling.manifest import build_training_record
 from labeling.review import (
     ReviewerRecord,
@@ -94,11 +100,8 @@ def make_review(candidate, reviewer, now):
 def test_dealer_reputation_alone_is_tier_c_and_not_trainable(
     candidate, make_review, reviewer_registry, grouping, rights, object_ref
 ):
-    evidence = adjudicate(
-        candidate,
-        [make_review(evidence_type="source_reputation", tier=EvidenceTier.A)],
-        reviewer_registry,
-    )
+    review = make_review(evidence_type="source_reputation", tier=EvidenceTier.A)
+    evidence = adjudicate(candidate, [review], reviewer_registry)
     assert evidence.tier is EvidenceTier.C
     with pytest.raises(NotTrainingEligible):
         build_training_record(
@@ -110,6 +113,8 @@ def test_dealer_reputation_alone_is_tier_c_and_not_trainable(
             angle=Angle.DIAL,
             capture_style="casual",
             now=candidate.collected_at,
+            reviews=[review],
+            reviewer_registry=reviewer_registry,
         )
 
 
@@ -341,9 +346,8 @@ def test_cos_store_uses_content_addressed_keys_and_reads_every_page(
 def test_revoked_rights_and_price_only_grade_cannot_reach_training(
     candidate, make_review, reviewer_registry, grouping, rights, object_ref
 ):
-    evidence = adjudicate(
-        candidate, [make_review(label=Label.FAKE, grade=4)], reviewer_registry
-    )
+    accepted_review = make_review(label=Label.FAKE, grade=4)
+    evidence = adjudicate(candidate, [accepted_review], reviewer_registry)
     with pytest.raises(NotTrainingEligible):
         build_training_record(
             candidate,
@@ -354,13 +358,14 @@ def test_revoked_rights_and_price_only_grade_cannot_reach_training(
             angle=Angle.DIAL,
             capture_style="casual",
             now=candidate.collected_at,
+            reviews=[accepted_review],
+            reviewer_registry=reviewer_registry,
         )
 
-    price_only = adjudicate(
-        candidate,
-        [make_review(label=Label.FAKE, grade=4, evidence_type="source_reputation")],
-        reviewer_registry,
+    price_review = make_review(
+        label=Label.FAKE, grade=4, evidence_type="source_reputation"
     )
+    price_only = adjudicate(candidate, [price_review], reviewer_registry)
     with pytest.raises(NotTrainingEligible):
         build_training_record(
             candidate,
@@ -371,15 +376,16 @@ def test_revoked_rights_and_price_only_grade_cannot_reach_training(
             angle=Angle.DIAL,
             capture_style="casual",
             now=candidate.collected_at,
+            reviews=[price_review],
+            reviewer_registry=reviewer_registry,
         )
 
 
 def test_build_training_record_uses_only_accepted_evidence(
     candidate, make_review, reviewer_registry, grouping, rights, object_ref
 ):
-    evidence = adjudicate(
-        candidate, [make_review(label=Label.FAKE, grade=3)], reviewer_registry
-    )
+    review = make_review(label=Label.FAKE, grade=3)
+    evidence = adjudicate(candidate, [review], reviewer_registry)
     record = build_training_record(
         candidate,
         evidence,
@@ -389,6 +395,8 @@ def test_build_training_record_uses_only_accepted_evidence(
         angle=Angle.DIAL,
         capture_style="studio",
         now=candidate.collected_at,
+        reviews=[review],
+        reviewer_registry=reviewer_registry,
     )
     assert record.label is Label.FAKE
     assert record.grade == 3
@@ -398,7 +406,8 @@ def test_build_training_record_uses_only_accepted_evidence(
 def test_build_training_record_rejects_grouping_from_another_candidate(
     candidate, make_review, reviewer_registry, grouping, rights, object_ref
 ):
-    evidence = adjudicate(candidate, [make_review()], reviewer_registry)
+    review = make_review()
+    evidence = adjudicate(candidate, [review], reviewer_registry)
 
     with pytest.raises(NotTrainingEligible):
         build_training_record(
@@ -410,13 +419,16 @@ def test_build_training_record_rejects_grouping_from_another_candidate(
             angle=Angle.DIAL,
             capture_style="studio",
             now=candidate.collected_at,
+            reviews=[review],
+            reviewer_registry=reviewer_registry,
         )
 
 
 def test_build_training_record_rejects_tampered_evidence(
     candidate, make_review, reviewer_registry, grouping, rights, object_ref
 ):
-    evidence = adjudicate(candidate, [make_review()], reviewer_registry)
+    review = make_review()
+    evidence = adjudicate(candidate, [review], reviewer_registry)
     tampered = replace(evidence, accepted_label=Label.FAKE, accepted_grade=4)
 
     with pytest.raises(EvidenceTampered):
@@ -429,6 +441,81 @@ def test_build_training_record_rejects_tampered_evidence(
             angle=Angle.DIAL,
             capture_style="studio",
             now=candidate.collected_at,
+            reviews=[review],
+            reviewer_registry=reviewer_registry,
+        )
+
+
+def test_build_training_record_rejects_rehashed_result_not_supported_by_reviews(
+    candidate, make_review, reviewer_registry, grouping, rights, object_ref
+):
+    review = make_review()
+    evidence = adjudicate(candidate, [review], reviewer_registry)
+    forged = replace(evidence, accepted_label=Label.FAKE, accepted_grade=4)
+    digest = _digest(
+        {
+            "candidate_id": forged.candidate_id,
+            "candidate_sha256": forged.candidate_sha256,
+            "accepted_grade": forged.accepted_grade,
+            "accepted_label": forged.accepted_label.value,
+            "evidence_type": forged.evidence_type,
+            "reference_id": forged.reference_id,
+            "review_decision_sha256s": list(forged.review_decision_sha256s),
+            "review_timestamps": [value.isoformat() for value in forged.review_timestamps],
+            "reviewer_ids": list(forged.reviewer_ids),
+            "supporting_artifact_hashes": list(forged.supporting_artifact_hashes),
+            "tier": forged.tier.value,
+        }
+    )
+    forged = replace(
+        forged,
+        decision_sha256=digest,
+        evidence_record_id=f"evidence-{digest[:24]}",
+    )
+
+    with pytest.raises(NotTrainingEligible, match="immutable review decisions"):
+        build_training_record(
+            candidate,
+            forged,
+            grouping,
+            rights,
+            object_ref=object_ref,
+            angle=Angle.DIAL,
+            capture_style="studio",
+            now=candidate.collected_at,
+            reviews=[review],
+            reviewer_registry=reviewer_registry,
+        )
+
+
+def test_build_training_record_rejects_candidate_changed_after_review(
+    candidate, make_review, reviewer_registry, grouping, rights, object_ref
+):
+    review = make_review()
+    evidence = adjudicate(candidate, [review], reviewer_registry)
+    changed_candidate = replace(
+        candidate,
+        raw_sha256="e" * 64,
+        derivative_sha256="f" * 64,
+    )
+    changed_ref = replace(
+        object_ref,
+        key="datasets/derivatives/" + "f" * 64,
+        sha256="f" * 64,
+    )
+
+    with pytest.raises(NotTrainingEligible, match="reviewed candidate"):
+        build_training_record(
+            changed_candidate,
+            evidence,
+            grouping,
+            rights,
+            object_ref=changed_ref,
+            angle=Angle.DIAL,
+            capture_style="studio",
+            now=candidate.collected_at,
+            reviews=[review],
+            reviewer_registry=reviewer_registry,
         )
 
 
@@ -442,7 +529,8 @@ def test_build_training_record_rejects_rights_outside_validity(
     object_ref,
     offset_days,
 ):
-    evidence = adjudicate(candidate, [make_review()], reviewer_registry)
+    review = make_review()
+    evidence = adjudicate(candidate, [review], reviewer_registry)
     invalid_now = (
         rights.expires_at
         if offset_days < 0
@@ -459,13 +547,16 @@ def test_build_training_record_rejects_rights_outside_validity(
             angle=Angle.DIAL,
             capture_style="studio",
             now=invalid_now,
+            reviews=[review],
+            reviewer_registry=reviewer_registry,
         )
 
 
 def test_build_training_record_rejects_unlinked_image(
     candidate, make_review, reviewer_registry, grouping, rights, object_ref
 ):
-    evidence = adjudicate(candidate, [make_review()], reviewer_registry)
+    review = make_review()
+    evidence = adjudicate(candidate, [review], reviewer_registry)
     unrelated = replace(
         object_ref,
         key="datasets/derivatives/" + "f" * 64,
@@ -482,4 +573,6 @@ def test_build_training_record_rejects_unlinked_image(
             angle=Angle.DIAL,
             capture_style="studio",
             now=candidate.collected_at,
+            reviews=[review],
+            reviewer_registry=reviewer_registry,
         )

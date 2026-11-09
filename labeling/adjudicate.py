@@ -39,6 +39,7 @@ def adjudicate(
 ) -> EvidenceRecord:
     if not reviews:
         raise ValueError("at least one review is required")
+    candidate_sha256 = candidate_digest(candidate)
     unique: dict[str, ReviewDecision] = {}
     reviewer_hashes: dict[str, set[str]] = {}
     for review in reviews:
@@ -62,7 +63,7 @@ def adjudicate(
             reviewer.prohibited_contributor_groups
         ):
             raise ReviewerConflict("reviewer cannot approve own contributor or source group")
-        if review.candidate_sha256 != candidate_digest(candidate):
+        if review.candidate_sha256 != candidate_sha256:
             raise EvidenceTampered("candidate binding differs")
         if review.proposed_reference_id != candidate.declared_reference:
             raise EvidenceTampered("review reference differs")
@@ -124,6 +125,7 @@ def adjudicate(
     review_hashes = tuple(item.decision_sha256 for item in ordered)
     aggregate = {
         "candidate_id": candidate.candidate_id,
+        "candidate_sha256": candidate_sha256,
         "accepted_grade": accepted_grade,
         "accepted_label": None if accepted_label is None else accepted_label.value,
         "evidence_type": evidence_type,
@@ -138,6 +140,7 @@ def adjudicate(
     record = EvidenceRecord(
         evidence_record_id=f"evidence-{digest[:24]}",
         candidate_id=candidate.candidate_id,
+        candidate_sha256=candidate_sha256,
         accepted_label=accepted_label,
         accepted_grade=accepted_grade,
         reference_id=candidate.declared_reference,
@@ -156,6 +159,7 @@ def adjudicate(
 def verify_evidence_record(evidence: EvidenceRecord) -> None:
     payload = {
         "candidate_id": evidence.candidate_id,
+        "candidate_sha256": evidence.candidate_sha256,
         "accepted_grade": evidence.accepted_grade,
         "accepted_label": (
             None if evidence.accepted_label is None else evidence.accepted_label.value

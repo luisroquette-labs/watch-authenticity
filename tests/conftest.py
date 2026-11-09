@@ -398,6 +398,7 @@ def valid_contract_bundle(candidate, rights, object_ref):
     evidence = EvidenceRecord(
         evidence_record_id="evidence-1",
         candidate_id=candidate.candidate_id,
+        candidate_sha256="0" * 64,
         accepted_label=Label.GENUINE,
         accepted_grade=None,
         reference_id="rolex-submariner-126610ln",

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from datetime import date, datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from acquisition.types import (
     Angle,
     CandidateRecord,
     EvidenceRecord,
+    ReviewDecision,
     RightsRecord,
     RightsStatus,
     TrainingRecord,
@@ -30,7 +32,8 @@ from acquisition.types import (
 from core.types import Label, ManifestRecord
 from dataset.entities import GroupingDecision
 from infra.ibm_types import ObjectRef
-from labeling.adjudicate import NotTrainingEligible, verify_evidence_record
+from labeling.adjudicate import NotTrainingEligible, adjudicate, verify_evidence_record
+from labeling.review import ReviewerRecord, candidate_digest
 
 # Each dataset version is its own file, not a flag on a row — this is what
 # makes "append a version" structurally unable to mutate an earlier version.
@@ -96,6 +99,9 @@ def build_training_record(
     angle: Angle,
     capture_style: str,
     now: datetime,
+    reviews: Sequence[ReviewDecision],
+    reviewer_registry: Mapping[str, ReviewerRecord],
+    gold_candidate_ids: frozenset[str] = frozenset(),
 ) -> TrainingRecord:
     """Build a training row only from accepted evidence, never price guesses."""
     if now.tzinfo is None or now.utcoffset() is None:
@@ -108,6 +114,16 @@ def build_training_record(
     ):
         raise NotTrainingEligible("active training rights are required")
     verify_evidence_record(evidence)
+    if evidence.candidate_sha256 != candidate_digest(candidate):
+        raise NotTrainingEligible("reviewed candidate content differs")
+    expected_evidence = adjudicate(
+        candidate,
+        reviews,
+        reviewer_registry,
+        gold_candidate_ids=gold_candidate_ids,
+    )
+    if expected_evidence != evidence:
+        raise NotTrainingEligible("evidence differs from immutable review decisions")
     if grouping.quarantined or not evidence.tier.training_eligible:
         raise NotTrainingEligible("candidate evidence is not training eligible")
     if (

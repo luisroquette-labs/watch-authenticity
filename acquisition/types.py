@@ -266,6 +266,7 @@ class ReviewDecision:
 class EvidenceRecord:
     evidence_record_id: str
     candidate_id: str
+    candidate_sha256: str
     accepted_label: Label | None
     accepted_grade: int | None
     reference_id: str
@@ -280,6 +281,7 @@ class EvidenceRecord:
     def __post_init__(self) -> None:
         _nonempty(self.evidence_record_id, "evidence_record_id")
         _nonempty(self.candidate_id, "candidate_id")
+        _sha256(self.candidate_sha256, "candidate_sha256")
         _nonempty(self.reference_id, "reference_id")
         if not isinstance(self.tier, EvidenceTier):
             raise ValueError("tier must be EvidenceTier")
