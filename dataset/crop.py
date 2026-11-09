@@ -74,7 +74,7 @@ def crop_derivative(
     full_width, full_height = image.size
     region = _validated_box(expected_watch_region, full_width, full_height, "watch region")
     crop_box = _validated_box(
-        coordinates or _crop_coordinates(image.size, angle),
+        coordinates if coordinates is not None else _crop_coordinates(image.size, angle),
         full_width,
         full_height,
         "crop",

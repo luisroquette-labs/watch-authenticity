@@ -105,39 +105,22 @@ def hamming_distance_hex(left: str, right: str) -> int:
 
 
 def find_near_duplicate_pairs(phashes: Sequence[str]) -> set[tuple[int, int]]:
-    """Find every pHash pair within the threshold without an all-pairs scan."""
+    """Find every pHash pair within the threshold using a fixed-work multi-index."""
     values = [int(_validate_phash(value), 16) for value in phashes]
-    block_count = HAMMING_DEDUP_THRESHOLD + 1
-    base, remainder = divmod(_PHASH_BITS, block_count)
-    block_lengths = [base + (index < remainder) for index in range(block_count)]
+    # Four 16-bit blocks with a two-bit neighborhood are complete: if every
+    # block differed by at least three bits, total distance would be >= 12.
+    # The fixed 4 * 137 probes per input avoid materializing broad 5-bit
+    # collision buckets whose intermediate pair set grows quadratically.
     buckets: dict[tuple[int, int], list[int]] = defaultdict(list)
     candidates: set[tuple[int, int]] = set()
-
-    for index, value in enumerate(values):
-        remaining = _PHASH_BITS
-        for block_index, length in enumerate(block_lengths):
-            remaining -= length
-            block_value = (value >> remaining) & ((1 << length) - 1)
-            key = (block_index, block_value)
-            candidates.update((prior, index) for prior in buckets[key])
-            buckets[key].append(index)
-
-    # The threshold+1 index is complete by the pigeonhole rule, but its
-    # 5-6 bit blocks collide often. A second complete filter splits into four
-    # 16-bit blocks: distance <= 10 guarantees at least one block differs by
-    # at most two bits. This keeps full-distance calls well below all-pairs.
-    refined_buckets: dict[tuple[int, int], list[int]] = defaultdict(list)
-    refined: set[tuple[int, int]] = set()
     for index, value in enumerate(values):
         blocks = tuple((value >> shift) & 0xFFFF for shift in (48, 32, 16, 0))
         for block_index, block_value in enumerate(blocks):
             for nearby in _within_two_bits(block_value):
-                refined.update(
-                    (prior, index) for prior in refined_buckets[(block_index, nearby)]
+                candidates.update(
+                    (prior, index) for prior in buckets[(block_index, nearby)]
                 )
-            refined_buckets[(block_index, block_value)].append(index)
-
-    candidates.intersection_update(refined)
+            buckets[(block_index, block_value)].append(index)
 
     return {
         pair
@@ -192,7 +175,6 @@ def assign_watch_entities(
     candidate_ids = [record.candidate_id for record in records]
     entities = _UnionFind(candidate_ids)
 
-    _union_shared_value(entities, records, lambda record: content_clusters[record.candidate_id])
     _union_shared_value(
         entities,
         records,
@@ -221,6 +203,9 @@ def assign_watch_entities(
 
     split_union = _UnionFind(candidate_ids)
     _union_shared_value(split_union, records, lambda record: entity_ids[record.candidate_id])
+    _union_shared_value(
+        split_union, records, lambda record: content_clusters[record.candidate_id]
+    )
     _union_shared_value(split_union, records, lambda record: record.acquisition_batch_id)
     _union_shared_value(
         split_union,
@@ -276,28 +261,17 @@ def detect_cluster_conflicts(
 def build_grouping_decision(
     candidate: CandidateRecord,
     clusters: Mapping[str, str],
-    entities: Mapping[str, str],
-    conflicts: Mapping[str, ClusterConflict] | None = None,
+    entities: EntityAssignments,
 ) -> GroupingDecision:
     cluster_id = clusters[candidate.candidate_id]
-    embedded_conflicts = getattr(entities, "conflicts", None)
-    if conflicts is None:
-        if not isinstance(embedded_conflicts, Mapping):
-            raise ValueError("conflict evidence is required for a grouping decision")
-        conflict_map = embedded_conflicts
-    else:
-        conflict_map = conflicts
-    conflict = conflict_map.get(cluster_id)
-    split_families = getattr(entities, "split_families", {})
-    split_family_id = split_families.get(
-        candidate.candidate_id,
-        _stable_id("split", (candidate.acquisition_batch_id, entities[candidate.candidate_id])),
-    )
+    if not isinstance(entities, EntityAssignments):
+        raise ValueError("complete entity assignments are required for a grouping decision")
+    conflict = entities.conflicts.get(cluster_id)
     return GroupingDecision(
         candidate_id=candidate.candidate_id,
         content_cluster_id=cluster_id,
         watch_entity_id=entities[candidate.candidate_id],
-        split_family_id=split_family_id,
+        split_family_id=entities.split_families[candidate.candidate_id],
         quarantined=conflict is not None,
         conflict_candidate_ids=() if conflict is None else conflict.candidate_ids,
         conflict_evidence_ids=() if conflict is None else conflict.evidence_ids,

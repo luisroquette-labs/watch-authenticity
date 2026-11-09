@@ -38,8 +38,8 @@ def test_uncertain_same_watch_is_grouped_not_split(grouped_records):
     assert entity_ids["front"] == entity_ids["clasp"]
     front = next(record for record in grouped_records if record.candidate_id == "front")
     clasp = next(record for record in grouped_records if record.candidate_id == "clasp")
-    assert build_grouping_decision(front, clusters, entity_ids, evidence).split_family_id == (
-        build_grouping_decision(clasp, clusters, entity_ids, evidence).split_family_id
+    assert build_grouping_decision(front, clusters, entity_ids).split_family_id == (
+        build_grouping_decision(clasp, clusters, entity_ids).split_family_id
     )
 
 
@@ -48,7 +48,9 @@ def test_visual_similarity_alone_does_not_assert_physical_watch_identity(grouped
 
     entity_ids = assign_watch_entities(grouped_records, clusters)
 
-    assert entity_ids["front"] != entity_ids["clasp"]
+    assert clusters["front"] == clusters["repost"]
+    assert entity_ids["front"] != entity_ids["repost"]
+    assert entity_ids.split_families["front"] == entity_ids.split_families["repost"]
 
 
 def test_reviewer_link_and_hashed_serial_can_join_angles(grouped_records):
@@ -91,7 +93,7 @@ def test_grouping_decision_fails_closed_when_conflict_metadata_is_dropped(groupe
     clusters = build_content_clusters(grouped_records)
     entity_ids = assign_watch_entities(grouped_records, clusters)
 
-    with pytest.raises(ValueError, match="conflict evidence is required"):
+    with pytest.raises(ValueError, match="complete entity assignments are required"):
         build_grouping_decision(grouped_records[0], clusters, dict(entity_ids))
 
 

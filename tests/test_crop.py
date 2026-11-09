@@ -129,3 +129,14 @@ def test_crop_derivative_rejects_crop_missing_expected_watch_region():
             parent_sha256="a" * 64,
             expected_watch_region=(0, 0, 10, 10),
         )
+
+
+def test_crop_derivative_rejects_empty_explicit_coordinates():
+    with pytest.raises(ValueError, match="crop must contain four integer coordinates"):
+        crop_derivative(
+            _coordinate_encoded_frame(),
+            angle="clasp",
+            parent_sha256="a" * 64,
+            expected_watch_region=(50, 25, 110, 75),
+            coordinates=(),
+        )
