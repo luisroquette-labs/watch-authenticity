@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import io
+import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 from uuid import UUID
 
@@ -26,6 +29,11 @@ from acquisition.types import (
     TrainingRecord,
 )
 from core.types import Label
+from dataset.reference_catalog import (
+    ReferenceCatalog,
+    catalog_document_sha256,
+    parse_reference_catalog,
+)
 from infra.ibm_evidence import run_spec_sha256
 from infra.ibm_types import (
     CreditEvidence,
@@ -40,6 +48,71 @@ from infra.ibm_types import (
 
 NOW = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)
 _SAFE_USER_DATA = "#!/bin/bash\nset -euo pipefail\n/opt/watch-auth/bootstrap-host\n"
+
+
+class _ReferenceCatalogFixture:
+    def __init__(self):
+        self.document = json.loads(Path("config/reference_catalog.json").read_text())
+        self.catalog = self._parse(self.document)
+        self.admitted_document = self._admit_submariner(self.document)
+        self.admitted_catalog = self._parse(self.admitted_document)
+
+    @staticmethod
+    def _parse(
+        document: dict[str, Any], previous: ReferenceCatalog | None = None
+    ) -> ReferenceCatalog:
+        return parse_reference_catalog(
+            document,
+            expected_sha256=catalog_document_sha256(document),
+            previous=previous,
+        )
+
+    @staticmethod
+    def _admit_submariner(document: dict[str, Any]) -> dict[str, Any]:
+        admitted = copy.deepcopy(document)
+        admitted["references"][0].update(
+            {
+                "identity_evidence_sha256": "1" * 64,
+                "gold_freeze_sha256": "2" * 64,
+                "holdout_freeze_sha256": "3" * 64,
+                "status": "admitted",
+                "head": {
+                    "reference_id": "rolex-submariner-126610ln",
+                    "generation": 1,
+                    "checkpoint_sha256": "4" * 64,
+                    "calibration_sha256": "5" * 64,
+                },
+            }
+        )
+        return admitted
+
+    def load(self, case: str) -> ReferenceCatalog:
+        admitted_cases = {"changed_angles", "revoked_admission", "wrong_reference_checkpoint"}
+        document = copy.deepcopy(
+            self.admitted_document if case in admitted_cases else self.document
+        )
+        previous = None
+        if case == "alias_collision":
+            alias = "rolex-datejust-41-126334"
+            document["references"][1]["aliases"] = [alias, alias]
+        elif case == "generation_mismatch":
+            document["generation"] = 2
+        elif case == "changed_angles":
+            document["references"][0]["required_angles"] = ["dial"]
+            previous = self.admitted_catalog
+        elif case == "revoked_admission":
+            document["references"][0]["status"] = "pending"
+            document["references"][0]["head"] = None
+            previous = self.admitted_catalog
+        elif case == "wrong_reference_checkpoint":
+            document["references"][0]["head"]["reference_id"] = "rolex-datejust-126334"
+        expected = "0" * 64 if case == "catalog_hash_mismatch" else catalog_document_sha256(document)
+        return parse_reference_catalog(document, expected_sha256=expected, previous=previous)
+
+
+@pytest.fixture
+def catalog_fixture():
+    return _ReferenceCatalogFixture()
 
 
 class _Response:
