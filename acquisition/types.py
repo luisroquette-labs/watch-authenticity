@@ -357,6 +357,8 @@ def validate_contract_bundle(
 
     if candidate.candidate_id != evidence.candidate_id or candidate.candidate_id != training.candidate_id:
         raise ValueError("candidate lineage differs")
+    if candidate.acquisition_batch_id != training.acquisition_batch_id:
+        raise ValueError("acquisition batch lineage differs")
     if candidate.rights_record_id != rights.rights_record_id or rights.rights_record_id != training.rights_record_id:
         raise ValueError("rights lineage differs")
     if evidence.evidence_record_id != training.evidence_record_id:
@@ -368,11 +370,15 @@ def validate_contract_bundle(
         or evidence.tier is not training.evidence_tier
     ):
         raise ValueError("accepted evidence differs from training record")
+    candidate_domain = urlsplit(candidate.source_url).hostname
+    if candidate_domain is None or candidate_domain.rstrip(".").lower() != training.source_domain:
+        raise ValueError("source domain differs from candidate URL")
 
 
 @dataclass(frozen=True)
 class BatchReceipt:
     batch_id: str
+    batch_sha256: str
     policy_sha256: str
     rights_sha256: str
     accepted_candidate_ids: tuple[str, ...]
@@ -380,6 +386,7 @@ class BatchReceipt:
 
     def __post_init__(self) -> None:
         _nonempty(self.batch_id, "batch_id")
+        _sha256(self.batch_sha256, "batch_sha256")
         _sha256(self.policy_sha256, "policy_sha256")
         _sha256(self.rights_sha256, "rights_sha256")
         _unique_nonempty(self.accepted_candidate_ids, "accepted_candidate_ids", allow_empty=True)

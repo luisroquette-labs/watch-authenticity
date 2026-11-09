@@ -79,6 +79,20 @@ def test_cross_record_lineage_must_match(valid_contract_bundle):
     validate_contract_bundle(candidate, rights, evidence, training)
     with pytest.raises(ValueError, match="candidate lineage"):
         validate_contract_bundle(candidate, rights, replace(evidence, candidate_id="other"), training)
+    with pytest.raises(ValueError, match="batch lineage"):
+        validate_contract_bundle(
+            candidate,
+            rights,
+            evidence,
+            replace(training, acquisition_batch_id="batch-other"),
+        )
+    with pytest.raises(ValueError, match="source domain"):
+        validate_contract_bundle(
+            candidate,
+            rights,
+            evidence,
+            replace(training, source_domain="invented.example"),
+        )
 
 
 def test_rights_fixture_preserves_expired_status(expired_rights):
@@ -111,17 +125,19 @@ def test_policy_receipt_freeze_and_reports_are_frozen_real_contracts(
         reviewed_at=valid_contract_bundle[2].review_timestamps[0],
         decision_sha256="3" * 64,
     )
-    receipt = BatchReceipt("batch-1", "4" * 64, "5" * 64, ("candidate-1",), ())
+    receipt = BatchReceipt(
+        "batch-1", "4" * 64, "5" * 64, "6" * 64, ("candidate-1",), (),
+    )
     freeze = DatasetFreeze(
-        "6" * 64,
         "7" * 64,
         "8" * 64,
+        "9" * 64,
         (training.asset_id,),
         ("asset-excluded",),
         (("rights expired", 1),),
     )
     impacted = ImpactedArtifactReport(
-        ("9" * 64,), "rights revoked", decision.reviewed_at,
+        ("a" * 64,), "rights revoked", decision.reviewed_at,
     )
     disposition = DataDispositionReport(
         (object_ref,), (), (), "quarantine", decision.reviewed_at, "pending",
