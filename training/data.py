@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import tempfile
 from collections import Counter
@@ -46,6 +47,7 @@ _RECORD_FIELDS = frozenset(
         "subject_id",
         "provenance_id",
         "rights",
+        "evidence_tier",
         "rejection_subtype",
     }
 )
@@ -67,6 +69,7 @@ class TrainingRecord:
     subject_id: str
     provenance_id: str
     rights: str
+    evidence_tier: str
     rejection_subtype: str | None
     model_class: ModelClass
 
@@ -143,6 +146,9 @@ def _parse_record(raw: object, spec: RunSpec) -> TrainingRecord:
     rights = _nonempty(raw["rights"], "rights")
     if rights not in _RIGHTS:
         raise TrainingDataRefused("training records require owner or licensed rights")
+    evidence_tier = _nonempty(raw["evidence_tier"], "evidence_tier")
+    if evidence_tier not in {"a", "b"}:
+        raise TrainingDataRefused("training records require Tier A or B evidence")
     return TrainingRecord(
         asset_id=asset_id,
         object_key=object_key,
@@ -154,6 +160,7 @@ def _parse_record(raw: object, spec: RunSpec) -> TrainingRecord:
         subject_id=_nonempty(raw["subject_id"], "subject_id"),
         provenance_id=_nonempty(raw["provenance_id"], "provenance_id"),
         rights=rights,
+        evidence_tier=evidence_tier,
         rejection_subtype=(
             raw["rejection_subtype"] if isinstance(raw["rejection_subtype"], str) else None
         ),
@@ -261,23 +268,12 @@ def load_training_data(cos: Any, spec: RunSpec) -> TrainingBundle:
         require_all_model_classes(class_counts)
     except ValueError as exc:
         raise TrainingDataRefused(str(exc)) from exc
-    def count_heads(selected: list[TrainingRecord]) -> dict[str, Counter[ModelClass]]:
-        counts_by_angle: dict[str, Counter[ModelClass]] = {
-            angle: Counter() for angle in ANGLE_CROP_FRACTIONS
-        }
-        for record in selected:
-            angles = ANGLE_CROP_FRACTIONS if record.label is Label.REJECTION else (record.angle,)
-            for angle in angles:
-                assert isinstance(angle, str)
-                counts_by_angle[angle][record.model_class] += 1
-        return counts_by_angle
-
-    head_counts = count_heads(train_records)
+    head_counts = _count_heads(train_records)
     validation_records = [
         record for record in records if split_by_asset[record.asset_id] == VAL
     ]
     try:
-        for counts in (*head_counts.values(), *count_heads(validation_records).values()):
+        for counts in (*head_counts.values(), *_count_heads(validation_records).values()):
             require_all_model_classes(counts)
     except ValueError as exc:
         raise TrainingDataRefused(
@@ -306,3 +302,91 @@ def load_training_data(cos: Any, spec: RunSpec) -> TrainingBundle:
         manifest_sha256=spec.manifest_sha256,
         splits_sha256=spec.splits_sha256,
     )
+
+
+def entity_wave_asset_ids(
+    bundle: TrainingBundle,
+    fractions: tuple[float, ...] = (0.25, 0.5, 0.75, 1.0),
+) -> Mapping[float, tuple[str, ...]]:
+    """Build nested, class/angle-balanced waves from physical entities."""
+    if fractions != tuple(sorted(set(fractions))) or any(
+        not 0 < fraction <= 1 for fraction in fractions
+    ):
+        raise ValueError("wave fractions must be unique, increasing and inside (0, 1]")
+    train_ids = set(bundle.splits[TRAIN])
+    groups: dict[tuple[ModelClass, str], dict[str, list[str]]] = {}
+    for record in bundle.records:
+        if record.asset_id not in train_ids:
+            continue
+        angle = record.angle or "rejection"
+        groups.setdefault((record.model_class, angle), {}).setdefault(
+            record.subject_id, []
+        ).append(record.asset_id)
+    waves: dict[float, tuple[str, ...]] = {}
+    for fraction in fractions:
+        selected: set[str] = set()
+        for entities in groups.values():
+            ordered = sorted(entities)
+            count = min(len(ordered), max(1, math.ceil(len(ordered) * fraction)))
+            for entity_id in ordered[:count]:
+                selected.update(entities[entity_id])
+        waves[fraction] = tuple(sorted(selected))
+    if fractions and set(waves[fractions[-1]]) != train_ids:
+        raise TrainingDataRefused("final entity wave does not cover the frozen train split")
+    return MappingProxyType(waves)
+
+
+def training_wave_bundle(
+    bundle: TrainingBundle, selected_train_asset_ids: tuple[str, ...]
+) -> TrainingBundle:
+    """Return one immutable wave while retaining every frozen evaluation split."""
+    selected = set(selected_train_asset_ids)
+    frozen_train = set(bundle.splits[TRAIN])
+    if not selected or not selected <= frozen_train:
+        raise TrainingDataRefused("training wave must be a non-empty subset of frozen train assets")
+    records = tuple(
+        record
+        for record in bundle.records
+        if bundle.split_by_asset[record.asset_id] != TRAIN or record.asset_id in selected
+    )
+    train_records = [record for record in records if record.asset_id in selected]
+    class_counts = Counter(record.model_class for record in train_records)
+    head_counts = _count_heads(train_records)
+    try:
+        require_all_model_classes(class_counts)
+        for counts in head_counts.values():
+            require_all_model_classes(counts)
+    except ValueError as exc:
+        raise TrainingDataRefused("every wave must preserve every class in every angle head") from exc
+    splits = dict(bundle.splits)
+    splits[TRAIN] = tuple(sorted(selected))
+    split_by_asset = {
+        asset_id: split
+        for split, asset_ids in splits.items()
+        for asset_id in asset_ids
+    }
+    return TrainingBundle(
+        cos=bundle.cos,
+        bucket=bundle.bucket,
+        records=records,
+        splits=MappingProxyType(splits),
+        split_by_asset=MappingProxyType(split_by_asset),
+        class_counts=MappingProxyType(dict(class_counts)),
+        head_class_counts=MappingProxyType(
+            {angle: MappingProxyType(dict(counts)) for angle, counts in head_counts.items()}
+        ),
+        manifest_sha256=bundle.manifest_sha256,
+        splits_sha256=bundle.splits_sha256,
+    )
+
+
+def _count_heads(selected: list[TrainingRecord]) -> dict[str, Counter[ModelClass]]:
+    counts_by_angle: dict[str, Counter[ModelClass]] = {
+        angle: Counter() for angle in ANGLE_CROP_FRACTIONS
+    }
+    for record in selected:
+        angles = ANGLE_CROP_FRACTIONS if record.label is Label.REJECTION else (record.angle,)
+        for angle in angles:
+            assert isinstance(angle, str)
+            counts_by_angle[angle][record.model_class] += 1
+    return counts_by_angle

@@ -22,7 +22,7 @@ from infra.ibm_types import RunSpec
 from model.heads import build_trainable_model
 from tests.conftest import valid_run_spec
 from training.data import TrainingDataRefused, load_training_data
-from training.run import TrainingRefused, run_training
+from training.run import RunResult, TrainingRefused, run_training, run_training_waves
 
 
 def _canonical(value: object) -> bytes:
@@ -102,6 +102,7 @@ def _record(
         "subject_id": subject_id,
         "provenance_id": provenance_id,
         "rights": rights,
+        "evidence_tier": "b",
         "rejection_subtype": rejection_subtype,
     }
 
@@ -249,6 +250,23 @@ def test_loader_accepts_complete_content_addressed_freeze(training_fixture):
     )
     assert bundle.manifest_sha256 == spec.manifest_sha256
     assert bundle.splits_sha256 == spec.splits_sha256
+
+
+def test_wave_runner_uses_four_nested_entity_waves(training_fixture, monkeypatch, tmp_path):
+    cos, spec, _manifest, _splits, _images = training_fixture
+    bundle = load_training_data(cos, spec)
+    called: list[Path] = []
+
+    def fake_run(_bundle, _spec, output_dir):
+        called.append(output_dir)
+        return RunResult(1, 1, 0.5, {})
+
+    monkeypatch.setattr(training_run, "run_training", fake_run)
+
+    results = run_training_waves(bundle, spec, tmp_path)
+
+    assert tuple(item.fraction for item in results) == (0.25, 0.5, 0.75, 1.0)
+    assert [path.name for path in called] == ["wave-025", "wave-050", "wave-075", "wave-100"]
 
 
 @pytest.mark.parametrize("failure", ["placeholder", "single-source", "missing", "bad-metadata"])

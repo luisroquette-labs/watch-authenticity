@@ -25,7 +25,12 @@ from dataset.splits import TRAIN, VAL
 from infra.ibm_cos import IntegrityError, download_verified
 from infra.ibm_types import RunSpec
 from model.heads import AngleHeadModel, build_trainable_model, trainable_head_parameters
-from training.data import TrainingBundle, TrainingRecord
+from training.data import (
+    TrainingBundle,
+    TrainingRecord,
+    entity_wave_asset_ids,
+    training_wave_bundle,
+)
 
 SEED = 42
 MAX_EPOCHS = 50
@@ -47,6 +52,13 @@ class RunResult:
     best_epoch: int
     best_validation_nll: float
     artifacts: dict[Path, str]
+
+
+@dataclass(frozen=True)
+class WaveRunResult:
+    fraction: float
+    entity_count: int
+    result: RunResult
 
 
 @dataclass(frozen=True)
@@ -123,6 +135,9 @@ def _lineage(bundle: TrainingBundle, spec: RunSpec, class_map_sha256: str) -> di
         "manifest_sha256": spec.manifest_sha256,
         "splits_sha256": spec.splits_sha256,
         "class_map_sha256": class_map_sha256,
+        "train_assets_sha256": hashlib.sha256(
+            _canonical(sorted(bundle.splits[TRAIN]))
+        ).hexdigest(),
     }
 
 
@@ -579,3 +594,21 @@ def run_training(bundle: TrainingBundle, spec: RunSpec, output_dir: Path) -> Run
         best_epoch=best_epoch,
         best_validation_nll=best_validation_nll,
     )
+
+
+def run_training_waves(
+    bundle: TrainingBundle, spec: RunSpec, output_dir: Path
+) -> tuple[WaveRunResult, ...]:
+    """Train the same seeded probe on nested 25/50/75/100% entity waves."""
+    results: list[WaveRunResult] = []
+    records_by_id = {record.asset_id: record for record in bundle.records}
+    for fraction, asset_ids in entity_wave_asset_ids(bundle).items():
+        wave_bundle = training_wave_bundle(bundle, asset_ids)
+        result = run_training(
+            wave_bundle,
+            spec,
+            output_dir / f"wave-{round(fraction * 100):03d}",
+        )
+        entity_count = len({records_by_id[asset_id].subject_id for asset_id in asset_ids})
+        results.append(WaveRunResult(fraction, entity_count, result))
+    return tuple(results)
