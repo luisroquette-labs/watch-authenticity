@@ -14,6 +14,7 @@ before any photo reaches a split (Requirements items 5 and 13; CK-11):
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import imagehash
@@ -68,15 +69,30 @@ def dedup_filter(images: list[Any]) -> list[Any]:
     return kept
 
 
-def studio_photo_filter(image: Any) -> bool:
-    """Flag a studio/catalog photo (near-perfect white backdrop) for exclusion.
-
-    True means "exclude this photo from the training set" (CK-11).
-    """
+def classify_capture_style(image: Any, metadata: Mapping[str, object]) -> str:
+    """Classify photographic style without using the source or assigning a label."""
+    del metadata
     pixels = np.asarray(image.convert("RGB"), dtype=np.uint8)
     border_pixels = _border_ring(pixels, _BORDER_MARGIN_FRACTION)
     near_white = np.all(border_pixels >= STUDIO_WHITE_RGB_FLOOR, axis=-1)
-    return bool(near_white.mean() >= STUDIO_BORDER_WHITE_FRACTION)
+    return "studio" if near_white.mean() >= STUDIO_BORDER_WHITE_FRACTION else "casual"
+
+
+def route_capture(style: str, metadata: Mapping[str, object]) -> str:
+    """Route catalog-like captures without discarding confirmed studio replicas."""
+    if style not in {"studio", "casual"}:
+        raise ValueError("unknown capture style")
+    if style == "casual":
+        return "eligible"
+    if (
+        metadata.get("rights_cleared") is True
+        and metadata.get("evidence_confirmed") is True
+        and metadata.get("accepted_label") == "fake"
+    ):
+        return "cross_source_evaluation"
+    if metadata.get("repeated_catalog") is True:
+        return "exclude"
+    return "review"
 
 
 def _border_ring(pixels: np.ndarray, margin_fraction: float) -> np.ndarray:
