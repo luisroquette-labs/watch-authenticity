@@ -165,6 +165,10 @@ def test_propose_source_label_never_uses_source_or_original_claim_as_truth(sourc
     assert propose_source_label(source=source, listing_text=claim) is None
 
 
+def test_propose_source_label_does_not_invert_replica_denial():
+    assert propose_source_label(source="olx", listing_text="não é réplica; é original") is None
+
+
 # --- CK-19: aggregate_angles ------------------------------------------------
 
 

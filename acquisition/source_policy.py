@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -27,6 +28,12 @@ def _string_tuple(value: Any, field: str) -> tuple[str, ...]:
     return tuple(value)
 
 
+def _policy_evidence_hash(values: Mapping[str, Any]) -> str:
+    payload = {key: value for key, value in values.items() if key != "policy_evidence_sha256"}
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def load_source_policies(path: Path) -> dict[str, SourcePolicy]:
     """Load and validate the versioned source registry."""
     try:
@@ -37,10 +44,13 @@ def load_source_policies(path: Path) -> dict[str, SourcePolicy]:
         raise ValueError("source policy registry must be a JSON array")
 
     policies: dict[str, SourcePolicy] = {}
+    policy_ids: set[str] = set()
     for entry in raw:
         if not isinstance(entry, dict):
             raise ValueError("each source policy must be a JSON object")
         values = dict(entry)
+        if values.get("policy_evidence_sha256") != _policy_evidence_hash(values):
+            raise ValueError("policy_evidence_sha256 does not match policy content")
         values["allowed_methods"] = _string_tuple(values.get("allowed_methods"), "allowed_methods")
         values["required_rights_purposes"] = _string_tuple(
             values.get("required_rights_purposes"), "required_rights_purposes"
@@ -52,7 +62,10 @@ def load_source_policies(path: Path) -> dict[str, SourcePolicy]:
         source = policy.source.strip().lower()
         if source in policies:
             raise ValueError(f"duplicate source policy: {source}")
+        if policy.policy_id in policy_ids:
+            raise ValueError(f"duplicate policy_id: {policy.policy_id}")
         policies[source] = policy
+        policy_ids.add(policy.policy_id)
     return policies
 
 

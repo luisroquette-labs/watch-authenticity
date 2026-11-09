@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import FrozenInstanceError, replace
 from datetime import timedelta
 from pathlib import Path
@@ -15,6 +17,12 @@ from acquisition.source_policy import (
     load_source_policies,
 )
 from acquisition.types import RightsStatus
+
+
+def policy_content_hash(entry):
+    payload = {key: value for key, value in entry.items() if key != "policy_evidence_sha256"}
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def test_registry_loads_every_declared_source_policy(policy_set):
@@ -80,18 +88,35 @@ def test_rights_are_not_valid_before_their_effective_time(policy_set, rights):
 
 def test_loader_rejects_duplicate_sources(tmp_path: Path):
     path = tmp_path / "policies.json"
-    path.write_text(
-        """[
-          {"policy_id":"one","source":"duplicate","allowed_methods":[],
-           "may_download":false,"may_train":false,"required_rights_purposes":[],
-           "requires_rightsholder_permission":true,"policy_evidence_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-          {"policy_id":"two","source":"duplicate","allowed_methods":[],
-           "may_download":false,"may_train":false,"required_rights_purposes":[],
-           "requires_rightsholder_permission":true,"policy_evidence_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
-        ]"""
-    )
+    entry = json.loads(Path("config/source_policies.json").read_text())[0]
+    path.write_text(json.dumps([entry, entry]))
 
     with pytest.raises(ValueError, match="duplicate source"):
+        load_source_policies(path)
+
+
+def test_loader_rejects_duplicate_policy_ids(tmp_path: Path, policy_set):
+    first = get_source_policy(policy_set, "partner-upload")
+    second = get_source_policy(policy_set, "owner-authorized-upload")
+    entries = [
+        {
+            **first.__dict__,
+            "allowed_methods": list(first.allowed_methods),
+            "required_rights_purposes": list(first.required_rights_purposes),
+        },
+        {
+            **second.__dict__,
+            "policy_id": first.policy_id,
+            "allowed_methods": list(second.allowed_methods),
+            "required_rights_purposes": list(second.required_rights_purposes),
+        },
+    ]
+    for entry in entries:
+        entry["policy_evidence_sha256"] = policy_content_hash(entry)
+    path = tmp_path / "policies.json"
+    path.write_text(json.dumps(entries))
+
+    with pytest.raises(ValueError, match="duplicate policy_id"):
         load_source_policies(path)
 
 
@@ -105,6 +130,16 @@ def test_loader_rejects_missing_policy_evidence_hash(tmp_path: Path):
     )
 
     with pytest.raises(ValueError, match="policy_evidence_sha256"):
+        load_source_policies(path)
+
+
+def test_loader_rejects_policy_content_that_no_longer_matches_hash(tmp_path: Path):
+    path = tmp_path / "policies.json"
+    entry = json.loads(Path("config/source_policies.json").read_text())[0]
+    entry["may_train"] = False
+    path.write_text(json.dumps([entry]))
+
+    with pytest.raises(ValueError, match="does not match policy content"):
         load_source_policies(path)
 
 
