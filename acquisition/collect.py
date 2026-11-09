@@ -171,10 +171,16 @@ def collect_batch(
             rights_record_id=rights.rights_record_id,
         )
         receipt = _receipt_bytes(candidate, derivative_sha256)
-        receipt_key = f"datasets/receipts/{batch_id}/{candidate_id}.json"
-        existing = _read_receipt(cos_client, bucket, receipt_key)
-        if existing is not None and existing != receipt:
-            raise IntegrityError(f"receipt collision: {receipt_key}")
+        receipt_sha256 = hashlib.sha256(receipt).hexdigest()
+        receipt_prefix = f"datasets/receipts/{batch_id}/{candidate_id}-"
+        receipt_key = f"{receipt_prefix}{receipt_sha256}.json"
+        receipt_exists = _verify_receipt_inventory(
+            cos_client,
+            bucket,
+            receipt_prefix,
+            receipt_key,
+            receipt,
+        )
 
         _upload_bytes(cos_client, bucket, f"datasets/raw/{raw_sha256}", payload, raw_sha256)
         _upload_bytes(
@@ -184,8 +190,16 @@ def collect_batch(
             derivative,
             derivative_sha256,
         )
-        if existing is None:
+        if not receipt_exists:
             _write_receipt(cos_client, bucket, receipt_key, receipt)
+        _verify_receipt_inventory(
+            cos_client,
+            bucket,
+            receipt_prefix,
+            receipt_key,
+            receipt,
+            require_one=True,
+        )
         accepted.append(candidate_id)
         receipt_hashes.append(hashlib.sha256(receipt).hexdigest())
 
@@ -450,43 +464,53 @@ def _read_receipt(cos_client: Any, bucket: str, key: str) -> bytes | None:
 
 def _write_receipt(cos_client: Any, bucket: str, key: str, body: bytes) -> None:
     digest = hashlib.sha256(body).hexdigest()
-    try:
-        cos_client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=body,
-            Metadata={"sha256": digest, "length": str(len(body))},
-            ContentType="application/json",
-            IfNoneMatch="*",
-        )
-    except Exception as exc:
-        if not _is_precondition_conflict(exc):
-            raise
-        if _read_receipt(cos_client, bucket, key) != body:
-            raise IntegrityError(f"receipt collision: {key}") from exc
-        return
+    cos_client.put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=body,
+        Metadata={"sha256": digest, "length": str(len(body))},
+        ContentType="application/json",
+    )
     if _read_receipt(cos_client, bucket, key) != body:
         raise IntegrityError(f"receipt collision: {key}")
+
+
+def _verify_receipt_inventory(
+    cos_client: Any,
+    bucket: str,
+    prefix: str,
+    expected_key: str,
+    expected_body: bytes,
+    *,
+    require_one: bool = False,
+) -> bool:
+    page = cos_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+    if not isinstance(page, dict) or page.get("IsTruncated"):
+        raise IntegrityError("receipt inventory is incomplete")
+    contents = page.get("Contents", [])
+    if not isinstance(contents, list):
+        raise IntegrityError("receipt inventory contents are invalid")
+    keys: list[str] = []
+    for item in contents:
+        key = item.get("Key") if isinstance(item, dict) else None
+        if not isinstance(key, str) or not key.startswith(prefix):
+            raise IntegrityError("receipt inventory contains an invalid key")
+        keys.append(key)
+    if not keys:
+        if require_one:
+            raise IntegrityError("receipt is missing after write")
+        return False
+    if len(keys) != 1 or keys[0] != expected_key:
+        raise IntegrityError(f"receipt collision: {prefix}")
+    if _read_receipt(cos_client, bucket, expected_key) != expected_body:
+        raise IntegrityError(f"receipt collision: {expected_key}")
+    return True
 
 
 def _is_not_found(exc: Exception) -> bool:
     response = getattr(exc, "response", None)
     error = response.get("Error") if isinstance(response, dict) else None
     return isinstance(error, dict) and str(error.get("Code")) in {"404", "NoSuchKey", "NotFound"}
-
-
-def _is_precondition_conflict(exc: Exception) -> bool:
-    response = getattr(exc, "response", None)
-    if not isinstance(response, dict):
-        return False
-    metadata = response.get("ResponseMetadata")
-    error = response.get("Error")
-    return (
-        isinstance(metadata, dict)
-        and metadata.get("HTTPStatusCode") == 412
-        or isinstance(error, dict)
-        and str(error.get("Code")) in {"412", "PreconditionFailed"}
-    )
 
 
 def _optional_string(value: object) -> str | None:

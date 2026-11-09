@@ -5,11 +5,16 @@ import inspect
 import io
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
+from unittest.mock import MagicMock
 
+import ibm_botocore.session
 import pytest
 from PIL import Image
 
+import acquisition.collect as collect_module
 import acquisition.partner_import as partner_import
 from acquisition.collect import (
     AcquisitionRefused,
@@ -19,7 +24,7 @@ from acquisition.collect import (
     sanitize_image,
 )
 from acquisition.partner_import import import_partner_export
-from tests.conftest import NOW
+from tests.conftest import NOW, _Response
 
 
 def test_blocked_policy_makes_no_http_or_cos_call(blocked_policy, rights, http_client, cos):
@@ -70,35 +75,58 @@ def test_repeated_batch_reuses_verified_raw_derivative_and_receipt(collector_fix
     assert cos.write_count == writes
 
 
-def test_concurrent_identical_receipt_create_is_idempotent(collector_fixture, cos):
-    first = collector_fixture.collect("valid")
-    candidate_id = first.accepted_candidate_ids[0]
-    key = f"datasets/receipts/b1/{candidate_id}.json"
-    receipt = cos.bodies[key]
-    cos.bodies.clear()
-    cos.metadata.clear()
-    cos.write_count = 0
-    cos.race_receipt_body = receipt
+def test_concurrent_identical_receipt_create_is_idempotent(
+    allowed_policy, rights, cos
+):
+    body = _png("red")
+    cos.receipt_write_barrier = Barrier(2)
 
-    assert collector_fixture.collect("valid") == first
-    assert cos.bodies[key] == receipt
-    assert cos.race_receipt_body is None
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                lambda _: _collect_body(body, allowed_policy, rights, cos),
+                range(2),
+            )
+        )
+
+    assert results[0] == results[1]
+    candidate_id = results[0].accepted_candidate_ids[0]
+    assert len(_receipt_keys(cos, candidate_id)) == 1
 
 
-def test_concurrent_different_receipt_cannot_overwrite(collector_fixture, cos):
-    first = collector_fixture.collect("valid")
-    candidate_id = first.accepted_candidate_ids[0]
-    key = f"datasets/receipts/b1/{candidate_id}.json"
-    cos.bodies.clear()
-    cos.metadata.clear()
-    cos.write_count = 0
-    raced = b'{"different":true}'
-    cos.race_receipt_body = raced
+def test_concurrent_different_receipts_are_preserved_and_both_detect_collision(
+    allowed_policy, rights, cos
+):
+    cos.receipt_write_barrier = Barrier(2)
 
-    with pytest.raises(IntegrityError, match="receipt collision"):
-        collector_fixture.collect("valid")
+    def collect_or_error(body: bytes):
+        try:
+            return _collect_body(body, allowed_policy, rights, cos)
+        except IntegrityError as exc:
+            return exc
 
-    assert cos.bodies[key] == raced
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(collect_or_error, [_png("red"), _png("blue")]))
+
+    assert all(isinstance(result, IntegrityError) for result in results)
+    candidate_id = "candidate-" + hashlib.sha256(
+        b"b1\0partner-upload-v1\0record-1"
+    ).hexdigest()[:24]
+    receipt_keys = _receipt_keys(cos, candidate_id)
+    assert len(receipt_keys) == 2
+    assert len({cos.bodies[key] for key in receipt_keys}) == 2
+
+
+def test_receipt_put_uses_only_ibm_sdk_supported_parameters():
+    members = (
+        ibm_botocore.session.get_session()
+        .get_service_model("s3")
+        .operation_model("PutObject")
+        .input_shape.members
+    )
+
+    assert "IfNoneMatch" not in members
+    assert "IfNoneMatch" not in inspect.getsource(collect_module._write_receipt)
 
 
 def test_mixed_source_batch_refuses_before_any_io(
@@ -204,13 +232,27 @@ def test_missing_rights_refuses_before_network(allowed_policy, http_client, cos)
 def test_receipt_collision_refuses_without_overwriting(collector_fixture, cos):
     first = collector_fixture.collect("valid")
     candidate_id = first.accepted_candidate_ids[0]
-    key = f"datasets/receipts/b1/{candidate_id}.json"
+    [key] = _receipt_keys(cos, candidate_id)
     cos.bodies[key] = b'{"different":true}'
 
     with pytest.raises(IntegrityError, match="receipt"):
         collector_fixture.collect("valid")
 
     assert cos.bodies[key] == b'{"different":true}'
+
+
+def test_existing_different_receipt_refuses_before_new_cos_uploads(
+    allowed_policy, rights, cos
+):
+    first = _collect_body(_png("red"), allowed_policy, rights, cos)
+    candidate_id = first.accepted_candidate_ids[0]
+    writes = cos.write_count
+
+    with pytest.raises(IntegrityError, match="receipt collision"):
+        _collect_body(_png("blue"), allowed_policy, rights, cos)
+
+    assert cos.write_count == writes
+    assert len(_receipt_keys(cos, candidate_id)) == 1
 
 
 @pytest.mark.parametrize("unsafe_path", ["/tmp/image.png", "../image.png", "nested/../../image.png"])
@@ -296,3 +338,36 @@ def _partner_row(file: str) -> dict[str, object]:
         "collected_at": NOW.isoformat(),
         "declared_reference": "rolex-submariner-126610ln",
     }
+
+
+def _png(color: str) -> bytes:
+    output = io.BytesIO()
+    Image.new("RGB", (8, 8), color).save(output, format="PNG")
+    return output.getvalue()
+
+
+def _collect_body(body, policy, rights, cos):
+    http = MagicMock()
+    http.get.return_value = _Response(body, "image/png")
+    return collect_batch(
+        [
+            {
+                "source_record_id": "record-1",
+                "source_url": "https://partner.example/record-1",
+                "image_url": "https://partner.example/image-1.png",
+                "declared_reference": "rolex-submariner-126610ln",
+            }
+        ],
+        policy,
+        rights,
+        http_client=http,
+        cos_client=cos,
+        bucket="private",
+        batch_id="b1",
+        now=NOW,
+    )
+
+
+def _receipt_keys(cos, candidate_id: str) -> list[str]:
+    prefix = f"datasets/receipts/b1/{candidate_id}-"
+    return sorted(key for key in cos.bodies if key.startswith(prefix))

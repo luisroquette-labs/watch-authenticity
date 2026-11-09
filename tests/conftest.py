@@ -63,20 +63,12 @@ class _NotFound(Exception):
         self.response = {"Error": {"Code": "NoSuchKey"}}
 
 
-class _PreconditionFailed(Exception):
-    def __init__(self):
-        self.response = {
-            "Error": {"Code": "PreconditionFailed"},
-            "ResponseMetadata": {"HTTPStatusCode": 412},
-        }
-
-
 class _CollectorCOS:
     def __init__(self):
         self.bodies: dict[str, bytes] = {}
         self.metadata: dict[str, dict[str, str]] = {}
         self.write_count = 0
-        self.race_receipt_body: bytes | None = None
+        self.receipt_write_barrier = None
         self._watch_auth_bucket = "private"
         self._watch_auth_prefix = "datasets"
         self._watch_auth_configuration_verified = True
@@ -97,6 +89,13 @@ class _CollectorCOS:
             raise _NotFound
         return {"Body": io.BytesIO(self.bodies[Key])}
 
+    def list_objects_v2(self, *, Bucket: str, Prefix: str):
+        del Bucket
+        return {
+            "Contents": [{"Key": key} for key in sorted(self.bodies) if key.startswith(Prefix)],
+            "IsTruncated": False,
+        }
+
     def put_object(
         self,
         *,
@@ -104,23 +103,14 @@ class _CollectorCOS:
         Key: str,
         Body: bytes,
         Metadata=None,
-        IfNoneMatch: str | None = None,
-        **_kwargs,
+        ContentType: str | None = None,
     ):
-        del Bucket
-        if IfNoneMatch == "*" and (Key in self.bodies or self.race_receipt_body is not None):
-            if self.race_receipt_body is not None:
-                raced = self.race_receipt_body
-                self.race_receipt_body = None
-                self.bodies[Key] = raced
-                self.metadata[Key] = {
-                    "sha256": hashlib.sha256(raced).hexdigest(),
-                    "length": str(len(raced)),
-                }
-            raise _PreconditionFailed
+        del Bucket, ContentType
         self.bodies[Key] = Body
         self.metadata[Key] = Metadata or {}
         self.write_count += 1
+        if Key.startswith("datasets/receipts/") and self.receipt_write_barrier is not None:
+            self.receipt_write_barrier.wait(timeout=5)
 
     def upload_file(self, filename: str, bucket: str, key: str, ExtraArgs):
         del bucket
