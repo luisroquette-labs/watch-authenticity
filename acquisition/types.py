@@ -16,6 +16,10 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _PHASH = re.compile(r"[0-9a-f]+")
 _DISPOSITIONS = {"retain", "quarantine", "delete"}
 _DISPOSITION_STATES = {"pending", "completed", "blocked"}
+_HOSTNAME = re.compile(
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+)
 
 
 def _nonempty(value: str, field: str) -> None:
@@ -87,6 +91,12 @@ class RightsStatus(Enum):
     BLOCKED = "blocked"
 
 
+class SourceAccessStatus(Enum):
+    ACTIVE = "active"
+    UNAVAILABLE = "unavailable"
+    BLOCKED = "blocked"
+
+
 class ReviewStatus(Enum):
     PENDING = "pending"
     ACCEPTED = "accepted"
@@ -137,6 +147,58 @@ class SourcePolicy:
             not self.allowed_methods or not self.required_rights_purposes
         ):
             raise ValueError("enabled policy requires methods and rights purposes")
+
+
+@dataclass(frozen=True)
+class SourceAccessRecord:
+    access_record_id: str
+    source: str
+    acquisition_method: str
+    status: SourceAccessStatus
+    evidence_url: str | None
+    evidence_sha256: str
+    verified_at: datetime
+    expires_at: datetime
+    allowed_image_hosts: tuple[str, ...]
+    requests_per_minute: int | None
+    reason: str
+
+    def __post_init__(self) -> None:
+        for field in ("access_record_id", "source", "acquisition_method", "reason"):
+            _nonempty(getattr(self, field), field)
+        if not isinstance(self.status, SourceAccessStatus):
+            raise ValueError("status must be SourceAccessStatus")
+        _sha256(self.evidence_sha256, "evidence_sha256")
+        _aware(self.verified_at, "verified_at")
+        _aware(self.expires_at, "expires_at")
+        if self.expires_at <= self.verified_at:
+            raise ValueError("source access expiry must follow verification")
+        _unique_nonempty(self.allowed_image_hosts, "allowed_image_hosts", allow_empty=True)
+        for host in self.allowed_image_hosts:
+            if (
+                host != host.lower()
+                or _HOSTNAME.fullmatch(host) is None
+                or urlsplit(f"//{host}").hostname != host
+                or ":" in host
+            ):
+                raise ValueError("allowed_image_hosts must contain exact lowercase hostnames")
+        if self.requests_per_minute is not None and (
+            isinstance(self.requests_per_minute, bool)
+            or not isinstance(self.requests_per_minute, int)
+            or self.requests_per_minute < 1
+        ):
+            raise ValueError("requests_per_minute must be a positive integer")
+        if self.evidence_url is not None:
+            parsed = urlsplit(self.evidence_url)
+            if parsed.scheme != "https" or not parsed.hostname:
+                raise ValueError("evidence_url must be an absolute HTTPS URL")
+        if self.status is SourceAccessStatus.ACTIVE:
+            network_method = self.acquisition_method in {"official-api", "licensed-feed"}
+            if self.evidence_url is None or (
+                network_method
+                and (not self.allowed_image_hosts or self.requests_per_minute is None)
+            ):
+                raise ValueError("active source access requires real evidence and network limits")
 
 
 @dataclass(frozen=True)

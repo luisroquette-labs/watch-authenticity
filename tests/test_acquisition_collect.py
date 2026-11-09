@@ -6,6 +6,7 @@ import io
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from threading import Barrier
 from unittest.mock import MagicMock
@@ -23,7 +24,8 @@ from acquisition.collect import (
     collect_batch,
     sanitize_image,
 )
-from acquisition.partner_import import import_partner_export
+from acquisition.partner_import import collect_partner_batch, import_partner_export
+from acquisition.types import SourceAccessRecord, SourceAccessStatus
 from tests.conftest import NOW, _Response
 
 
@@ -33,6 +35,7 @@ def test_blocked_policy_makes_no_http_or_cos_call(blocked_policy, rights, http_c
             [],
             blocked_policy,
             rights,
+            access=None,
             http_client=http_client,
             cos_client=cos,
             bucket="private",
@@ -40,7 +43,7 @@ def test_blocked_policy_makes_no_http_or_cos_call(blocked_policy, rights, http_c
             now=NOW,
         )
 
-    http_client.get.assert_not_called()
+    http_client.get_pinned.assert_not_called()
     assert cos.write_count == 0
 
 
@@ -151,6 +154,7 @@ def test_mixed_source_batch_refuses_before_any_io(
             [valid, wrong_source],
             allowed_policy,
             rights,
+            access=_access(rights),
             http_client=http_client,
             cos_client=cos,
             bucket="private",
@@ -158,7 +162,7 @@ def test_mixed_source_batch_refuses_before_any_io(
             now=NOW,
         )
 
-    http_client.get.assert_not_called()
+    http_client.get_pinned.assert_not_called()
     assert cos.write_count == 0
 
 
@@ -208,7 +212,7 @@ def test_429_retries_are_bounded_and_do_not_write(collector_fixture, cos):
     with pytest.raises(IntegrityError, match="after 3 attempts"):
         collector_fixture.collect("valid")
 
-    assert collector_fixture.http_client.get.call_count == 3
+    assert collector_fixture.http_client.get_pinned.call_count == 3
     assert cos.write_count == 0
 
 
@@ -218,6 +222,7 @@ def test_missing_rights_refuses_before_network(allowed_policy, http_client, cos)
             [],
             allowed_policy,
             None,
+            access=None,
             http_client=http_client,
             cos_client=cos,
             bucket="private",
@@ -225,7 +230,77 @@ def test_missing_rights_refuses_before_network(allowed_policy, http_client, cos)
             now=NOW,
         )
 
-    http_client.get.assert_not_called()
+    http_client.get_pinned.assert_not_called()
+    assert cos.write_count == 0
+
+
+@pytest.mark.parametrize(
+    "image_url",
+    [
+        "http://partner.example/image.png",
+        "https://user@partner.example/image.png",
+        "https://partner.example:8443/image.png",
+        "https://partner.example.evil.test/image.png",
+    ],
+)
+def test_external_download_rejects_url_tricks_before_http(
+    image_url, allowed_policy, rights, cos
+):
+    http = MagicMock()
+
+    with pytest.raises(AcquisitionRefused):
+        _collect_url(image_url, http, allowed_policy, rights, cos, _public_dns)
+
+    http.get_pinned.assert_not_called()
+    assert cos.write_count == 0
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["127.0.0.1", "10.0.0.1", "169.254.169.254", "224.0.0.1", "0.0.0.0"],
+)
+def test_external_download_rejects_non_public_dns(
+    address, allowed_policy, rights, cos
+):
+    http = MagicMock()
+
+    def resolver(*_args, **_kwargs):
+        return [(2, 1, 6, "", (address, 443))]
+
+    with pytest.raises(AcquisitionRefused, match="non-public"):
+        _collect_url(
+            "https://partner.example/image.png",
+            http,
+            allowed_policy,
+            rights,
+            cos,
+            resolver,
+        )
+
+    http.get_pinned.assert_not_called()
+
+
+def test_redirect_is_revalidated_before_second_connection(allowed_policy, rights, cos):
+    redirect = _Response(b"", "image/png", status_code=302, length=0)
+    redirect.headers["Location"] = "https://evil.example/internal.png"
+    http = MagicMock()
+    http.get_pinned.return_value = redirect
+
+    with pytest.raises(AcquisitionRefused, match="host is not approved"):
+        _collect_url(
+            "https://partner.example/image.png",
+            http,
+            allowed_policy,
+            rights,
+            cos,
+            _public_dns,
+        )
+
+    assert http.get_pinned.call_count == 1
+    assert http.get_pinned.call_args.kwargs["allow_redirects"] is False
+    assert http.get_pinned.call_args.kwargs["resolved_addresses"] == (
+        "93.184.216.34",
+    )
     assert cos.write_count == 0
 
 
@@ -327,6 +402,80 @@ def test_partner_import_hashes_declared_image(tmp_path: Path, rights):
     assert candidate.rights_record_id == rights.rights_record_id
 
 
+def test_partner_batch_persists_twenty_images_and_resumes_without_duplicates(
+    tmp_path: Path, allowed_policy, rights, cos
+):
+    evidence = b'{"permission":"owner-authorized","purpose":["download","train"]}'
+    evidence_path = tmp_path / "rights-evidence.json"
+    evidence_path.write_bytes(evidence)
+    rows = []
+    for index in range(20):
+        filename = f"image-{index}.png"
+        Image.new("RGB", (4, 4), (index, index * 2, index * 3)).save(tmp_path / filename)
+        row = _partner_row(filename)
+        row["candidate_id"] = f"partner-candidate-{index}"
+        row["source_record_id"] = "partner-listing-1"
+        rows.append(row)
+    manifest = tmp_path / "export.jsonl"
+    manifest.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    declared_rights = replace(
+        rights,
+        evidence_sha256=hashlib.sha256(evidence).hexdigest(),
+    )
+
+    first = collect_partner_batch(
+        manifest,
+        evidence_path,
+        allowed_policy,
+        declared_rights,
+        cos_client=cos,
+        bucket="private",
+        batch_id="partner-batch-1",
+        now=NOW,
+    )
+    writes = cos.write_count
+    second = collect_partner_batch(
+        manifest,
+        evidence_path,
+        allowed_policy,
+        declared_rights,
+        cos_client=cos,
+        bucket="private",
+        batch_id="partner-batch-1",
+        now=NOW,
+    )
+
+    assert len(first.accepted_candidate_ids) == 20
+    assert second == first
+    assert cos.write_count == writes
+    assert f"datasets/evidence/{declared_rights.evidence_sha256}" in cos.bodies
+
+
+def test_partner_batch_refuses_missing_or_mismatched_rights_evidence_before_cos(
+    tmp_path: Path, allowed_policy, rights, cos
+):
+    image = tmp_path / "image.png"
+    Image.new("RGB", (4, 4), "red").save(image)
+    manifest = tmp_path / "export.jsonl"
+    manifest.write_text(json.dumps(_partner_row(image.name)) + "\n")
+    evidence_path = tmp_path / "rights-evidence.json"
+    evidence_path.write_text("{}")
+
+    with pytest.raises(ValueError, match="rights evidence hash"):
+        collect_partner_batch(
+            manifest,
+            evidence_path,
+            allowed_policy,
+            rights,
+            cos_client=cos,
+            bucket="private",
+            batch_id="partner-batch-1",
+            now=NOW,
+        )
+
+    assert cos.write_count == 0
+
+
 def _partner_row(file: str) -> dict[str, object]:
     return {
         "file": file,
@@ -348,7 +497,7 @@ def _png(color: str) -> bytes:
 
 def _collect_body(body, policy, rights, cos):
     http = MagicMock()
-    http.get.return_value = _Response(body, "image/png")
+    http.get_pinned.return_value = _Response(body, "image/png")
     return collect_batch(
         [
             {
@@ -360,12 +509,56 @@ def _collect_body(body, policy, rights, cos):
         ],
         policy,
         rights,
+        access=_access(rights),
         http_client=http,
         cos_client=cos,
         bucket="private",
         batch_id="b1",
         now=NOW,
+        dns_resolver=_public_dns,
     )
+
+
+def _collect_url(image_url, http, policy, rights, cos, resolver):
+    return collect_batch(
+        [
+            {
+                "source_record_id": "record-1",
+                "source_url": "https://partner.example/record-1",
+                "image_url": image_url,
+                "declared_reference": "rolex-submariner-126610ln",
+            }
+        ],
+        policy,
+        rights,
+        access=_access(rights),
+        http_client=http,
+        cos_client=cos,
+        bucket="private",
+        batch_id="b1",
+        now=NOW,
+        dns_resolver=resolver,
+    )
+
+
+def _access(rights) -> SourceAccessRecord:
+    return SourceAccessRecord(
+        access_record_id="access-partner-test",
+        source="partner-upload",
+        acquisition_method="partner-export",
+        status=SourceAccessStatus.ACTIVE,
+        evidence_url="https://partner.example/access-evidence",
+        evidence_sha256="9" * 64,
+        verified_at=rights.effective_at,
+        expires_at=rights.expires_at,
+        allowed_image_hosts=("partner.example",),
+        requests_per_minute=60,
+        reason="test fixture",
+    )
+
+
+def _public_dns(*_args, **_kwargs):
+    return [(2, 1, 6, "", ("93.184.216.34", 443))]
 
 
 def _receipt_keys(cos, candidate_id: str) -> list[str]:

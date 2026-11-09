@@ -6,17 +6,119 @@ import hashlib
 import json
 import os
 import stat
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
+from typing import Any
 
-from acquisition.collect import MAX_IMAGE_BYTES, sanitize_image
-from acquisition.types import CandidateRecord, RightsRecord
+from acquisition.collect import (
+    MAX_IMAGE_BYTES,
+    AcquisitionRefused,
+    persist_candidate_payload,
+    sanitize_image,
+)
+from acquisition.source_policy import authorize_candidate
+from acquisition.types import BatchReceipt, CandidateRecord, RightsRecord, SourcePolicy
 from core.rules import propose_source_label
+from infra.ibm_cos import upload_verified
+
+
+@dataclass(frozen=True)
+class _PartnerPayload:
+    candidate: CandidateRecord
+    raw: bytes
+    derivative: bytes
 
 
 def import_partner_export(path: Path, declaration: RightsRecord) -> list[CandidateRecord]:
     """Hash and validate declared files; reject traversal, symlinks and extras."""
+
+    return [payload.candidate for payload in _import_partner_payloads(path, declaration)]
+
+
+def collect_partner_batch(
+    path: Path,
+    evidence_path: Path,
+    policy: SourcePolicy,
+    declaration: RightsRecord | None,
+    *,
+    cos_client: Any,
+    bucket: str,
+    batch_id: str,
+    now: datetime,
+) -> BatchReceipt:
+    """Persist a rights-cleared local export through the canonical collector."""
+    decision = authorize_candidate(policy, declaration, now=now)
+    if not decision.may_download:
+        raise AcquisitionRefused(", ".join(decision.reasons))
+    assert declaration is not None
+    root = path.parent.resolve()
+    try:
+        evidence_relative = evidence_path.resolve().relative_to(root).as_posix()
+    except ValueError as exc:
+        raise ValueError("rights evidence must be inside the partner export") from exc
+    safe_evidence = _safe_file(root, evidence_relative)
+    evidence = _read_regular_file(safe_evidence)
+    evidence_sha256 = hashlib.sha256(evidence).hexdigest()
+    if evidence_sha256 != declaration.evidence_sha256:
+        raise ValueError("rights evidence hash differs from declaration")
+
+    payloads = _import_partner_payloads(
+        path,
+        declaration,
+        extra_allowed=(safe_evidence,),
+    )
+    if any(payload.candidate.acquisition_batch_id != batch_id for payload in payloads):
+        raise ValueError("partner candidate belongs to another batch")
+    if any(payload.candidate.source_policy_id != policy.policy_id for payload in payloads):
+        raise ValueError("partner candidate belongs to another source policy")
+    if any(
+        not declaration.effective_at <= payload.candidate.collected_at < declaration.expires_at
+        for payload in payloads
+    ):
+        raise ValueError("partner candidate was collected outside rights validity")
+
+    upload_verified(
+        cos_client,
+        safe_evidence,
+        bucket,
+        f"datasets/evidence/{evidence_sha256}",
+        evidence_sha256,
+    )
+    receipt_hashes: list[str] = []
+    accepted: list[str] = []
+    for payload in payloads:
+        receipt_hashes.append(
+            persist_candidate_payload(
+                cos_client,
+                bucket,
+                payload.candidate,
+                payload.raw,
+                payload.derivative,
+            )
+        )
+        accepted.append(payload.candidate.candidate_id)
+    batch_sha256 = hashlib.sha256(
+        json.dumps(receipt_hashes, separators=(",", ":")).encode()
+    ).hexdigest()
+    return BatchReceipt(
+        batch_id=batch_id,
+        batch_sha256=batch_sha256,
+        policy_sha256=policy.policy_evidence_sha256,
+        rights_sha256=declaration.evidence_sha256,
+        accepted_candidate_ids=tuple(accepted),
+        refused_candidate_ids=(),
+    )
+
+
+def _import_partner_payloads(
+    path: Path,
+    declaration: RightsRecord,
+    *,
+    extra_allowed: tuple[Path, ...] = (),
+) -> list[_PartnerPayload]:
+    """Read a complete export without persisting partial candidates."""
 
     if path.is_symlink() or not path.is_file():
         raise ValueError("partner manifest must be a regular non-symlink file")
@@ -31,14 +133,18 @@ def import_partner_export(path: Path, declaration: RightsRecord) -> list[Candida
             raise ValueError("partner export declares the same file twice")
         declared[relative] = _safe_file(root, relative)
 
-    allowed = {path.resolve(), *(candidate.resolve() for candidate in declared.values())}
+    allowed = {
+        path.resolve(),
+        *(candidate.resolve() for candidate in declared.values()),
+        *(candidate.resolve() for candidate in extra_allowed),
+    }
     for item in root.rglob("*"):
         if item.is_symlink():
             raise ValueError("partner export contains a symlink")
         if item.is_file() and item.resolve() not in allowed:
             raise ValueError(f"partner export contains undeclared file: {item.relative_to(root)}")
 
-    candidates: list[CandidateRecord] = []
+    payloads: list[_PartnerPayload] = []
     for row in rows:
         image_path = declared[str(row["file"])]
         payload = _read_regular_file(image_path)
@@ -47,8 +153,9 @@ def import_partner_export(path: Path, declaration: RightsRecord) -> list[Candida
         if listing_text is not None and not isinstance(listing_text, str):
             raise ValueError("listing_text must be a string")
         price = row.get("price_usd")
-        candidates.append(
-            CandidateRecord(
+        payloads.append(
+            _PartnerPayload(
+                candidate=CandidateRecord(
                 candidate_id=_required(row, "candidate_id"),
                 acquisition_batch_id=_required(row, "acquisition_batch_id"),
                 source_policy_id=_required(row, "source_policy_id"),
@@ -67,9 +174,12 @@ def import_partner_export(path: Path, declaration: RightsRecord) -> list[Candida
                 derivative_sha256=hashlib.sha256(derivative).hexdigest(),
                 phash=phash,
                 rights_record_id=declaration.rights_record_id,
+                ),
+                raw=payload,
+                derivative=derivative,
             )
         )
-    return candidates
+    return payloads
 
 
 def _load_jsonl(path: Path) -> list[dict[str, object]]:

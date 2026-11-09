@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from unittest.mock import MagicMock
 from uuid import UUID
@@ -26,6 +27,8 @@ from acquisition.types import (
     EvidenceTier,
     RightsRecord,
     RightsStatus,
+    SourceAccessRecord,
+    SourceAccessStatus,
     TrainingRecord,
 )
 from core.types import Label
@@ -142,6 +145,7 @@ class _CollectorCOS:
         self.metadata: dict[str, dict[str, str]] = {}
         self.write_count = 0
         self.receipt_write_barrier = None
+        self.atomic_create_lock = Lock()
         self._watch_auth_bucket = "private"
         self._watch_auth_prefix = "datasets"
         self._watch_auth_configuration_verified = True
@@ -184,6 +188,13 @@ class _CollectorCOS:
         self.write_count += 1
         if Key.startswith("datasets/receipts/") and self.receipt_write_barrier is not None:
             self.receipt_write_barrier.wait(timeout=5)
+
+    def put_object_if_absent(self, **kwargs):
+        with self.atomic_create_lock:
+            if kwargs["Key"] in self.bodies:
+                return False
+            self.put_object(**kwargs)
+            return True
 
     def upload_file(self, filename: str, bucket: str, key: str, ExtraArgs):
         del bucket
@@ -300,7 +311,7 @@ def collector_fixture(allowed_policy, rights, http_client, cos):
                 _Response(body, content_type, status_code=status, length=length)
                 for status in self.statuses
             ]
-            self.http_client.get.side_effect = responses
+            self.http_client.get_pinned.side_effect = responses
             record = {
                 "source_record_id": "record-1",
                 "source_url": "https://partner.example/record-1",
@@ -312,11 +323,27 @@ def collector_fixture(allowed_policy, rights, http_client, cos):
                 [record],
                 allowed_policy,
                 rights,
+                access=SourceAccessRecord(
+                    access_record_id="access-partner-test",
+                    source="partner-upload",
+                    acquisition_method="partner-export",
+                    status=SourceAccessStatus.ACTIVE,
+                    evidence_url="https://partner.example/access-evidence",
+                    evidence_sha256="9" * 64,
+                    verified_at=rights.effective_at,
+                    expires_at=rights.expires_at,
+                    allowed_image_hosts=("partner.example",),
+                    requests_per_minute=60,
+                    reason="test fixture",
+                ),
                 http_client=self.http_client,
                 cos_client=cos,
                 bucket="private",
                 batch_id="b1",
                 now=NOW,
+                dns_resolver=lambda *_args, **_kwargs: [
+                    (2, 1, 6, "", ("93.184.216.34", 443))
+                ],
             )
 
     return CollectorFixture()

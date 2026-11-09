@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import io
+import ipaddress
 import json
+import socket
 import tempfile
 import warnings
 from collections.abc import Iterable, Mapping
@@ -12,14 +14,20 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, cast
-from urllib.parse import urlsplit
+from typing import Any, Protocol, cast
+from urllib.parse import urljoin, urlsplit
 
 import requests
 from PIL import Image, UnidentifiedImageError
 
-from acquisition.source_policy import authorize_candidate
-from acquisition.types import BatchReceipt, CandidateRecord, RightsRecord, SourcePolicy
+from acquisition.source_policy import authorize_candidate, authorize_discovery
+from acquisition.types import (
+    BatchReceipt,
+    CandidateRecord,
+    RightsRecord,
+    SourceAccessRecord,
+    SourcePolicy,
+)
 from core.rules import propose_source_label
 from infra.ibm_cos import IntegrityError, upload_verified
 
@@ -27,6 +35,7 @@ MAX_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_IMAGE_PIXELS = 100_000_000
 HTTP_TIMEOUT = (10, 30)
 MAX_HTTP_ATTEMPTS = 3
+MAX_REDIRECTS = 5
 _CONTENT_TYPES = {"image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP"}
 
 
@@ -36,6 +45,20 @@ class AcquisitionRefused(PermissionError):
 
 class UnsafeImage(ValueError):
     """Downloaded bytes are not a safe, complete single-frame image."""
+
+
+class PinnedHTTPClient(Protocol):
+    def get_pinned(
+        self,
+        url: str,
+        *,
+        resolved_addresses: tuple[str, ...],
+        stream: bool,
+        timeout: tuple[int, int],
+        allow_redirects: bool,
+    ) -> Any:
+        """Connect only to a supplied address while validating TLS for the URL host."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -116,11 +139,13 @@ def collect_batch(
     policy: SourcePolicy,
     rights: RightsRecord | None,
     *,
-    http_client: Any,
+    access: SourceAccessRecord | None,
+    http_client: PinnedHTTPClient,
     cos_client: Any,
     bucket: str,
     batch_id: str,
     now: datetime,
+    dns_resolver: Any = socket.getaddrinfo,
 ) -> BatchReceipt:
     """Collect an authorized batch; refuse policy/rights before HTTP or COS."""
 
@@ -128,6 +153,10 @@ def collect_batch(
     if not decision.may_download:
         raise AcquisitionRefused(", ".join(decision.reasons))
     assert rights is not None  # authorize_candidate proved this before any I/O
+    access_decision = authorize_discovery(policy, access, now=now)
+    if not access_decision.allowed:
+        raise AcquisitionRefused(", ".join(access_decision.reasons))
+    assert access is not None
     _safe_id(batch_id, "batch_id")
 
     normalized_records = tuple(
@@ -143,7 +172,12 @@ def collect_batch(
     accepted: list[str] = []
     receipt_hashes: list[str] = []
     for metadata in normalized_records:
-        payload, raw_sha256 = _download_image(http_client, metadata)
+        payload, raw_sha256 = _download_image(
+            http_client,
+            metadata,
+            access.allowed_image_hosts,
+            dns_resolver,
+        )
         if metadata.expected_sha256 is not None and raw_sha256 != metadata.expected_sha256:
             raise IntegrityError("downloaded image hash does not match expected_sha256")
         derivative, phash = sanitize_image(payload)
@@ -171,38 +205,15 @@ def collect_batch(
             phash=phash,
             rights_record_id=rights.rights_record_id,
         )
-        receipt = _receipt_bytes(candidate)
-        receipt_sha256 = hashlib.sha256(receipt).hexdigest()
-        receipt_prefix = f"datasets/receipts/{batch_id}/{candidate_id}-"
-        receipt_key = f"{receipt_prefix}{receipt_sha256}.json"
-        receipt_exists = _verify_receipt_inventory(
+        receipt_sha256 = persist_candidate_payload(
             cos_client,
             bucket,
-            receipt_prefix,
-            receipt_key,
-            receipt,
-        )
-
-        _upload_bytes(cos_client, bucket, f"datasets/raw/{raw_sha256}", payload, raw_sha256)
-        _upload_bytes(
-            cos_client,
-            bucket,
-            f"datasets/derivatives/{derivative_sha256}",
+            candidate,
+            payload,
             derivative,
-            derivative_sha256,
-        )
-        if not receipt_exists:
-            _write_receipt(cos_client, bucket, receipt_key, receipt)
-        _verify_receipt_inventory(
-            cos_client,
-            bucket,
-            receipt_prefix,
-            receipt_key,
-            receipt,
-            require_one=True,
         )
         accepted.append(candidate_id)
-        receipt_hashes.append(hashlib.sha256(receipt).hexdigest())
+        receipt_hashes.append(receipt_sha256)
 
     batch_sha256 = hashlib.sha256(
         json.dumps(receipt_hashes, separators=(",", ":")).encode()
@@ -215,6 +226,58 @@ def collect_batch(
         accepted_candidate_ids=tuple(accepted),
         refused_candidate_ids=(),
     )
+
+
+def persist_candidate_payload(
+    cos_client: Any,
+    bucket: str,
+    candidate: CandidateRecord,
+    raw: bytes,
+    derivative: bytes,
+) -> str:
+    """Persist verified candidate bytes and one immutable receipt."""
+    raw_sha256 = hashlib.sha256(raw).hexdigest()
+    derivative_sha256 = hashlib.sha256(derivative).hexdigest()
+    if raw_sha256 != candidate.raw_sha256 or derivative_sha256 != candidate.derivative_sha256:
+        raise IntegrityError("candidate hashes differ from supplied image bytes")
+    receipt = _receipt_bytes(candidate)
+    receipt_sha256 = hashlib.sha256(receipt).hexdigest()
+    receipt_prefix = (
+        f"datasets/receipts/{candidate.acquisition_batch_id}/{candidate.candidate_id}-"
+    )
+    receipt_key = f"{receipt_prefix}{receipt_sha256}.json"
+    receipt_exists = _verify_receipt_inventory(
+        cos_client,
+        bucket,
+        receipt_prefix,
+        receipt_key,
+        receipt,
+    )
+    _upload_bytes(
+        cos_client,
+        bucket,
+        f"datasets/raw/{raw_sha256}",
+        raw,
+        raw_sha256,
+    )
+    _upload_bytes(
+        cos_client,
+        bucket,
+        f"datasets/derivatives/{derivative_sha256}",
+        derivative,
+        derivative_sha256,
+    )
+    if not receipt_exists:
+        _write_receipt(cos_client, bucket, receipt_key, receipt)
+    _verify_receipt_inventory(
+        cos_client,
+        bucket,
+        receipt_prefix,
+        receipt_key,
+        receipt,
+        require_one=True,
+    )
+    return receipt_sha256
 
 
 def sanitize_image(payload: bytes) -> tuple[bytes, str]:
@@ -249,51 +312,127 @@ def sanitize_image(payload: bytes) -> tuple[bytes, str]:
         raise UnsafeImage("image decode or verification failed") from exc
 
 
-def _download_image(http_client: Any, metadata: CandidateMetadata) -> tuple[bytes, str]:
-    last_status: int | None = None
-    for attempt in range(1, MAX_HTTP_ATTEMPTS + 1):
-        try:
-            response = http_client.get(
-                metadata.image_url,
-                stream=True,
-                timeout=HTTP_TIMEOUT,
-            )
-        except requests.RequestException as exc:
-            if attempt == MAX_HTTP_ATTEMPTS:
-                raise IntegrityError(f"image download failed after {attempt} attempts") from exc
-            continue
-        try:
-            last_status = int(response.status_code)
-            if last_status == 429 or 500 <= last_status <= 599:
+def _download_image(
+    http_client: PinnedHTTPClient,
+    metadata: CandidateMetadata,
+    allowed_hosts: tuple[str, ...],
+    dns_resolver: Any,
+) -> tuple[bytes, str]:
+    url = metadata.image_url
+    for redirect_count in range(MAX_REDIRECTS + 1):
+        resolved_addresses = _validate_download_target(url, allowed_hosts, dns_resolver)
+        redirect_url: str | None = None
+        last_status: int | None = None
+        for attempt in range(1, MAX_HTTP_ATTEMPTS + 1):
+            try:
+                response = http_client.get_pinned(
+                    url,
+                    resolved_addresses=resolved_addresses,
+                    stream=True,
+                    timeout=HTTP_TIMEOUT,
+                    allow_redirects=False,
+                )
+            except requests.RequestException as exc:
                 if attempt == MAX_HTTP_ATTEMPTS:
-                    raise IntegrityError(f"image download failed after {attempt} attempts")
+                    raise IntegrityError(
+                        f"image download failed after {attempt} attempts"
+                    ) from exc
                 continue
-            if not 200 <= last_status <= 299:
-                raise IntegrityError(f"image download returned HTTP {last_status}")
-            content_type = str(response.headers.get("Content-Type", "")).split(";", 1)[0].lower()
-            if content_type not in _CONTENT_TYPES:
-                raise UnsafeImage("response content type is not JPEG, PNG or WebP")
-            content_length = _content_length(response.headers.get("Content-Length"))
-            if content_length is not None and content_length > MAX_IMAGE_BYTES:
-                raise UnsafeImage("image exceeds 25 MiB")
-            body = bytearray()
-            digest = hashlib.sha256()
-            for chunk in response.iter_content(chunk_size=64 * 1024):
-                if not isinstance(chunk, bytes):
-                    raise IntegrityError("HTTP stream yielded non-bytes")
-                body.extend(chunk)
-                digest.update(chunk)
-                if len(body) > MAX_IMAGE_BYTES:
-                    raise UnsafeImage("image exceeds 25 MiB")
-            if content_length is not None and len(body) != content_length:
-                raise IntegrityError("HTTP body length differs from Content-Length")
-            image_format = _magic_format(bytes(body))
-            if _CONTENT_TYPES[content_type] != image_format:
-                raise UnsafeImage("content type does not match image magic")
-            return bytes(body), digest.hexdigest()
-        finally:
-            response.close()
-    raise IntegrityError(f"image download failed after {MAX_HTTP_ATTEMPTS} attempts: {last_status}")
+            try:
+                last_status = int(response.status_code)
+                if last_status in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("Location")
+                    if not isinstance(location, str) or not location:
+                        raise IntegrityError("image redirect is missing Location")
+                    redirect_url = urljoin(url, location)
+                    break
+                if last_status == 429 or 500 <= last_status <= 599:
+                    if attempt == MAX_HTTP_ATTEMPTS:
+                        raise IntegrityError(
+                            f"image download failed after {attempt} attempts"
+                        )
+                    continue
+                if not 200 <= last_status <= 299:
+                    raise IntegrityError(f"image download returned HTTP {last_status}")
+                return _read_image_response(response)
+            finally:
+                response.close()
+        if redirect_url is None:
+            raise IntegrityError(
+                f"image download failed after {MAX_HTTP_ATTEMPTS} attempts: {last_status}"
+            )
+        if redirect_count == MAX_REDIRECTS:
+            raise IntegrityError("image download exceeded redirect limit")
+        url = redirect_url
+    raise IntegrityError("image download exceeded redirect limit")
+
+
+def _validate_download_target(
+    url: str, allowed_hosts: tuple[str, ...], resolver: Any
+) -> tuple[str, ...]:
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError as exc:
+        raise AcquisitionRefused("image URL has an invalid port") from exc
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+    ):
+        raise AcquisitionRefused(
+            "image URL must use HTTPS without credentials or a custom port"
+        )
+    if parsed.hostname not in allowed_hosts:
+        raise AcquisitionRefused("image URL host is not approved")
+    try:
+        answers = resolver(parsed.hostname, 443, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise AcquisitionRefused("image host DNS resolution failed") from exc
+    addresses = {answer[4][0].split("%", 1)[0] for answer in answers if answer[4]}
+    if not addresses:
+        raise AcquisitionRefused("image host DNS returned no addresses")
+    for address in addresses:
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError as exc:
+            raise AcquisitionRefused("image host DNS returned an invalid address") from exc
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            raise AcquisitionRefused("image host resolves to a non-public address")
+    return tuple(sorted(addresses))
+
+
+def _read_image_response(response: Any) -> tuple[bytes, str]:
+    content_type = str(response.headers.get("Content-Type", "")).split(";", 1)[0].lower()
+    if content_type not in _CONTENT_TYPES:
+        raise UnsafeImage("response content type is not JPEG, PNG or WebP")
+    content_length = _content_length(response.headers.get("Content-Length"))
+    if content_length is not None and content_length > MAX_IMAGE_BYTES:
+        raise UnsafeImage("image exceeds 25 MiB")
+    body = bytearray()
+    digest = hashlib.sha256()
+    for chunk in response.iter_content(chunk_size=64 * 1024):
+        if not isinstance(chunk, bytes):
+            raise IntegrityError("HTTP stream yielded non-bytes")
+        body.extend(chunk)
+        digest.update(chunk)
+        if len(body) > MAX_IMAGE_BYTES:
+            raise UnsafeImage("image exceeds 25 MiB")
+    if content_length is not None and len(body) != content_length:
+        raise IntegrityError("HTTP body length differs from Content-Length")
+    image_format = _magic_format(bytes(body))
+    if _CONTENT_TYPES[content_type] != image_format:
+        raise UnsafeImage("content type does not match image magic")
+    return bytes(body), digest.hexdigest()
 
 
 def _content_length(value: object) -> int | None:

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from acquisition.collect import CandidateMetadata, SourceUnavailable
+from acquisition.collect import SourceUnavailable
 from scrapers.chinese_replica import chinese_replica_ingest
 from scrapers.chrono24 import chrono24_ingest
 from scrapers.mercadolivre import mercadolivre_ingest
@@ -43,23 +43,21 @@ def test_adapter_without_approved_input_returns_typed_unavailable(adapter):
 
 
 @pytest.mark.parametrize(
-    ("adapter", "source"),
+    "adapter",
     [
-        (olx_ingest, "olx"),
-        (chrono24_ingest, "chrono24"),
-        (reptime_ingest, "reptime"),
-        (watchuseek_ingest, "watchuseek"),
-        (reddit_ingest, "reddit"),
-        (chinese_replica_ingest, "chinese_replica"),
+        olx_ingest,
+        chrono24_ingest,
+        reptime_ingest,
+        watchuseek_ingest,
+        reddit_ingest,
+        chinese_replica_ingest,
     ],
 )
-def test_adapter_returns_normalized_candidate_metadata(adapter, source):
-    [candidate] = adapter([_record()])
+def test_unapproved_adapter_does_not_accept_supplied_records(adapter):
+    records = MagicMock()
 
-    assert isinstance(candidate, CandidateMetadata)
-    assert candidate.source == source
-    assert candidate.source_record_id == "listing-1"
-    assert not hasattr(candidate, "label")
+    assert isinstance(adapter(records), SourceUnavailable)
+    records.__iter__.assert_not_called()
 
 
 def test_mercadolivre_scrape_refuses_before_reading_records():
