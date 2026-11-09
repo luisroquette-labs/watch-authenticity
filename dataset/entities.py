@@ -14,6 +14,14 @@ from dataset.dedup import HAMMING_DEDUP_THRESHOLD
 
 _PHASH_64 = re.compile(r"^[0-9a-f]{16}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_BIT_LAYOUTS = (
+    tuple(tuple(range(start, start + 16)) for start in (48, 32, 16, 0)),
+    tuple(tuple(range(offset, 64, 4)) for offset in range(4)),
+    tuple(
+        tuple((position * 13) % 64 for position in range(start, start + 16))
+        for start in (0, 16, 32, 48)
+    ),
+)
 _PHASH_BITS = 64
 
 
@@ -107,27 +115,45 @@ def hamming_distance_hex(left: str, right: str) -> int:
 def find_near_duplicate_pairs(phashes: Sequence[str]) -> set[tuple[int, int]]:
     """Find every pHash pair within the threshold using a fixed-work multi-index."""
     values = [int(_validate_phash(value), 16) for value in phashes]
-    # Four 16-bit blocks with a two-bit neighborhood are complete: if every
-    # block differed by at least three bits, total distance would be >= 12.
-    # The fixed 4 * 137 probes per input avoid materializing broad 5-bit
-    # collision buckets whose intermediate pair set grows quadratically.
-    buckets: dict[tuple[int, int], list[int]] = defaultdict(list)
-    candidates: set[tuple[int, int]] = set()
+    # Each layout partitions all 64 bits into four 16-bit blocks. A true pair
+    # must have one block within two bits in every layout; otherwise one layout
+    # alone would contribute at least 12 differences. Intersecting layouts
+    # prevents one dense block from expanding into an all-pairs candidate set.
+    buckets: dict[tuple[int, int, int], list[int]] = defaultdict(list)
+    matches: set[tuple[int, int]] = set()
     for index, value in enumerate(values):
-        blocks = tuple((value >> shift) & 0xFFFF for shift in (48, 32, 16, 0))
-        for block_index, block_value in enumerate(blocks):
-            for nearby in _within_two_bits(block_value):
-                candidates.update(
-                    (prior, index) for prior in buckets[(block_index, nearby)]
-                )
-            buckets[(block_index, block_value)].append(index)
+        layout_candidates: set[int] | None = None
+        layout_blocks: list[tuple[int, tuple[int, ...]]] = []
+        for layout_index, layout in enumerate(_BIT_LAYOUTS):
+            blocks = _block_values(value, layout)
+            layout_blocks.append((layout_index, blocks))
+            candidates: set[int] = set()
+            for block_index, block_value in enumerate(blocks):
+                for nearby in _within_two_bits(block_value):
+                    candidates.update(buckets[(layout_index, block_index, nearby)])
+            layout_candidates = (
+                candidates
+                if layout_candidates is None
+                else layout_candidates.intersection(candidates)
+            )
+            if not layout_candidates:
+                break
 
-    return {
-        pair
-        for pair in candidates
-        if hamming_distance_hex(phashes[pair[0]], phashes[pair[1]])
-        <= HAMMING_DEDUP_THRESHOLD
-    }
+        for prior in layout_candidates or ():
+            if (
+                hamming_distance_hex(phashes[prior], phashes[index])
+                <= HAMMING_DEDUP_THRESHOLD
+            ):
+                matches.add((prior, index))
+        for layout_index, blocks in layout_blocks:
+            for block_index, block_value in enumerate(blocks):
+                buckets[(layout_index, block_index, block_value)].append(index)
+        # A short-circuited lookup still needs insertion into every layout.
+        for layout_index in range(len(layout_blocks), len(_BIT_LAYOUTS)):
+            blocks = _block_values(value, _BIT_LAYOUTS[layout_index])
+            for block_index, block_value in enumerate(blocks):
+                buckets[(layout_index, block_index, block_value)].append(index)
+    return matches
 
 
 def _within_two_bits(value: int) -> Iterable[int]:
@@ -137,6 +163,13 @@ def _within_two_bits(value: int) -> Iterable[int]:
         yield one_bit
         for second in range(first + 1, 16):
             yield one_bit ^ (1 << second)
+
+
+def _block_values(value: int, layout: tuple[tuple[int, ...], ...]) -> tuple[int, ...]:
+    return tuple(
+        sum(((value >> source_bit) & 1) << target_bit for target_bit, source_bit in enumerate(block))
+        for block in layout
+    )
 
 
 def build_content_clusters(records: Sequence[CandidateRecord]) -> dict[str, str]:

@@ -129,6 +129,25 @@ def test_ten_thousand_hash_index_avoids_quadratic_distance_calls(monkeypatch):
     assert calls < all_pairs * 0.05
 
 
+def test_dense_shared_block_does_not_expand_to_all_pairs(monkeypatch):
+    rng = random.Random(20261110)
+    hashes = [f"abcd{rng.getrandbits(48):012x}" for _ in range(1_000)]
+    calls = 0
+    real_distance = entities_module.hamming_distance_hex
+
+    def count_distance(left: str, right: str) -> int:
+        nonlocal calls
+        calls += 1
+        return real_distance(left, right)
+
+    monkeypatch.setattr(entities_module, "hamming_distance_hex", count_distance)
+
+    find_near_duplicate_pairs(hashes)
+
+    all_pairs = len(hashes) * (len(hashes) - 1) // 2
+    assert calls < all_pairs * 0.05
+
+
 def test_grouping_is_deterministic_when_input_order_changes(grouped_records: list[CandidateRecord]):
     forward = build_content_clusters(grouped_records)
     reverse = build_content_clusters(list(reversed(grouped_records)))
