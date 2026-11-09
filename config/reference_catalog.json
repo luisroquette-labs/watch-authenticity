@@ -1,0 +1,37 @@
+{
+  "generation": 1,
+  "baseline": {
+    "reference_id": "rolex-submariner-126610ln",
+    "backbone_checkpoint": "facebook/dinov2-base",
+    "backbone_revision": "f9e44c814b77203eaa57a6bdbbd535f21ede1415",
+    "generation": 1
+  },
+  "references": [
+    {
+      "reference_id": "rolex-submariner-126610ln",
+      "brand": "rolex",
+      "family": "submariner",
+      "reference": "126610ln",
+      "aliases": ["rolex-submariner"],
+      "identity_evidence_sha256": null,
+      "required_angles": ["dial", "cyclops", "rehaut", "crown", "clasp", "caseback"],
+      "gold_freeze_sha256": null,
+      "holdout_freeze_sha256": null,
+      "status": "pending",
+      "head": null
+    },
+    {
+      "reference_id": "rolex-datejust-126334",
+      "brand": "rolex",
+      "family": "datejust",
+      "reference": "126334",
+      "aliases": ["rolex-datejust-41-126334"],
+      "identity_evidence_sha256": null,
+      "required_angles": ["dial", "cyclops", "rehaut", "crown", "clasp", "caseback"],
+      "gold_freeze_sha256": null,
+      "holdout_freeze_sha256": null,
+      "status": "pending",
+      "head": null
+    }
+  ]
+}
