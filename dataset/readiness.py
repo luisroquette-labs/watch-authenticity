@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from acquisition.types import Angle, EvidenceTier, TrainingRecord
@@ -81,14 +81,24 @@ def evaluate_readiness(
         reasons.append("rejection: requires five non-submariner references")
 
     for name, label in (("genuine", Label.GENUINE), ("fake", Label.FAKE)):
-        label_records = [record for record in scoped if record.label is label]
+        label_records = _unique_content_records(
+            record
+            for record in scoped
+            if record.label is label and not record.is_augmented
+        )
         if len({record.source_domain for record in label_records}) < MIN_SOURCES_PER_LABEL:
             reasons.append(f"{name}: requires three independent source domains")
         styles = {record.capture_style for record in label_records}
         if not {"studio", "casual"}.issubset(styles):
             reasons.append(f"{name}: requires studio and casual examples")
 
-    gold = [record for record in scoped if record.is_gold and record.evidence_tier is EvidenceTier.A]
+    gold = [
+        record
+        for record in scoped
+        if record.is_gold
+        and record.evidence_tier is EvidenceTier.A
+        and not record.is_augmented
+    ]
     gold_outputs = {_output_name(record) for record in gold}
     if len({record.content_cluster_id for record in gold}) < MIN_GOLD_IMAGES:
         reasons.append("gold: requires 200 distinct Tier-A images")
@@ -104,12 +114,13 @@ def evaluate_readiness(
     return ReadinessReport(
         reference_id=reference_id,
         ready=not reasons,
-        reasons=tuple(reasons),
+        reasons=tuple(sorted(reasons)),
         cell_counts=tuple(counts),
     )
 
 
 def _append_dominance_reasons(records: Sequence[TrainingRecord], reasons: list[str]) -> None:
+    records = _unique_entity_records(records)
     by_label: dict[Label, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     seller_entities: dict[str, set[str]] = defaultdict(set)
     all_entities = {record.watch_entity_id for record in records}
@@ -131,3 +142,17 @@ def _output_name(record: TrainingRecord) -> str:
     if record.label is Label.FAKE:
         return f"fake-{record.grade}"
     return record.label.value
+
+
+def _unique_content_records(records: Iterable[TrainingRecord]) -> list[TrainingRecord]:
+    unique: dict[str, TrainingRecord] = {}
+    for record in sorted(records, key=lambda item: item.asset_id):
+        unique.setdefault(record.content_cluster_id, record)
+    return list(unique.values())
+
+
+def _unique_entity_records(records: Sequence[TrainingRecord]) -> list[TrainingRecord]:
+    unique: dict[str, TrainingRecord] = {}
+    for record in sorted(records, key=lambda item: item.asset_id):
+        unique.setdefault(record.watch_entity_id, record)
+    return list(unique.values())

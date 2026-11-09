@@ -449,6 +449,7 @@ class DatasetFreeze:
     rights_sha256: str | None = None
     exclusions: tuple[tuple[str, str], ...] = ()
     blocked: bool = False
+    asset_rights: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         _sha256(self.manifest_sha256, "manifest_sha256")
@@ -482,6 +483,15 @@ class DatasetFreeze:
             _nonempty(reason, "exclusion reason")
         if not isinstance(self.blocked, bool):
             raise ValueError("blocked must be bool")
+        if len({asset_id for asset_id, _ in self.asset_rights}) != len(self.asset_rights):
+            raise ValueError("freeze asset rights must contain unique assets")
+        if self.asset_rights and {asset_id for asset_id, _ in self.asset_rights} != set(
+            self.eligible_asset_ids
+        ):
+            raise ValueError("freeze asset rights must match eligible assets")
+        for asset_id, rights_id in self.asset_rights:
+            _nonempty(asset_id, "rights asset")
+            _nonempty(rights_id, "rights record")
 
 
 @dataclass(frozen=True)

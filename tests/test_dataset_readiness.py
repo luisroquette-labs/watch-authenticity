@@ -180,7 +180,7 @@ def test_freeze_excludes_expired_rights_and_reports_impacted_artifact(
     rights, policy_set
 ):
     record = replace(_record(1), rights_record_id=rights.rights_record_id)
-    splits = DatasetSplits(((record.asset_id, TRAIN),), NOW, 42)
+    splits = build_splits([record], seed=42, held_out_factories=set())
     raw = ObjectRef("bucket", "datasets/raw/" + "a" * 64, "a" * 64, 1, "raw")
     evidence = ObjectRef(
         "bucket", "datasets/reviews/" + "c" * 64, "c" * 64, 1, "evidence"
@@ -214,4 +214,114 @@ def test_freeze_excludes_expired_rights_and_reports_impacted_artifact(
     assert result.impacted_artifact_report.impacted_artifact_hashes == (artifact,)
     assert result.data_disposition_reports[0].status == "pending"
     with pytest.raises(FrozenDatasetRefused):
-        require_frozen_asset_read(result.freeze, record.asset_id)
+        require_frozen_asset_read(
+            result.freeze,
+            record.asset_id,
+            {expired.rights_record_id: expired},
+            policy_set,
+            now=NOW,
+        )
+
+
+def test_prior_freeze_rechecks_current_rights(policy_set, rights):
+    record = replace(_record(1), rights_record_id=rights.rights_record_id)
+    freeze = DatasetFreeze(
+        "a" * 64,
+        "b" * 64,
+        "c" * 64,
+        (record.asset_id,),
+        (),
+        (),
+        asset_rights=((record.asset_id, rights.rights_record_id),),
+    )
+    require_frozen_asset_read(
+        freeze,
+        record.asset_id,
+        {rights.rights_record_id: rights},
+        policy_set,
+        now=NOW,
+    )
+
+    revoked = replace(rights, status=RightsStatus.REVOKED)
+    with pytest.raises(FrozenDatasetRefused, match="current rights"):
+        require_frozen_asset_read(
+            freeze,
+            record.asset_id,
+            {rights.rights_record_id: revoked},
+            policy_set,
+            now=NOW,
+        )
+
+
+def test_freeze_hashes_do_not_depend_on_record_order(policy_set, rights):
+    records = [
+        replace(_record(index), rights_record_id=rights.rights_record_id)
+        for index in range(1, 6)
+    ]
+    splits = build_splits(records, seed=42, held_out_factories=set())
+
+    first = freeze_dataset(
+        records,
+        splits,
+        policy_set,
+        {rights.rights_record_id: rights},
+        previous_freeze=None,
+        published_artifact_hashes=(),
+        now=NOW,
+        object_inventory={},
+        artifact_lineage={},
+    )
+    second = freeze_dataset(
+        list(reversed(records)),
+        splits,
+        policy_set,
+        {rights.rights_record_id: rights},
+        previous_freeze=None,
+        published_artifact_hashes=(),
+        now=NOW,
+        object_inventory={},
+        artifact_lineage={},
+    )
+
+    assert first.freeze == second.freeze
+
+
+def test_freeze_rejects_noncanonical_split_assignments(policy_set, rights):
+    records = [
+        replace(_record(index), rights_record_id=rights.rights_record_id)
+        for index in range(1, 6)
+    ]
+    canonical = build_splits(records, seed=42, held_out_factories=set())
+    first_asset, first_split = canonical.assignments[0]
+    forged = replace(
+        canonical,
+        assignments=((first_asset, TRAIN if first_split != TRAIN else "val"),)
+        + canonical.assignments[1:],
+    )
+
+    with pytest.raises(ValueError, match="canonical grouped splits"):
+        freeze_dataset(
+            records,
+            forged,
+            policy_set,
+            {rights.rights_record_id: rights},
+            previous_freeze=None,
+            published_artifact_hashes=(),
+            now=NOW,
+            object_inventory={},
+            artifact_lineage={},
+        )
+
+
+def test_augmented_gold_does_not_satisfy_gold_gate(monkeypatch):
+    records = [replace(record, is_augmented=record.is_gold) for record in _small_complete_records()]
+    monkeypatch.setattr(readiness, "MIN_CELL_IMAGES", 1)
+    monkeypatch.setattr(readiness, "MIN_CELL_ENTITIES", 1)
+    monkeypatch.setattr(readiness, "MIN_REJECTION_IMAGES", 1)
+    monkeypatch.setattr(readiness, "MIN_REJECTION_SUBJECTS", 1)
+    monkeypatch.setattr(readiness, "MIN_GOLD_IMAGES", 1)
+    splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
+
+    report = evaluate_readiness(records, records[0].reference_id, splits=splits)
+
+    assert any(reason.startswith("gold:") for reason in report.reasons)

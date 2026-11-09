@@ -161,6 +161,7 @@ class DatasetSplits:
     assignments: tuple[tuple[str, str], ...]
     temporal_cutoff: datetime | None
     seed: int
+    held_out_factories: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         asset_ids = [asset_id for asset_id, _ in self.assignments]
@@ -175,6 +176,8 @@ class DatasetSplits:
             raise ValueError("temporal cutoff must be timezone-aware")
         if isinstance(self.seed, bool) or not isinstance(self.seed, int):
             raise ValueError("seed must be an integer")
+        if tuple(sorted(set(self.held_out_factories))) != self.held_out_factories:
+            raise ValueError("held-out factories must be sorted and unique")
 
     @property
     def split_by_asset(self) -> Mapping[str, str]:
@@ -282,7 +285,12 @@ def build_splits(
             for item in component
         )
     )
-    result = DatasetSplits(assignments=assignments, temporal_cutoff=cutoff, seed=seed)
+    result = DatasetSplits(
+        assignments=assignments,
+        temporal_cutoff=cutoff,
+        seed=seed,
+        held_out_factories=tuple(sorted(held_out)),
+    )
     assert_no_connected_component_crosses_splits(records, result)
     return result
 
