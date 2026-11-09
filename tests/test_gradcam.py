@@ -221,6 +221,7 @@ def _train_fixture_classifier(images: torch.Tensor, labels: torch.Tensor) -> _St
 
 
 def test_grad_cam_is_non_degenerate_on_a_small_scale_trained_checkpoint(tmp_path: Path):
+    torch.manual_seed(0)
     images = _fixture_image(batch_size=4)
     labels = torch.tensor([0, 1, 2, 0])
     trained_model = _train_fixture_classifier(images, labels)
