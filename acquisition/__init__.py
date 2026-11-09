@@ -1,0 +1,1 @@
+"""Evidence-gated dataset acquisition."""
