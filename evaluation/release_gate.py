@@ -99,7 +99,7 @@ def build_slice_census(bundle: TrainingBundle) -> SliceCensus:
 def release_gate(
     source_probe: SourceProbeReport,
     report: EvaluationReport | None,
-    census: SliceCensus | None,
+    bundle: TrainingBundle | None,
     *,
     minimum_slice_accuracy: float = 0.50,
     minimum_slice_count: int = 2,
@@ -109,9 +109,10 @@ def release_gate(
     reasons: list[str] = []
     if source_probe.blocked:
         reasons.append("source-domain shortcut")
-    if report is None or census is None:
+    if report is None or bundle is None:
         reasons.append("complete freeze-derived per-slice evaluation is missing")
         return ReleaseDecision(False, tuple(reasons))
+    census = build_slice_census(bundle)
     if not (
         source_probe.freeze_sha256 == report.freeze_sha256 == census.freeze_sha256
         and source_probe.model_sha256 == report.model_sha256
@@ -123,10 +124,8 @@ def release_gate(
     metrics = {metric.name: metric for metric in report.slices}
     missing = sorted(set(census.names) - set(metrics))
     reasons.extend(f"required evaluation slice is missing: {name}" for name in missing)
-    for name in census.names:
-        metric = metrics.get(name)
-        if metric is None:
-            continue
+    for metric in report.slices:
+        name = metric.name
         if metric.count < minimum_slice_count or metric.ci_low is None or metric.ci_high is None:
             reasons.append(f"required slice lacks uncertainty evidence: {name}")
         if metric.balanced_accuracy < minimum_slice_accuracy:

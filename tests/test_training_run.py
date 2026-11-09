@@ -110,6 +110,60 @@ def _record(
     }
 
 
+def _source_record(record: dict[str, object], spec: RunSpec) -> dict[str, object]:
+    digest = str(record["image_sha256"])
+    label = str(record["label"])
+    subtype = record["rejection_subtype"]
+    return {
+        "asset_id": record["asset_id"],
+        "candidate_id": f"candidate-{record['asset_id']}",
+        "object_ref": {
+            "bucket": spec.bucket,
+            "key": record["object_key"],
+            "sha256": digest,
+            "length": 1,
+            "etag": "fixture",
+        },
+        "reference_id": "rolex-submariner-126610ln",
+        "watch_entity_id": record["subject_id"],
+        "content_cluster_id": f"content-{record['asset_id']}",
+        "seller_group_id": f"seller-{record['asset_id']}",
+        "acquisition_batch_id": f"batch-{record['asset_id']}",
+        "angle": record["angle"],
+        "collected_at": "2026-11-09T00:00:00+00:00",
+        "original_sha256": digest,
+        "is_augmented": False,
+        "is_gold": False,
+        "rejection_subtype": subtype,
+        "rejection_reference_id": "other-watch" if subtype == "non-submariner" else None,
+        "source_domain": record["source_domain"],
+        "capture_style": "casual",
+        "label": label,
+        "grade": record["grade"],
+        "factory": record["factory"],
+        "evidence_tier": record["evidence_tier"],
+        "evidence_record_id": record["provenance_id"],
+        "rights_record_id": record["rights_record_id"],
+        "image_sha256": digest,
+        "phash": digest[:16],
+    }
+
+
+def _source_splits(splits: dict[str, object]) -> dict[str, object]:
+    split_values = splits["splits"]
+    assert isinstance(split_values, dict)
+    return {
+        "assignments": sorted(
+            [str(asset_id), str(split)]
+            for split, asset_ids in split_values.items()
+            for asset_id in asset_ids
+        ),
+        "held_out_factories": [],
+        "seed": 42,
+        "temporal_cutoff": None,
+    }
+
+
 def _valid_payloads(spec: RunSpec) -> tuple[dict[str, object], dict[str, object], dict[str, bytes]]:
     records: list[dict[str, object]] = []
     images: dict[str, bytes] = {}
@@ -205,10 +259,11 @@ def _valid_payloads(spec: RunSpec) -> tuple[dict[str, object], dict[str, object]
             "gold": [],
         },
     }
-    split_sha256 = _sha256(_canonical(splits))
+    source_records = [_source_record(record, spec) for record in records]
+    source_splits = _source_splits(splits)
     freeze = {
-        "manifest_sha256": _sha256(_canonical(records)),
-        "split_sha256": split_sha256,
+        "manifest_sha256": _sha256(_canonical(source_records)),
+        "split_sha256": _sha256(_canonical(source_splits)),
         "policy_set_sha256": "a" * 64,
         "eligible_asset_ids": sorted(str(record["asset_id"]) for record in records),
         "excluded_asset_ids": [],
@@ -221,7 +276,13 @@ def _valid_payloads(spec: RunSpec) -> tuple[dict[str, object], dict[str, object]
             [str(record["asset_id"]), str(record["rights_record_id"])] for record in records
         ),
     }
-    manifest = {"schema_version": 2, "freeze": freeze, "records": records}
+    manifest = {
+        "schema_version": 2,
+        "freeze": freeze,
+        "records": records,
+        "source_records": source_records,
+        "source_splits": source_splits,
+    }
     return manifest, splits, images
 
 
@@ -239,8 +300,12 @@ def _seed(
         assert isinstance(records, list)
         freeze = manifest["freeze"]
         assert isinstance(freeze, dict)
-        freeze["manifest_sha256"] = _sha256(_canonical(records))
-        freeze["split_sha256"] = _sha256(_canonical(splits))
+        source_records = [_source_record(record, valid_run_spec()) for record in records]
+        source_splits = _source_splits(splits)
+        manifest["source_records"] = source_records
+        manifest["source_splits"] = source_splits
+        freeze["manifest_sha256"] = _sha256(_canonical(source_records))
+        freeze["split_sha256"] = _sha256(_canonical(source_splits))
         freeze["eligible_asset_ids"] = sorted(str(record["asset_id"]) for record in records)
         freeze["asset_rights"] = sorted(
             [str(record["asset_id"]), str(record["rights_record_id"])] for record in records
@@ -270,7 +335,7 @@ def training_fixture() -> tuple[FakeCOS, RunSpec, dict[str, object], dict[str, o
 
 
 def test_loader_accepts_complete_content_addressed_freeze(training_fixture):
-    cos, spec, _manifest, _splits, _images = training_fixture
+    cos, spec, manifest, _splits, _images = training_fixture
 
     bundle = load_training_data(cos, spec)
 
@@ -283,7 +348,7 @@ def test_loader_accepts_complete_content_addressed_freeze(training_fixture):
     )
     assert bundle.manifest_sha256 == spec.manifest_sha256
     assert bundle.splits_sha256 == spec.splits_sha256
-    assert bundle.freeze.split_sha256 == spec.splits_sha256
+    assert bundle.freeze.split_sha256 == _sha256(_canonical(manifest["source_splits"]))
 
 
 def test_loader_refuses_missing_or_blocked_dataset_freeze(training_fixture):
@@ -292,6 +357,41 @@ def test_loader_refuses_missing_or_blocked_dataset_freeze(training_fixture):
     cos, spec = _seed(manifest, splits, images)
 
     with pytest.raises(TrainingDataRefused, match="freeze is blocked"):
+        load_training_data(cos, spec)
+
+
+@pytest.mark.parametrize("field", ["readiness_sha256", "rights_sha256"])
+def test_loader_refuses_freeze_without_readiness_or_rights_evidence(
+    training_fixture, field: str
+):
+    _cos, spec, manifest, splits, images = training_fixture
+    manifest["freeze"][field] = None
+    cos, spec = _seed(manifest, splits, images)
+
+    with pytest.raises(TrainingDataRefused, match="lacks readiness or rights evidence"):
+        load_training_data(cos, spec)
+
+
+def test_loader_preserves_valid_exclusion_audit_without_training_excluded_asset(
+    training_fixture,
+):
+    _cos, spec, manifest, splits, images = training_fixture
+    manifest["freeze"]["excluded_asset_ids"] = ["revoked-asset"]
+    manifest["freeze"]["exclusion_reason_counts"] = [["rights revoked", 1]]
+    manifest["freeze"]["exclusions"] = [["revoked-asset", "rights revoked"]]
+    cos, spec = _seed(manifest, splits, images)
+
+    bundle = load_training_data(cos, spec)
+
+    assert bundle.freeze.excluded_asset_ids == ("revoked-asset",)
+
+
+def test_loader_refuses_projection_changed_from_canonical_source(training_fixture):
+    _cos, spec, manifest, splits, images = training_fixture
+    manifest["records"][0]["source_domain"] = "tampered.example.co.za"
+    cos, spec = _seed(manifest, splits, images, refresh_freeze=False)
+
+    with pytest.raises(TrainingDataRefused, match="projection differs"):
         load_training_data(cos, spec)
 
 

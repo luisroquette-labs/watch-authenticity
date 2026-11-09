@@ -58,6 +58,35 @@ _RECORD_FIELDS = frozenset(
         "rejection_subtype",
     }
 )
+_SOURCE_RECORD_FIELDS = frozenset(
+    {
+        "asset_id",
+        "candidate_id",
+        "object_ref",
+        "reference_id",
+        "watch_entity_id",
+        "content_cluster_id",
+        "seller_group_id",
+        "acquisition_batch_id",
+        "angle",
+        "collected_at",
+        "original_sha256",
+        "is_augmented",
+        "is_gold",
+        "rejection_subtype",
+        "rejection_reference_id",
+        "source_domain",
+        "capture_style",
+        "label",
+        "grade",
+        "factory",
+        "evidence_tier",
+        "evidence_record_id",
+        "rights_record_id",
+        "image_sha256",
+        "phash",
+    }
+)
 
 
 class TrainingDataRefused(RuntimeError):
@@ -261,6 +290,8 @@ def load_training_data(cos: Any, spec: RunSpec) -> TrainingBundle:
         "schema_version",
         "freeze",
         "records",
+        "source_records",
+        "source_splits",
     }:
         raise TrainingDataRefused("manifest document schema is invalid")
     if manifest_raw["schema_version"] != 2 or not isinstance(manifest_raw["records"], list):
@@ -269,10 +300,15 @@ def load_training_data(cos: Any, spec: RunSpec) -> TrainingBundle:
     asset_ids = [record.asset_id for record in records]
     if not records or len(set(asset_ids)) != len(asset_ids):
         raise TrainingDataRefused("manifest must contain unique assets")
-    freeze, freeze_sha256 = _parse_freeze(
-        manifest_raw["freeze"], manifest_raw["records"], records, spec
+    freeze, freeze_sha256, frozen_split_by_asset = _parse_freeze(
+        manifest_raw["freeze"],
+        manifest_raw["source_records"],
+        manifest_raw["source_splits"],
+        records,
     )
     splits, split_by_asset = _parse_splits(splits_raw, set(asset_ids))
+    if split_by_asset != frozen_split_by_asset:
+        raise TrainingDataRefused("training split projection differs from canonical freeze")
     splits_by_digest: dict[str, set[str]] = {}
     for record in records:
         splits_by_digest.setdefault(record.image_sha256, set()).add(
@@ -424,10 +460,10 @@ def _count_heads(selected: list[TrainingRecord]) -> dict[str, Counter[ModelClass
 
 def _parse_freeze(
     raw: object,
-    raw_records: object,
+    source_records: object,
+    source_splits: object,
     records: tuple[TrainingRecord, ...],
-    spec: RunSpec,
-) -> tuple[DatasetFreeze, str]:
+) -> tuple[DatasetFreeze, str, dict[str, str]]:
     fields = {
         "manifest_sha256",
         "split_sha256",
@@ -459,15 +495,46 @@ def _parse_freeze(
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise TrainingDataRefused("dataset freeze is invalid") from exc
-    record_digest = hashlib.sha256(_canonical(raw_records)).hexdigest()
+    if (
+        not isinstance(source_records, list)
+        or not all(isinstance(item, dict) and set(item) == _SOURCE_RECORD_FIELDS for item in source_records)
+        or not isinstance(source_splits, dict)
+        or set(source_splits) != {"assignments", "held_out_factories", "seed", "temporal_cutoff"}
+    ):
+        raise TrainingDataRefused("canonical freeze artifacts are invalid")
+    record_digest = hashlib.sha256(_canonical(source_records)).hexdigest()
+    split_digest = hashlib.sha256(_canonical(source_splits)).hexdigest()
     asset_ids = {record.asset_id for record in records}
     rights_by_asset = {record.asset_id: record.rights_record_id for record in records}
     if freeze.blocked:
         raise TrainingDataRefused("dataset freeze is blocked")
-    if freeze.manifest_sha256 != record_digest or freeze.split_sha256 != spec.splits_sha256:
-        raise TrainingDataRefused("dataset freeze hashes do not match training inputs")
+    if freeze.readiness_sha256 is None or freeze.rights_sha256 is None:
+        raise TrainingDataRefused("dataset freeze lacks readiness or rights evidence")
+    if freeze.manifest_sha256 != record_digest or freeze.split_sha256 != split_digest:
+        raise TrainingDataRefused("dataset freeze hashes do not match canonical source artifacts")
     if set(freeze.eligible_asset_ids) != asset_ids or dict(freeze.asset_rights) != rights_by_asset:
         raise TrainingDataRefused("dataset freeze eligibility does not match training records")
-    if freeze.excluded_asset_ids or freeze.exclusions:
-        raise TrainingDataRefused("training manifest contains a non-clean dataset freeze")
-    return freeze, hashlib.sha256(_canonical(raw)).hexdigest()
+    source_by_asset = {item["asset_id"]: item for item in source_records}
+    if set(source_by_asset) != asset_ids:
+        raise TrainingDataRefused("canonical source records do not match eligible assets")
+    split_by_asset = dict(source_splits["assignments"])
+    if set(split_by_asset) != asset_ids:
+        raise TrainingDataRefused("canonical source splits do not match eligible assets")
+    for record in records:
+        source = source_by_asset[record.asset_id]
+        object_ref = source.get("object_ref")
+        if (
+            not isinstance(object_ref, dict)
+            or object_ref.get("key") != record.object_key
+            or object_ref.get("sha256") != record.image_sha256
+            or source.get("watch_entity_id") != record.subject_id
+            or source.get("source_domain") != record.source_domain
+            or source.get("label") != record.label.value
+            or source.get("grade") != record.grade
+            or source.get("angle") != record.angle
+            or source.get("factory") != record.factory
+            or source.get("evidence_tier") != record.evidence_tier
+            or source.get("rights_record_id") != record.rights_record_id
+        ):
+            raise TrainingDataRefused("training projection differs from canonical source record")
+    return freeze, hashlib.sha256(_canonical(raw)).hexdigest(), split_by_asset
