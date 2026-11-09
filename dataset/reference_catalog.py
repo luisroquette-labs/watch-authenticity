@@ -209,8 +209,12 @@ def _parse_entry(raw: object, generation: int) -> ReferenceEntry:
     aliases = tuple(_slug(alias, "alias") for alias in aliases_raw)
     if len(set(aliases)) != len(aliases) or reference_id in aliases:
         raise ReferenceCatalogError("aliases must be unique and non-canonical")
-    if any(not alias.endswith(f"-{reference}") for alias in aliases):
-        raise ReferenceCatalogError("alias must preserve the exact reference")
+    if any(
+        not alias.startswith(f"{brand}-{family}-")
+        or not alias.endswith(f"-{reference}")
+        for alias in aliases
+    ):
+        raise ReferenceCatalogError("alias must preserve brand, family and reference")
     identity_hash = _optional_hash(raw["identity_evidence_sha256"], "identity evidence")
     angles_raw = raw["required_angles"]
     if not isinstance(angles_raw, list) or not angles_raw:

@@ -93,7 +93,8 @@ class _ReferenceCatalogFixture:
         )
         previous = None
         if case == "alias_collision":
-            document["references"][1]["aliases"] = ["rolex-submariner-126610ln"]
+            alias = "rolex-datejust-41-126334"
+            document["references"][1]["aliases"] = [alias, alias]
         elif case == "generation_mismatch":
             document["generation"] = 2
         elif case == "changed_angles":

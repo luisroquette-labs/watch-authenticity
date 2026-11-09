@@ -88,11 +88,11 @@ def test_references_cannot_reuse_slices_or_heads(catalog_fixture):
         )
 
 
-def test_alias_must_keep_the_exact_reference(catalog_fixture):
+def test_alias_must_keep_the_exact_identity(catalog_fixture):
     document = copy.deepcopy(catalog_fixture.document)
-    document["references"][0]["aliases"] = ["rolex-submariner"]
+    document["references"][0]["aliases"] = ["tudor-black-bay-126610ln"]
 
-    with pytest.raises(ReferenceCatalogError, match="exact reference"):
+    with pytest.raises(ReferenceCatalogError, match="brand, family and reference"):
         parse_reference_catalog(
             document, expected_sha256=catalog_document_sha256(document)
         )
