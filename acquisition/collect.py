@@ -167,10 +167,11 @@ def collect_batch(
             factory=metadata.factory,
             price_usd=metadata.price_usd,
             raw_sha256=raw_sha256,
+            derivative_sha256=derivative_sha256,
             phash=phash,
             rights_record_id=rights.rights_record_id,
         )
-        receipt = _receipt_bytes(candidate, derivative_sha256)
+        receipt = _receipt_bytes(candidate)
         receipt_sha256 = hashlib.sha256(receipt).hexdigest()
         receipt_prefix = f"datasets/receipts/{batch_id}/{candidate_id}-"
         receipt_key = f"{receipt_prefix}{receipt_sha256}.json"
@@ -388,14 +389,14 @@ def _average_hash(image: Image.Image) -> str:
     return f"{bits:016x}"
 
 
-def _receipt_bytes(candidate: CandidateRecord, derivative_sha256: str) -> bytes:
+def _receipt_bytes(candidate: CandidateRecord) -> bytes:
     document = {
         "batch_id": candidate.acquisition_batch_id,
         "candidate_id": candidate.candidate_id,
         "collected_at": candidate.collected_at.isoformat(),
         "declared_reference": candidate.declared_reference,
-        "derivative_key": f"datasets/derivatives/{derivative_sha256}",
-        "derivative_sha256": derivative_sha256,
+        "derivative_key": f"datasets/derivatives/{candidate.derivative_sha256}",
+        "derivative_sha256": candidate.derivative_sha256,
         "factory": candidate.factory,
         "phash": candidate.phash,
         "policy_id": candidate.source_policy_id,

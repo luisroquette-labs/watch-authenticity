@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -30,7 +30,7 @@ from acquisition.types import (
 from core.types import Label, ManifestRecord
 from dataset.entities import GroupingDecision
 from infra.ibm_types import ObjectRef
-from labeling.adjudicate import NotTrainingEligible
+from labeling.adjudicate import NotTrainingEligible, verify_evidence_record
 
 # Each dataset version is its own file, not a flag on a row — this is what
 # makes "append a version" structurally unable to mutate an earlier version.
@@ -95,14 +95,19 @@ def build_training_record(
     object_ref: ObjectRef,
     angle: Angle,
     capture_style: str,
+    now: datetime,
 ) -> TrainingRecord:
     """Build a training row only from accepted evidence, never price guesses."""
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
     if (
         rights.status is not RightsStatus.ACTIVE
         or "train" not in rights.allowed_purposes
         or rights.rights_record_id != candidate.rights_record_id
+        or not rights.effective_at <= now < rights.expires_at
     ):
         raise NotTrainingEligible("active training rights are required")
+    verify_evidence_record(evidence)
     if grouping.quarantined or not evidence.tier.training_eligible:
         raise NotTrainingEligible("candidate evidence is not training eligible")
     if (
@@ -111,6 +116,12 @@ def build_training_record(
         or evidence.accepted_label is None
     ):
         raise NotTrainingEligible("accepted evidence lineage is required")
+    if (
+        object_ref.sha256 != candidate.derivative_sha256
+        or object_ref.key
+        != f"datasets/derivatives/{candidate.derivative_sha256}"
+    ):
+        raise NotTrainingEligible("verified candidate derivative is required")
     domain = urlsplit(candidate.source_url).hostname
     if domain is None:
         raise ValueError("candidate source domain is missing")

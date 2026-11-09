@@ -160,6 +160,7 @@ def submit_review(
     ):
         raise ReviewerConflict("reviewer cannot approve own contributor or source group")
     tier = evidence_tier_for(evidence_type)
+    validate_evidence_proposal(evidence_type, proposed_label, proposed_grade)
     candidate_sha256 = candidate_digest(candidate)
     registry_sha256 = reviewer_digest(reviewer)
     payload = {
@@ -220,6 +221,21 @@ def evidence_tier_for(evidence_type: str) -> EvidenceTier:
         return _EVIDENCE_TIERS[evidence_type]
     except KeyError as exc:
         raise ValueError("evidence type is unsupported") from exc
+
+
+def validate_evidence_proposal(
+    evidence_type: str, proposed_label: Label | None, proposed_grade: int | None
+) -> None:
+    if evidence_type in {"replica_transaction", "factory_record"}:
+        if proposed_label is not Label.FAKE:
+            raise ReviewerConflict("replica evidence requires a fake label")
+        if proposed_grade is not None and proposed_grade not in {3, 4}:
+            raise ReviewerConflict("factory or order evidence supports only grades 3 and 4")
+    if (
+        evidence_type == "partner_authenticated_original"
+        and proposed_label is not Label.GENUINE
+    ):
+        raise ReviewerConflict("authenticated-original evidence requires a genuine label")
 
 
 def persist_review(

@@ -32,6 +32,7 @@ def reviewer(now):
             "source_reputation",
             "replica_transaction",
             "physical_examination",
+            "partner_authenticated_original",
         ),
         qualification_artifact_sha256="9" * 64,
         effective_at=now - timedelta(days=1),
@@ -67,17 +68,22 @@ def make_review(candidate, reviewer, now):
         label=Label.GENUINE,
         grade=None,
         tier=EvidenceTier.B,
-        evidence_type="replica_transaction",
+        evidence_type=None,
         reviewer_record=reviewer,
         artifact="a" * 64,
     ):
+        resolved_evidence_type = evidence_type or (
+            "replica_transaction"
+            if label is Label.FAKE
+            else "partner_authenticated_original"
+        )
         return submit_review(
             candidate,
             reviewer_record,
             proposed_label=label,
             proposed_grade=grade,
             proposed_tier=tier,
-            evidence_type=evidence_type,
+            evidence_type=resolved_evidence_type,
             supporting_artifact_hashes=(artifact,),
             reviewed_at=now,
         )
@@ -103,6 +109,7 @@ def test_dealer_reputation_alone_is_tier_c_and_not_trainable(
             object_ref=object_ref,
             angle=Angle.DIAL,
             capture_style="casual",
+            now=candidate.collected_at,
         )
 
 
@@ -155,6 +162,39 @@ def test_one_qualified_tier_b_review_is_accepted(candidate, make_review, reviewe
     assert evidence.tier is EvidenceTier.B
     assert evidence.accepted_label is Label.FAKE
     assert evidence.accepted_grade == 4
+
+
+@pytest.mark.parametrize(
+    ("label", "grade"),
+    [(Label.GENUINE, None), (Label.FAKE, 1), (Label.FAKE, 2)],
+)
+def test_replica_transaction_rejects_incompatible_label_or_grade(
+    make_review, label, grade
+):
+    with pytest.raises(ReviewerConflict):
+        make_review(label=label, grade=grade, evidence_type="replica_transaction")
+
+
+def test_unknown_fake_grade_and_reference_are_inconclusive(
+    candidate, make_review, reviewer_registry
+):
+    unknown_grade = make_review(label=Label.FAKE, grade=None)
+    assert adjudicate(candidate, [unknown_grade], reviewer_registry).tier is EvidenceTier.INCONCLUSIVE
+
+    unknown_reference = replace(candidate, declared_reference="unknown-reference")
+    matching_review = submit_review(
+        unknown_reference,
+        next(iter(reviewer_registry.values())),
+        proposed_label=Label.FAKE,
+        proposed_grade=4,
+        proposed_tier=EvidenceTier.B,
+        evidence_type="replica_transaction",
+        supporting_artifact_hashes=("a" * 64,),
+        reviewed_at=candidate.collected_at,
+    )
+    assert adjudicate(
+        unknown_reference, [matching_review], reviewer_registry
+    ).tier is EvidenceTier.INCONCLUSIVE
 
 
 def test_tier_a_requires_two_independent_reviewers(candidate, make_review, reviewer):
@@ -313,6 +353,7 @@ def test_revoked_rights_and_price_only_grade_cannot_reach_training(
             object_ref=object_ref,
             angle=Angle.DIAL,
             capture_style="casual",
+            now=candidate.collected_at,
         )
 
     price_only = adjudicate(
@@ -329,6 +370,7 @@ def test_revoked_rights_and_price_only_grade_cannot_reach_training(
             object_ref=object_ref,
             angle=Angle.DIAL,
             capture_style="casual",
+            now=candidate.collected_at,
         )
 
 
@@ -346,6 +388,7 @@ def test_build_training_record_uses_only_accepted_evidence(
         object_ref=object_ref,
         angle=Angle.DIAL,
         capture_style="studio",
+        now=candidate.collected_at,
     )
     assert record.label is Label.FAKE
     assert record.grade == 3
@@ -366,4 +409,77 @@ def test_build_training_record_rejects_grouping_from_another_candidate(
             object_ref=object_ref,
             angle=Angle.DIAL,
             capture_style="studio",
+            now=candidate.collected_at,
+        )
+
+
+def test_build_training_record_rejects_tampered_evidence(
+    candidate, make_review, reviewer_registry, grouping, rights, object_ref
+):
+    evidence = adjudicate(candidate, [make_review()], reviewer_registry)
+    tampered = replace(evidence, accepted_label=Label.FAKE, accepted_grade=4)
+
+    with pytest.raises(EvidenceTampered):
+        build_training_record(
+            candidate,
+            tampered,
+            grouping,
+            rights,
+            object_ref=object_ref,
+            angle=Angle.DIAL,
+            capture_style="studio",
+            now=candidate.collected_at,
+        )
+
+
+@pytest.mark.parametrize("offset_days", [-1, 1])
+def test_build_training_record_rejects_rights_outside_validity(
+    candidate,
+    make_review,
+    reviewer_registry,
+    grouping,
+    rights,
+    object_ref,
+    offset_days,
+):
+    evidence = adjudicate(candidate, [make_review()], reviewer_registry)
+    invalid_now = (
+        rights.expires_at
+        if offset_days < 0
+        else rights.effective_at - timedelta(microseconds=1)
+    )
+
+    with pytest.raises(NotTrainingEligible):
+        build_training_record(
+            candidate,
+            evidence,
+            grouping,
+            rights,
+            object_ref=object_ref,
+            angle=Angle.DIAL,
+            capture_style="studio",
+            now=invalid_now,
+        )
+
+
+def test_build_training_record_rejects_unlinked_image(
+    candidate, make_review, reviewer_registry, grouping, rights, object_ref
+):
+    evidence = adjudicate(candidate, [make_review()], reviewer_registry)
+    unrelated = replace(
+        object_ref,
+        key="datasets/derivatives/" + "f" * 64,
+        sha256="f" * 64,
+    )
+
+    with pytest.raises(NotTrainingEligible, match="derivative"):
+        build_training_record(
+            candidate,
+            evidence,
+            grouping,
+            rights,
+            object_ref=unrelated,
+            angle=Angle.DIAL,
+            capture_style="studio",
+            now=candidate.collected_at,
         )
