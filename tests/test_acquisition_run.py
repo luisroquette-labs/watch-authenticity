@@ -252,9 +252,9 @@ case "$*" in
   "ce sub cron get"*) exit 1 ;;
   "iam trusted-profile-links"*)
     if [[ -f "$LINK_STATE" ]]; then
-      printf '{"links":[{"cr_type":"CE","link":{"crn":"%s","component_type":"job","component_name":"watch-auth-acquisition"}}]}' "$WATCH_AUTH_CE_PROJECT_CRN"
+      printf '[{"cr_type":"CE","link":{"crn":"%s","component_type":"job","component_name":"watch-auth-acquisition"}}]' "$WATCH_AUTH_CE_PROJECT_CRN"
     else
-      printf '{"links":[]}'
+      printf '[]'
     fi
     ;;
   "iam trusted-profile-link-create"*) touch "$LINK_STATE" ;;
