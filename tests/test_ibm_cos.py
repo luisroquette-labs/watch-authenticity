@@ -197,10 +197,12 @@ def test_create_client_uses_trusted_profile_token_manager_only(monkeypatch):
     calls: dict[str, object] = {}
 
     class TrustedProfileTokenManager:
+        requests = 0
+
         def request_token(self) -> dict[str, object]:
+            self.requests += 1
             return {
-                "access_token": "trusted-token",
-                "token_type": "Bearer",
+                "access_token": f"trusted-token-{self.requests}",
                 "expires_in": 3600,
             }
 
@@ -241,8 +243,12 @@ def test_create_client_uses_trusted_profile_token_manager_only(monkeypatch):
     kwargs = calls["kwargs"]
     assert isinstance(kwargs, dict)
     adapted = kwargs["token_manager"]
-    assert adapted.auth_function == token_manager.request_token
-    assert adapted.get_token() == "trusted-token"
+    assert adapted.get_token() == "trusted-token-1"
+    assert adapted.auth_function() == {
+        "access_token": "trusted-token-2",
+        "expires_in": 3600,
+        "token_type": "Bearer",
+    }
     adapted.stop_refresh_thread()
     assert kwargs["ibm_service_instance_id"] == spec.cos_service_instance_id
     assert kwargs["endpoint_url"] == spec.cos_endpoint

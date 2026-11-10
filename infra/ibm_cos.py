@@ -29,7 +29,15 @@ def cos_oauth_token_manager(authenticator: Any) -> Any:
 
     from ibm_botocore.credentials import DefaultTokenManager
 
-    return DefaultTokenManager(auth_function=authenticator.token_manager.request_token)
+    def request_token() -> dict[str, object]:
+        response = authenticator.token_manager.request_token()
+        if not isinstance(response, dict):
+            raise RuntimeError("trusted-profile token response is invalid")
+        normalized = dict(response)
+        normalized.setdefault("token_type", "Bearer")
+        return normalized
+
+    return DefaultTokenManager(auth_function=request_token)
 
 
 def immutable_json_key(key: str, body: bytes) -> str:
