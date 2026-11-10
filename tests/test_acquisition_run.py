@@ -46,7 +46,7 @@ def test_run_collects_before_committing_and_repeated_run_is_noop(cos, monkeypatc
     calls: list[str] = []
 
     def collect(*_args, **kwargs):
-        calls.append(kwargs["collected_at"].isoformat())
+        calls.append("collected_at" if "collected_at" in kwargs else "actual-now")
         return SimpleNamespace(accepted_candidate_ids=("candidate-123",))
 
     monkeypatch.setattr("acquisition.run.collect_batch", collect)
@@ -74,7 +74,7 @@ def test_run_collects_before_committing_and_repeated_run_is_noop(cos, monkeypatc
         discover=lambda *_args, **_kwargs: pytest.fail("completed cycle was rediscovered"),
     )
 
-    assert calls == ["2020-01-02T03:04:00+00:00"]
+    assert calls == ["actual-now"]
     assert result["state"] == "complete"
     assert result["accepted_candidate_ids"] == ["candidate-123"]
     assert repeated["state"] == "already_complete"

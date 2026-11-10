@@ -149,7 +149,6 @@ def collect_batch(
     bucket: str,
     batch_id: str,
     now: datetime,
-    collected_at: datetime | None = None,
     dns_resolver: Any = socket.getaddrinfo,
 ) -> BatchReceipt:
     """Collect an authorized batch; refuse policy/rights before HTTP or COS."""
@@ -163,10 +162,6 @@ def collect_batch(
         raise AcquisitionRefused(", ".join(access_decision.reasons))
     assert access is not None
     _safe_id(batch_id, "batch_id")
-    if collected_at is not None and (
-        collected_at.tzinfo is None or collected_at.utcoffset() is None
-    ):
-        raise ValueError("collected_at must be timezone-aware")
 
     normalized_records = tuple(
         record
@@ -181,6 +176,22 @@ def collect_batch(
     accepted: list[str] = []
     receipt_hashes: list[str] = []
     for metadata in normalized_records:
+        candidate_id = "candidate-" + hashlib.sha256(
+            f"{batch_id}\0{policy.policy_id}\0{metadata.source_record_id}".encode()
+        ).hexdigest()[:24]
+        resumed_receipt = _resume_candidate_if_present(
+            cos_client,
+            bucket,
+            batch_id,
+            candidate_id,
+            policy,
+            rights,
+            metadata,
+        )
+        if resumed_receipt is not None:
+            accepted.append(candidate_id)
+            receipt_hashes.append(resumed_receipt)
+            continue
         payload, raw_sha256 = _download_image(
             http_client,
             metadata,
@@ -191,16 +202,13 @@ def collect_batch(
             raise IntegrityError("downloaded image hash does not match expected_sha256")
         derivative, phash = sanitize_image(payload)
         derivative_sha256 = hashlib.sha256(derivative).hexdigest()
-        candidate_id = "candidate-" + hashlib.sha256(
-            f"{batch_id}\0{policy.policy_id}\0{metadata.source_record_id}".encode()
-        ).hexdigest()[:24]
         candidate = CandidateRecord(
             candidate_id=candidate_id,
             acquisition_batch_id=batch_id,
             source_policy_id=policy.policy_id,
             source_record_id=metadata.source_record_id,
             source_url=metadata.source_url,
-            collected_at=collected_at or now,
+            collected_at=now,
             declared_reference=metadata.declared_reference,
             proposed_label=propose_source_label(
                 source=metadata.source,
@@ -235,6 +243,71 @@ def collect_batch(
         accepted_candidate_ids=tuple(accepted),
         refused_candidate_ids=(),
     )
+
+
+def _resume_candidate_if_present(
+    cos_client: Any,
+    bucket: str,
+    batch_id: str,
+    candidate_id: str,
+    policy: SourcePolicy,
+    rights: RightsRecord,
+    metadata: CandidateMetadata,
+) -> str | None:
+    prefix = f"datasets/receipts/{batch_id}/{candidate_id}-"
+    page = cos_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+    if not isinstance(page, dict) or page.get("IsTruncated"):
+        raise IntegrityError("receipt inventory is incomplete")
+    contents = page.get("Contents", [])
+    if not isinstance(contents, list):
+        raise IntegrityError("receipt inventory contents are invalid")
+    keys = [item.get("Key") if isinstance(item, dict) else None for item in contents]
+    if not keys:
+        return None
+    if len(keys) != 1 or not isinstance(keys[0], str) or not keys[0].startswith(prefix):
+        raise IntegrityError(f"receipt collision: {prefix}")
+    key = keys[0]
+    body = _read_receipt(cos_client, bucket, key)
+    if body is None:
+        raise IntegrityError("receipt inventory changed during resume")
+    digest = hashlib.sha256(body).hexdigest()
+    if key != f"{prefix}{digest}.json":
+        raise IntegrityError("receipt key hash differs from body")
+    try:
+        receipt = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise IntegrityError("receipt is not valid JSON") from exc
+    proposed_label = propose_source_label(
+        source=metadata.source, listing_text=metadata.listing_text
+    )
+    expected = {
+        "batch_id": batch_id,
+        "candidate_id": candidate_id,
+        "declared_reference": metadata.declared_reference,
+        "factory": metadata.factory,
+        "policy_id": policy.policy_id,
+        "price_usd": None if metadata.price_usd is None else str(metadata.price_usd),
+        "proposed_grade": None,
+        "proposed_label": None if proposed_label is None else proposed_label.value,
+        "rights_record_id": rights.rights_record_id,
+        "source_record_id": metadata.source_record_id,
+        "source_url": metadata.source_url,
+    }
+    if not isinstance(receipt, dict) or any(receipt.get(name) != value for name, value in expected.items()):
+        raise IntegrityError("receipt lineage differs from replayed candidate")
+    for kind in ("raw", "derivative"):
+        value = receipt.get(f"{kind}_sha256")
+        key_value = receipt.get(f"{kind}_key")
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or key_value != f"datasets/{kind if kind == 'raw' else 'derivatives'}/{value}"
+        ):
+            raise IntegrityError(f"receipt {kind} reference is invalid")
+        stored = _read_cos_bytes(cos_client, bucket, key_value)
+        if stored is None or hashlib.sha256(stored).hexdigest() != value:
+            raise IntegrityError(f"receipt {kind} object is missing or corrupt")
+    return digest
 
 
 def persist_candidate_payload(

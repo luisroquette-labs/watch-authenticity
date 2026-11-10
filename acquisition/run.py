@@ -78,7 +78,6 @@ def run_wikimedia_once(
                 bucket=bucket,
                 batch_id=batch_id,
                 now=now,
-                collected_at=candidate.observed_at,
             )
             accepted.extend(receipt.accepted_candidate_ids)
 
@@ -331,6 +330,9 @@ def main() -> None:
     root = Path(__file__).resolve().parents[1]
     policies = load_source_policies(root / "config/source_policies.json")
     access_registry = load_source_access_registry(root / "config/source_access.json")
+    image_requests_per_minute = access_registry["wikimedia"].requests_per_minute
+    if image_requests_per_minute is None or image_requests_per_minute < 2:
+        raise RuntimeError("Wikimedia rate limit cannot reserve the API request")
     logging.basicConfig(level=logging.INFO)
     run_wikimedia_once(
         cos,
@@ -340,7 +342,9 @@ def main() -> None:
         access_registry["wikimedia"],
         now=datetime.now(timezone.utc),
         api_client=requests.Session(),
-        image_client=PinnedRequestsClient(),
+        image_client=PinnedRequestsClient(
+            requests_per_minute=image_requests_per_minute - 1
+        ),
     )
 
 

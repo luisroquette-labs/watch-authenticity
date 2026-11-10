@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import ipaddress
+import time
+from collections.abc import Callable
+from threading import Lock
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -30,6 +33,25 @@ class _PinnedResponse:
 
 class PinnedRequestsClient:
     """Use a validated IP while checking TLS against the URL hostname."""
+
+    def __init__(
+        self,
+        *,
+        requests_per_minute: int,
+        clock: Callable[[], float] = time.monotonic,
+        sleeper: Callable[[float], None] = time.sleep,
+    ) -> None:
+        if (
+            isinstance(requests_per_minute, bool)
+            or not isinstance(requests_per_minute, int)
+            or requests_per_minute < 1
+        ):
+            raise ValueError("requests_per_minute must be a positive integer")
+        self._minimum_interval = 60.0 / requests_per_minute
+        self._clock = clock
+        self._sleeper = sleeper
+        self._next_request_at = 0.0
+        self._rate_lock = Lock()
 
     def get_pinned(
         self,
@@ -60,6 +82,12 @@ class PinnedRequestsClient:
             raise ValueError("resolved_addresses must contain IP addresses") from exc
         if len(set(addresses)) != len(addresses):
             raise ValueError("resolved_addresses must not contain duplicates")
+
+        with self._rate_lock:
+            delay = self._next_request_at - self._clock()
+            if delay > 0:
+                self._sleeper(delay)
+            self._next_request_at = self._clock() + self._minimum_interval
 
         hostname = parsed.hostname.encode("idna").decode("ascii")
         pool = urllib3.HTTPSConnectionPool(

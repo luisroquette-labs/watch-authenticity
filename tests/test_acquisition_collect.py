@@ -7,6 +7,7 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from threading import Barrier
 from unittest.mock import MagicMock
@@ -217,17 +218,36 @@ def test_429_retries_are_bounded_and_do_not_write(collector_fixture, cos):
     assert cos.write_count == 0
 
 
-def test_stable_collection_time_makes_replayed_receipt_identical(
+def test_later_replay_reuses_real_first_collection_time_without_http(
     allowed_policy, rights, cos
 ):
-    stable = NOW.replace(year=2025)
+    first = _collect_body(_png("green"), allowed_policy, rights, cos)
+    http = MagicMock()
 
-    first = _collect_body_at(_png("green"), allowed_policy, rights, cos, stable)
-    second = _collect_body_at(_png("green"), allowed_policy, rights, cos, stable)
+    second = collect_batch(
+        [
+            {
+                "source_record_id": "record-1",
+                "source_url": "https://partner.example/record-1",
+                "image_url": "https://partner.example/image-1.png",
+                "declared_reference": "rolex-submariner-126610ln",
+            }
+        ],
+        allowed_policy,
+        rights,
+        access=_access(rights),
+        http_client=http,
+        cos_client=cos,
+        bucket="private",
+        batch_id="b1",
+        now=NOW + timedelta(days=1),
+        dns_resolver=_public_dns,
+    )
 
     assert first == second
+    http.get_pinned.assert_not_called()
     [receipt_key] = _receipt_keys(cos, first.accepted_candidate_ids[0])
-    assert json.loads(cos.bodies[receipt_key])["collected_at"] == stable.isoformat()
+    assert json.loads(cos.bodies[receipt_key])["collected_at"] == NOW.isoformat()
 
 
 def test_missing_rights_refuses_before_network(allowed_policy, http_client, cos):
@@ -330,16 +350,16 @@ def test_receipt_collision_refuses_without_overwriting(collector_fixture, cos):
     assert cos.bodies[key] == b'{"different":true}'
 
 
-def test_existing_different_receipt_refuses_before_new_cos_uploads(
+def test_existing_receipt_prevents_source_drift_from_replacing_payload(
     allowed_policy, rights, cos
 ):
     first = _collect_body(_png("red"), allowed_policy, rights, cos)
     candidate_id = first.accepted_candidate_ids[0]
     writes = cos.write_count
 
-    with pytest.raises(IntegrityError, match="receipt collision"):
-        _collect_body(_png("blue"), allowed_policy, rights, cos)
+    second = _collect_body(_png("blue"), allowed_policy, rights, cos)
 
+    assert second == first
     assert cos.write_count == writes
     assert len(_receipt_keys(cos, candidate_id)) == 1
 
@@ -510,10 +530,6 @@ def _png(color: str) -> bytes:
 
 
 def _collect_body(body, policy, rights, cos):
-    return _collect_body_at(body, policy, rights, cos, NOW)
-
-
-def _collect_body_at(body, policy, rights, cos, collected_at):
     http = MagicMock()
     http.get_pinned.return_value = _Response(body, "image/png")
     return collect_batch(
@@ -533,7 +549,6 @@ def _collect_body_at(body, policy, rights, cos, collected_at):
         bucket="private",
         batch_id="b1",
         now=NOW,
-        collected_at=collected_at,
         dns_resolver=_public_dns,
     )
 
