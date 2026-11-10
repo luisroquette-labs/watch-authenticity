@@ -40,6 +40,26 @@ def cos_oauth_token_manager(authenticator: Any) -> Any:
     return DefaultTokenManager(auth_function=request_token)
 
 
+def create_oauth_cos_client(
+    authenticator: Any,
+    *,
+    endpoint_url: str,
+    service_instance_id: str,
+) -> Any:
+    """Create a COS client with the required workload-identity signing mode."""
+
+    import ibm_boto3
+    from ibm_botocore.client import Config
+
+    return ibm_boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        ibm_service_instance_id=service_instance_id,
+        token_manager=cos_oauth_token_manager(authenticator),
+        config=Config(signature_version="oauth"),
+    )
+
+
 def immutable_json_key(key: str, body: bytes) -> str:
     digest = hashlib.sha256(body).hexdigest()
     if re.search(r"[/-][0-9a-f]{64}\.json$", key):
@@ -190,17 +210,13 @@ def verify_cos_configuration(client: Any, spec: RunSpec) -> None:
 def create_cos_client(spec: RunSpec) -> Any:
     """Create an OAuth COS client backed only by the VSI trusted profile."""
 
-    import ibm_boto3
-    from ibm_botocore.client import Config
     from ibm_cloud_sdk_core.authenticators import VPCInstanceAuthenticator
 
     auth = VPCInstanceAuthenticator(iam_profile_id=spec.trusted_profile_id)
-    client = ibm_boto3.client(
-        "s3",
+    client = create_oauth_cos_client(
+        auth,
         endpoint_url=spec.cos_endpoint,
-        ibm_service_instance_id=spec.cos_service_instance_id,
-        token_manager=cos_oauth_token_manager(auth),
-        config=Config(signature_version="oauth"),
+        service_instance_id=spec.cos_service_instance_id,
     )
     setattr(client, "_watch_auth_bucket", spec.bucket)
     setattr(client, "_watch_auth_prefix", spec.prefix.strip("/"))

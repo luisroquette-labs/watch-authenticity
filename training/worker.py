@@ -11,7 +11,7 @@ from typing import Any
 
 from infra.ibm_cos import (
     IntegrityError,
-    cos_oauth_token_manager,
+    create_oauth_cos_client,
     upload_verified,
     verify_cos_configuration,
 )
@@ -56,17 +56,13 @@ def _environment() -> dict[str, str]:
 
 
 def _bootstrap_cos(env: dict[str, str]) -> Any:
-    import ibm_boto3
-    from ibm_botocore.client import Config
     from ibm_cloud_sdk_core.authenticators import VPCInstanceAuthenticator
 
     auth = VPCInstanceAuthenticator(iam_profile_id=env["WATCH_AUTH_TRUSTED_PROFILE_ID"])
-    client = ibm_boto3.client(
-        "s3",
+    client = create_oauth_cos_client(
+        auth,
         endpoint_url=env["WATCH_AUTH_COS_ENDPOINT"],
-        ibm_service_instance_id=env["WATCH_AUTH_COS_SERVICE_INSTANCE_ID"],
-        token_manager=cos_oauth_token_manager(auth),
-        config=Config(signature_version="oauth"),
+        service_instance_id=env["WATCH_AUTH_COS_SERVICE_INSTANCE_ID"],
     )
     setattr(client, "_watch_auth_bucket", env["WATCH_AUTH_COS_BUCKET"])
     setattr(client, "_watch_auth_prefix", env["WATCH_AUTH_COS_PREFIX"].strip("/"))

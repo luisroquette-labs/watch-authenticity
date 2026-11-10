@@ -22,7 +22,7 @@ from acquisition.source_policy import (
     load_source_policies,
 )
 from acquisition.types import SourceAccessRecord, SourcePolicy
-from infra.ibm_cos import cos_oauth_token_manager
+from infra.ibm_cos import create_oauth_cos_client
 from scrapers.wikimedia import WikimediaAPIError, WikimediaDiscovery, discover_wikimedia
 
 _LOG = logging.getLogger(__name__)
@@ -293,7 +293,6 @@ def _required_env(name: str) -> str:
 
 def main() -> None:
     """Create a credentialless Code Engine client and run one page."""
-    import ibm_boto3
     from ibm_cloud_sdk_core.authenticators import ContainerAuthenticator
 
     bucket = _required_env("WATCH_AUTH_COS_BUCKET")
@@ -303,11 +302,10 @@ def main() -> None:
     profile_id = _required_env("WATCH_AUTH_TRUSTED_PROFILE_ID")
     auth = ContainerAuthenticator(iam_profile_id=profile_id)
     cos = AtomicCOSClient(
-        ibm_boto3.client(
-            "s3",
+        create_oauth_cos_client(
+            auth,
             endpoint_url=endpoint,
-            ibm_service_instance_id=instance_id,
-            token_manager=cos_oauth_token_manager(auth),
+            service_instance_id=instance_id,
         )
     )
     public = cos.get_public_access_block(Bucket=bucket)
