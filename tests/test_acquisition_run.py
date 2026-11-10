@@ -3,13 +3,14 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 from acquisition.collect import DownloadRateLimited
 from acquisition.discovery import DiscoveryPage, DiscoveryRecord
 from acquisition.run import run_wikimedia_once
-from scrapers.wikimedia import WikimediaAPIError, WikimediaDiscovery
+from scrapers.wikimedia import WikimediaAPIError, WikimediaCandidate, WikimediaDiscovery
 
 NOW = datetime(2026, 11, 10, 19, 0, tzinfo=timezone.utc)
 
@@ -34,10 +35,13 @@ def _result(*, cursor=None, next_cursor=None) -> WikimediaDiscovery:
             ),
         ),
     )
-    candidate = SimpleNamespace(
-        metadata=SimpleNamespace(source_record_id="123"),
-        rights=SimpleNamespace(rights_record_id="rights-123"),
-        observed_at=datetime(2020, 1, 2, 3, 4, tzinfo=timezone.utc),
+    candidate = cast(
+        WikimediaCandidate,
+        SimpleNamespace(
+            metadata=SimpleNamespace(source_record_id="123"),
+            rights=SimpleNamespace(rights_record_id="rights-123"),
+            observed_at=datetime(2020, 1, 2, 3, 4, tzinfo=timezone.utc),
+        ),
     )
     return WikimediaDiscovery(page=page, candidates=(candidate,))
 
