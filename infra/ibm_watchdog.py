@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 from infra.ibm_cos import (
     IntegrityError,
     append_event,
+    cos_oauth_token_manager,
     immutable_json_key,
     load_event_inventory,
     load_immutable_json,
@@ -731,7 +732,7 @@ def main() -> None:
         "s3",
         endpoint_url=endpoint,
         ibm_service_instance_id=service_instance_id,
-        token_manager=auth.token_manager,
+        token_manager=cos_oauth_token_manager(auth),
     )
     run_watchdog_once(
         vpc,

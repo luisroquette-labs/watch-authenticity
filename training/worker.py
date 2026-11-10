@@ -9,7 +9,12 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from infra.ibm_cos import IntegrityError, upload_verified, verify_cos_configuration
+from infra.ibm_cos import (
+    IntegrityError,
+    cos_oauth_token_manager,
+    upload_verified,
+    verify_cos_configuration,
+)
 from infra.ibm_evidence import run_spec_sha256
 from infra.ibm_train import _canonical, _put_immutable, _response_bytes, parse_run_spec
 from infra.ibm_types import RunSpec, run_spec_transport_sha256
@@ -60,7 +65,7 @@ def _bootstrap_cos(env: dict[str, str]) -> Any:
         "s3",
         endpoint_url=env["WATCH_AUTH_COS_ENDPOINT"],
         ibm_service_instance_id=env["WATCH_AUTH_COS_SERVICE_INSTANCE_ID"],
-        token_manager=auth.token_manager,
+        token_manager=cos_oauth_token_manager(auth),
         config=Config(signature_version="oauth"),
     )
     setattr(client, "_watch_auth_bucket", env["WATCH_AUTH_COS_BUCKET"])

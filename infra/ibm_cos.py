@@ -24,6 +24,22 @@ class EventChainFork(IntegrityError):
     """More than one immutable event exists at the same sequence."""
 
 
+def cos_oauth_token_manager(authenticator: Any) -> Any:
+    """Adapt SDK Core trusted-profile tokens to the COS SDK contract."""
+
+    from ibm_botocore.credentials import DefaultTokenManager
+
+    def request_token() -> dict[str, object]:
+        response = authenticator.token_manager.request_token()
+        if not isinstance(response, dict):
+            raise RuntimeError("trusted-profile token response is invalid")
+        normalized = dict(response)
+        normalized.setdefault("token_type", "Bearer")
+        return normalized
+
+    return DefaultTokenManager(auth_function=request_token)
+
+
 def immutable_json_key(key: str, body: bytes) -> str:
     digest = hashlib.sha256(body).hexdigest()
     if re.search(r"[/-][0-9a-f]{64}\.json$", key):
@@ -183,7 +199,7 @@ def create_cos_client(spec: RunSpec) -> Any:
         "s3",
         endpoint_url=spec.cos_endpoint,
         ibm_service_instance_id=spec.cos_service_instance_id,
-        token_manager=auth.token_manager,
+        token_manager=cos_oauth_token_manager(auth),
         config=Config(signature_version="oauth"),
     )
     setattr(client, "_watch_auth_bucket", spec.bucket)
