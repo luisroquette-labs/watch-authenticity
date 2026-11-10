@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+import requests
+
 from infra.ibm_types import ObjectRef, RunEvent, RunSpec, validate_run_event_chain
 
 
@@ -22,6 +24,10 @@ class IntegrityError(RuntimeError):
 
 class EventChainFork(IntegrityError):
     """More than one immutable event exists at the same sequence."""
+
+
+PUBLIC_ACCESS_GROUP_ID = "AccessGroupId-PublicAccess"
+IAM_POLICY_ENDPOINT = "https://iam.cloud.ibm.com"
 
 
 def cos_oauth_token_manager(authenticator: Any) -> Any:
@@ -192,6 +198,87 @@ def verify_private_versioned_bucket(client: Any, bucket: str) -> None:
     versioning = client.get_bucket_versioning(Bucket=bucket)
     if not isinstance(versioning, dict) or versioning.get("Status") != "Enabled":
         raise IntegrityError("COS bucket versioning is not enabled")
+
+
+def verify_no_public_access_policies(
+    authenticator: Any,
+    *,
+    account_id: str,
+    profile_id: str,
+    reader_policy_id: str,
+    session: Any | None = None,
+) -> None:
+    """Fail closed unless IAM proves the Public Access group has no active policies."""
+
+    if not re.fullmatch(r"[0-9a-f]{32}", account_id):
+        raise IntegrityError("IBM account ID is invalid")
+    if not re.fullmatch(r"[0-9a-f-]{36}", reader_policy_id):
+        raise IntegrityError("IAM reader policy ID is invalid")
+    try:
+        token = authenticator.token_manager.get_token()
+        if not isinstance(token, str) or not token:
+            raise IntegrityError("trusted-profile token is invalid")
+        http = session or requests
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        reader = http.get(
+            f"{IAM_POLICY_ENDPOINT}/v1/policies/{reader_policy_id}",
+            headers=headers,
+            timeout=30,
+            allow_redirects=False,
+        )
+        if reader.status_code != 200:
+            raise IntegrityError("IAM policy read permission is unavailable")
+        policy = reader.json()
+        expected_subject = {"iam_id": f"iam-{profile_id}"}
+        expected_resource = {
+            "accountId": account_id,
+            "serviceName": "iam-access-management",
+        }
+        subjects = policy.get("subjects", []) if isinstance(policy, dict) else []
+        resources = policy.get("resources", []) if isinstance(policy, dict) else []
+        observed_subject = subjects[0].get("attributes", []) if len(subjects) == 1 else []
+        observed_resource = resources[0].get("attributes", []) if len(resources) == 1 else []
+        if (
+            policy.get("type") != "access"
+            or policy.get("state") != "active"
+            or len(observed_subject) != len(expected_subject)
+            or len(observed_resource) != len(expected_resource)
+            or any(item.get("operator", "stringEquals") != "stringEquals"
+                   for item in [*observed_subject, *observed_resource])
+            or {item.get("name"): item.get("value") for item in observed_subject}
+            != expected_subject
+            or {item.get("name"): item.get("value") for item in observed_resource}
+            != expected_resource
+            or [role.get("role_id") for role in policy.get("roles", [])]
+            != ["crn:v1:bluemix:public:iam::::role:Viewer"]
+        ):
+            raise IntegrityError("IAM policy read permission differs from the approved scope")
+        for version in ("v1", "v2"):
+            response = http.get(
+                f"{IAM_POLICY_ENDPOINT}/{version}/policies",
+                headers=headers,
+                params={
+                    "account_id": account_id,
+                    "access_group_id": PUBLIC_ACCESS_GROUP_ID,
+                    "state": "active",
+                    "limit": "100",
+                },
+                timeout=30,
+                allow_redirects=False,
+            )
+            if response.status_code != 200:
+                raise IntegrityError("Public Access policy inventory is unavailable")
+            inventory = response.json()
+            if not isinstance(inventory, dict) or not isinstance(inventory.get("policies"), list):
+                raise IntegrityError("Public Access policy inventory is malformed")
+            if inventory.get("next"):
+                raise IntegrityError("Public Access policy inventory is paginated")
+            if inventory["policies"]:
+                raise IntegrityError("Public Access group has active policies")
+    except IntegrityError:
+        raise
+    except (AttributeError, TypeError, ValueError, requests.RequestException):
+        raise IntegrityError("Public Access policy verification failed") from None
 
 
 def verify_cos_configuration(client: Any, spec: RunSpec) -> None:
