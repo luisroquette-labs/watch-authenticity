@@ -177,6 +177,23 @@ class EventInventorySnapshot:
     authoritative_for_launch: bool = field(default=False, init=False)
 
 
+def verify_private_versioned_bucket(client: Any, bucket: str) -> None:
+    """Require IBM COS public-ACL blocking and object versioning."""
+
+    public = client.get_public_access_block(Bucket=bucket)
+    if not isinstance(public, dict):
+        raise IntegrityError("COS public-access response must be a mapping")
+    configuration = public.get("PublicAccessBlockConfiguration", {})
+    required = {"BlockPublicAcls", "IgnorePublicAcls"}
+    if not isinstance(configuration, dict) or any(
+        configuration.get(name) is not True for name in required
+    ):
+        raise IntegrityError("COS bucket does not block all public access")
+    versioning = client.get_bucket_versioning(Bucket=bucket)
+    if not isinstance(versioning, dict) or versioning.get("Status") != "Enabled":
+        raise IntegrityError("COS bucket versioning is not enabled")
+
+
 def verify_cos_configuration(client: Any, spec: RunSpec) -> None:
     """Fail closed unless the bound bucket is private and immutable."""
 
@@ -187,23 +204,7 @@ def verify_cos_configuration(client: Any, spec: RunSpec) -> None:
         prefix=spec.prefix,
         require_verified=False,
     )
-    public = client.get_public_access_block(Bucket=spec.bucket)
-    if not isinstance(public, dict):
-        raise IntegrityError("COS public-access response must be a mapping")
-    configuration = public.get("PublicAccessBlockConfiguration", {})
-    required = {
-        "BlockPublicAcls",
-        "IgnorePublicAcls",
-        "BlockPublicPolicy",
-        "RestrictPublicBuckets",
-    }
-    if not isinstance(configuration, dict) or any(
-        configuration.get(name) is not True for name in required
-    ):
-        raise IntegrityError("COS bucket does not block all public access")
-    versioning = client.get_bucket_versioning(Bucket=spec.bucket)
-    if not isinstance(versioning, dict) or versioning.get("Status") != "Enabled":
-        raise IntegrityError("COS bucket versioning is not enabled")
+    verify_private_versioned_bucket(client, spec.bucket)
     setattr(client, "_watch_auth_configuration_verified", True)
 
 

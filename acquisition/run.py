@@ -22,7 +22,7 @@ from acquisition.source_policy import (
     load_source_policies,
 )
 from acquisition.types import SourceAccessRecord, SourcePolicy
-from infra.ibm_cos import create_oauth_cos_client
+from infra.ibm_cos import create_oauth_cos_client, verify_private_versioned_bucket
 from scrapers.wikimedia import WikimediaAPIError, WikimediaDiscovery, discover_wikimedia
 
 _LOG = logging.getLogger(__name__)
@@ -308,21 +308,7 @@ def main() -> None:
             service_instance_id=instance_id,
         )
     )
-    public = cos.get_public_access_block(Bucket=bucket)
-    controls = public.get("PublicAccessBlockConfiguration", {}) if isinstance(public, dict) else {}
-    if not isinstance(controls, dict) or any(
-        controls.get(name) is not True
-        for name in (
-            "BlockPublicAcls",
-            "IgnorePublicAcls",
-            "BlockPublicPolicy",
-            "RestrictPublicBuckets",
-        )
-    ):
-        raise RuntimeError("COS bucket must block all public access")
-    versioning = cos.get_bucket_versioning(Bucket=bucket)
-    if not isinstance(versioning, dict) or versioning.get("Status") != "Enabled":
-        raise RuntimeError("COS bucket versioning must be enabled")
+    verify_private_versioned_bucket(cos, bucket)
     setattr(cos, "_watch_auth_bucket", bucket)
     setattr(cos, "_watch_auth_prefix", prefix)
     setattr(cos, "_watch_auth_configuration_verified", True)

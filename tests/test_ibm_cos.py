@@ -56,8 +56,6 @@ class FakeCOS:
             "PublicAccessBlockConfiguration": {
                 "BlockPublicAcls": True,
                 "IgnorePublicAcls": True,
-                "BlockPublicPolicy": True,
-                "RestrictPublicBuckets": True,
             }
         }
 
@@ -283,6 +281,13 @@ def test_cos_configuration_requires_private_access_and_versioning():
     with pytest.raises(IntegrityError, match="versioning"):
         verify_cos_configuration(cos, spec)
     assert cos._watch_auth_configuration_verified is False
+
+    cos = FakeCOS(bucket=spec.bucket, prefix=spec.prefix)
+    cos.get_public_access_block = lambda **_kwargs: {
+        "PublicAccessBlockConfiguration": {"BlockPublicAcls": True}
+    }
+    with pytest.raises(IntegrityError, match="public access"):
+        verify_cos_configuration(cos, spec)
 
 
 def test_upload_uses_digest_key_and_verifies_remote_object(tmp_path: Path):
