@@ -195,7 +195,16 @@ def _event(event_id: UUID, sequence: int = 3) -> RunEvent:
 
 def test_create_client_uses_trusted_profile_token_manager_only(monkeypatch):
     calls: dict[str, object] = {}
-    token_manager = object()
+
+    class TrustedProfileTokenManager:
+        def request_token(self) -> dict[str, object]:
+            return {
+                "access_token": "trusted-token",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+            }
+
+    token_manager = TrustedProfileTokenManager()
 
     class Authenticator:
         def __init__(self, *, iam_profile_id: str) -> None:
@@ -231,7 +240,10 @@ def test_create_client_uses_trusted_profile_token_manager_only(monkeypatch):
     assert calls["signature"] == "oauth"
     kwargs = calls["kwargs"]
     assert isinstance(kwargs, dict)
-    assert kwargs["token_manager"] is token_manager
+    adapted = kwargs["token_manager"]
+    assert adapted.auth_function == token_manager.request_token
+    assert adapted.get_token() == "trusted-token"
+    adapted.stop_refresh_thread()
     assert kwargs["ibm_service_instance_id"] == spec.cos_service_instance_id
     assert kwargs["endpoint_url"] == spec.cos_endpoint
     assert not ({"api_key", "aws_access_key_id", "aws_secret_access_key"} & kwargs.keys())

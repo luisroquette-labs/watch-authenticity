@@ -22,6 +22,7 @@ from acquisition.source_policy import (
     load_source_policies,
 )
 from acquisition.types import SourceAccessRecord, SourcePolicy
+from infra.ibm_cos import cos_oauth_token_manager
 from scrapers.wikimedia import WikimediaAPIError, WikimediaDiscovery, discover_wikimedia
 
 _LOG = logging.getLogger(__name__)
@@ -306,7 +307,7 @@ def main() -> None:
             "s3",
             endpoint_url=endpoint,
             ibm_service_instance_id=instance_id,
-            token_manager=auth.token_manager,
+            token_manager=cos_oauth_token_manager(auth),
         )
     )
     public = cos.get_public_access_block(Bucket=bucket)

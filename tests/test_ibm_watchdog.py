@@ -328,7 +328,7 @@ def test_main_uses_trusted_profile_and_info_logging(monkeypatch):
     class Auth:
         def __init__(self, *, iam_profile_id):
             created["profile"] = iam_profile_id
-            self.token_manager = object()
+            self.token_manager = SimpleNamespace(request_token=lambda: {})
 
     class Vpc:
         def __init__(self, *, authenticator):
