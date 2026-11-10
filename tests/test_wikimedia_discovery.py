@@ -8,7 +8,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from acquisition.discovery import append_discovery_page
-from acquisition.source_policy import get_source_policy, load_source_policies
+from acquisition.source_policy import (
+    get_source_policy,
+    load_source_access_registry,
+    load_source_policies,
+)
 from acquisition.types import EvidenceTier, SourceAccessRecord, SourceAccessStatus
 from core.rules import propose_source_label
 from scrapers.wikimedia import WikimediaAPIError, discover_wikimedia
@@ -153,6 +157,25 @@ def test_real_commons_license_shapes_are_normalized():
         "https://creativecommons.org/licenses/by-sa/3.0/",
         "https://commons.wikimedia.org/wiki/File:Public_domain_Submariner.jpg",
     ]
+
+
+def test_current_registry_accepts_commons_thumbnail_host():
+    http = MagicMock()
+    http.get.return_value = _Response(
+        {"query": {"pages": [_page(image_host="thumb.wikimedia.org")]}}
+    )
+    access = load_source_access_registry(Path("config/source_access.json"))["wikimedia"]
+
+    result = _discover(
+        http,
+        None,
+        access=access,
+        now=datetime(2026, 11, 10, 21, 24, tzinfo=timezone.utc),
+    )
+
+    assert result.page.records[0].image_urls == (
+        "https://thumb.wikimedia.org/thumb/1280px-watch.jpg",
+    )
 
 
 @pytest.mark.parametrize("license_name", ["All Rights Reserved", "CC BY-NC 4.0"])
