@@ -38,7 +38,13 @@ def test_pinned_client_connects_to_ip_and_validates_original_hostname(monkeypatc
     assert create_pool.call_args.kwargs["server_hostname"] == "upload.wikimedia.org"
     request = pool.urlopen.call_args
     assert request.args == ("GET", "/path/watch.jpg?width=1280")
-    assert request.kwargs["headers"] == {"Host": "upload.wikimedia.org"}
+    assert request.kwargs["headers"] == {
+        "Host": "upload.wikimedia.org",
+        "User-Agent": (
+            "watch-authenticity/0.1 "
+            "(https://github.com/luisroquette-labs/watch-authenticity)"
+        ),
+    }
     assert request.kwargs["redirect"] is False
     assert request.kwargs["retries"] is False
     assert list(result.iter_content(3)) == [b"one", b"two"]

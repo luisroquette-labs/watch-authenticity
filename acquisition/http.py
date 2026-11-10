@@ -13,6 +13,11 @@ import certifi
 import requests
 import urllib3
 
+_USER_AGENT = (
+    "watch-authenticity/0.1 "
+    "(https://github.com/luisroquette-labs/watch-authenticity)"
+)
+
 
 class _PinnedResponse:
     def __init__(self, response: Any, pool: urllib3.HTTPSConnectionPool) -> None:
@@ -105,7 +110,7 @@ class PinnedRequestsClient:
             response = pool.urlopen(
                 "GET",
                 path,
-                headers={"Host": hostname},
+                headers={"Host": hostname, "User-Agent": _USER_AGENT},
                 redirect=False,
                 retries=False,
                 preload_content=not stream,
