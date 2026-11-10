@@ -50,7 +50,7 @@ link_exists() {
 import json, sys
 project_crn, job = sys.argv[1:]
 document = json.load(sys.stdin)
-links = document.get("links", [])
+links = document if isinstance(document, list) else document.get("links", []) if isinstance(document, dict) else None
 if not isinstance(links, list):
     raise SystemExit(2)
 raise SystemExit(0 if any(
