@@ -259,6 +259,20 @@ def test_create_client_uses_trusted_profile_token_manager_only(monkeypatch):
     assert getattr(created, "_watch_auth_configuration_verified") is False
 
 
+def test_runtime_cos_clients_share_the_oauth_factory():
+    root = Path(__file__).resolve().parents[1]
+    direct_clients = [
+        path.relative_to(root).as_posix()
+        for directory in ("acquisition", "infra", "training")
+        for path in (root / directory).rglob("*.py")
+        if "ibm_boto3.client(" in path.read_text()
+    ]
+
+    assert direct_clients == ["infra/ibm_cos.py"]
+    for relative in ("acquisition/run.py", "infra/ibm_watchdog.py", "training/worker.py"):
+        assert "create_oauth_cos_client(" in (root / relative).read_text()
+
+
 def test_cos_configuration_requires_private_access_and_versioning():
     spec = valid_run_spec()
     cos = FakeCOS(bucket=spec.bucket, prefix=spec.prefix)

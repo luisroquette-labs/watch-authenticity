@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 from infra.ibm_cos import (
     IntegrityError,
     append_event,
-    cos_oauth_token_manager,
+    create_oauth_cos_client,
     immutable_json_key,
     load_event_inventory,
     load_immutable_json,
@@ -706,7 +706,6 @@ def _required_env(name: str) -> str:
 def main() -> None:
     """Code Engine entry point using workload identity; no persistent API key."""
 
-    import ibm_boto3
     from ibm_cloud_sdk_core.authenticators import ContainerAuthenticator
     from ibm_platform_services import GlobalTaggingV1, UsageReportsV4
     from ibm_vpc import VpcV1
@@ -728,11 +727,10 @@ def main() -> None:
     vpc.set_service_url(f"https://{region}.iaas.cloud.ibm.com/v1")
     tagger = GlobalTaggingV1(authenticator=auth)
     usage = UsageReportsV4(authenticator=auth)
-    cos = ibm_boto3.client(
-        "s3",
+    cos = create_oauth_cos_client(
+        auth,
         endpoint_url=endpoint,
-        ibm_service_instance_id=service_instance_id,
-        token_manager=cos_oauth_token_manager(auth),
+        service_instance_id=service_instance_id,
     )
     run_watchdog_once(
         vpc,
