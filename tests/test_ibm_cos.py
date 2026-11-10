@@ -9,7 +9,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -25,6 +25,7 @@ from infra.ibm_cos import (
     upload_verified,
     validate_event_chain,
     verify_cos_configuration,
+    verify_no_public_access_policies,
 )
 from infra.ibm_evidence import run_spec_sha256
 from infra.ibm_types import RunEvent
@@ -56,8 +57,6 @@ class FakeCOS:
             "PublicAccessBlockConfiguration": {
                 "BlockPublicAcls": True,
                 "IgnorePublicAcls": True,
-                "BlockPublicPolicy": True,
-                "RestrictPublicBuckets": True,
             }
         }
 
@@ -283,6 +282,91 @@ def test_cos_configuration_requires_private_access_and_versioning():
     with pytest.raises(IntegrityError, match="versioning"):
         verify_cos_configuration(cos, spec)
     assert cos._watch_auth_configuration_verified is False
+
+    cos = FakeCOS(bucket=spec.bucket, prefix=spec.prefix)
+    cos.get_public_access_block = lambda **_kwargs: {
+        "PublicAccessBlockConfiguration": {"BlockPublicAcls": True}
+    }
+    with pytest.raises(IntegrityError, match="public access"):
+        verify_cos_configuration(cos, spec)
+
+
+class _IAMResponse:
+    def __init__(self, document: dict[str, object], status_code: int = 200) -> None:
+        self.document = document
+        self.status_code = status_code
+
+    def json(self) -> dict[str, object]:
+        return self.document
+
+
+class _IAMSession:
+    def __init__(self, *, inventory: dict[str, object] | None = None) -> None:
+        self.inventory = inventory or {"policies": []}
+        self.urls: list[str] = []
+
+    def get(self, url: str, **kwargs: object) -> _IAMResponse:
+        assert kwargs["headers"] == {
+            "Authorization": "Bearer trusted-token",
+            "Accept": "application/json",
+        }
+        assert kwargs["timeout"] == 30 and kwargs["allow_redirects"] is False
+        self.urls.append(url)
+        if "/v1/policies/" in url:
+            return _IAMResponse({
+                "type": "access",
+                "state": "active",
+                "subjects": [{"attributes": [
+                    {"name": "iam_id", "value": "iam-Profile-test"},
+                ]}],
+                "resources": [{"attributes": [
+                    {"name": "serviceName", "value": "iam-access-management"},
+                    {"name": "accountId", "value": "a" * 32},
+                ]}],
+                "roles": [{"role_id": "crn:v1:bluemix:public:iam::::role:Viewer"}],
+            })
+        assert kwargs["params"] == {
+            "account_id": "a" * 32,
+            "access_group_id": "AccessGroupId-PublicAccess",
+            "state": "active",
+            "limit": "100",
+        }
+        return _IAMResponse(self.inventory)
+
+
+def _verify_public_access(session: _IAMSession) -> None:
+    auth = SimpleNamespace(token_manager=SimpleNamespace(get_token=lambda: "trusted-token"))
+    verify_no_public_access_policies(
+        auth,
+        account_id="a" * 32,
+        profile_id="Profile-test",
+        reader_policy_id="11111111-1111-4111-8111-111111111111",
+        session=session,
+    )
+
+
+def test_public_access_policy_inventory_requires_visible_empty_v1_and_v2():
+    session = _IAMSession()
+    _verify_public_access(session)
+
+    assert session.urls == [
+        "https://iam.cloud.ibm.com/v1/policies/11111111-1111-4111-8111-111111111111",
+        "https://iam.cloud.ibm.com/v1/policies",
+        "https://iam.cloud.ibm.com/v2/policies",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("inventory", "message"),
+    [
+        ({"policies": [{"id": "public"}]}, "has active policies"),
+        ({"policies": [], "next": {"href": "next"}}, "paginated"),
+        ({"policies": "hidden"}, "malformed"),
+    ],
+)
+def test_public_access_policy_inventory_fails_closed(inventory, message):
+    with pytest.raises(IntegrityError, match=message):
+        _verify_public_access(_IAMSession(inventory=inventory))
 
 
 def test_upload_uses_digest_key_and_verifies_remote_object(tmp_path: Path):

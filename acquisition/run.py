@@ -22,7 +22,11 @@ from acquisition.source_policy import (
     load_source_policies,
 )
 from acquisition.types import SourceAccessRecord, SourcePolicy
-from infra.ibm_cos import create_oauth_cos_client
+from infra.ibm_cos import (
+    create_oauth_cos_client,
+    verify_no_public_access_policies,
+    verify_private_versioned_bucket,
+)
 from scrapers.wikimedia import WikimediaAPIError, WikimediaDiscovery, discover_wikimedia
 
 _LOG = logging.getLogger(__name__)
@@ -300,6 +304,8 @@ def main() -> None:
     endpoint = _required_env("WATCH_AUTH_COS_ENDPOINT")
     instance_id = _required_env("WATCH_AUTH_COS_SERVICE_INSTANCE_ID")
     profile_id = _required_env("WATCH_AUTH_TRUSTED_PROFILE_ID")
+    account_id = _required_env("WATCH_AUTH_ACCOUNT_ID")
+    reader_policy_id = _required_env("WATCH_AUTH_IAM_READER_POLICY_ID")
     auth = ContainerAuthenticator(iam_profile_id=profile_id)
     cos = AtomicCOSClient(
         create_oauth_cos_client(
@@ -308,21 +314,13 @@ def main() -> None:
             service_instance_id=instance_id,
         )
     )
-    public = cos.get_public_access_block(Bucket=bucket)
-    controls = public.get("PublicAccessBlockConfiguration", {}) if isinstance(public, dict) else {}
-    if not isinstance(controls, dict) or any(
-        controls.get(name) is not True
-        for name in (
-            "BlockPublicAcls",
-            "IgnorePublicAcls",
-            "BlockPublicPolicy",
-            "RestrictPublicBuckets",
-        )
-    ):
-        raise RuntimeError("COS bucket must block all public access")
-    versioning = cos.get_bucket_versioning(Bucket=bucket)
-    if not isinstance(versioning, dict) or versioning.get("Status") != "Enabled":
-        raise RuntimeError("COS bucket versioning must be enabled")
+    verify_no_public_access_policies(
+        auth,
+        account_id=account_id,
+        profile_id=profile_id,
+        reader_policy_id=reader_policy_id,
+    )
+    verify_private_versioned_bucket(cos, bucket)
     setattr(cos, "_watch_auth_bucket", bucket)
     setattr(cos, "_watch_auth_prefix", prefix)
     setattr(cos, "_watch_auth_configuration_verified", True)

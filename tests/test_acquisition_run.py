@@ -276,6 +276,8 @@ esac
         "WATCH_AUTH_COS_ENDPOINT": "https://cos.example",
         "WATCH_AUTH_COS_SERVICE_INSTANCE_ID": "cos-1",
         "WATCH_AUTH_TRUSTED_PROFILE_ID": "profile-1",
+        "WATCH_AUTH_ACCOUNT_ID": "a" * 32,
+        "WATCH_AUTH_IAM_READER_POLICY_ID": "11111111-1111-4111-8111-111111111111",
     }
 
     result = subprocess.run(
@@ -320,6 +322,8 @@ esac
         "WATCH_AUTH_COS_ENDPOINT": "https://cos.example",
         "WATCH_AUTH_COS_SERVICE_INSTANCE_ID": "cos-1",
         "WATCH_AUTH_TRUSTED_PROFILE_ID": "profile-1",
+        "WATCH_AUTH_ACCOUNT_ID": "a" * 32,
+        "WATCH_AUTH_IAM_READER_POLICY_ID": "11111111-1111-4111-8111-111111111111",
     }
 
     result = subprocess.run(
