@@ -38,6 +38,7 @@ def test_registry_loads_every_declared_source_policy(policy_set):
         "watchuseek",
         "reptime",
         "chinese_replica",
+        "wikimedia",
     }
 
 
@@ -176,8 +177,14 @@ def test_versioned_access_registry_keeps_unproven_sources_inactive():
         "watchuseek",
         "reptime",
         "chinese_replica",
+        "wikimedia",
     }
-    assert all(record.status is not SourceAccessStatus.ACTIVE for record in registry.values())
+    assert registry["wikimedia"].status is SourceAccessStatus.ACTIVE
+    assert all(
+        record.status is not SourceAccessStatus.ACTIVE
+        for source, record in registry.items()
+        if source != "wikimedia"
+    )
 
 
 def test_discovery_requires_current_bound_access_evidence(policy_set, rights):

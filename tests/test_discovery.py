@@ -24,6 +24,7 @@ def _record(record_id: str, *, image: str | None = None) -> DiscoveryRecord:
         declared_reference="rolex-submariner-126610ln",
         image_ids=(f"picture-{record_id}",),
         image_urls=(image or f"https://http2.mlstatic.com/{record_id}.jpg",),
+        metadata=(("classification", "test-candidate"),),
     )
 
 
@@ -36,6 +37,18 @@ def _page(now, records, *, cursor=None, next_cursor="page-2") -> DiscoveryPage:
         observed_at=now,
         records=tuple(records),
     )
+
+
+def test_empty_filtered_page_can_advance_cursor(cos):
+    commit = append_discovery_page(
+        cos,
+        "private",
+        "datasets/discovery",
+        _page(NOW, [], next_cursor="next"),
+    )
+
+    assert commit.next_cursor == "next"
+    assert commit.record_hashes == ()
 
 
 def test_discovery_page_is_idempotent_and_input_order_independent(cos):

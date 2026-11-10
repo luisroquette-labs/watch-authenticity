@@ -7,6 +7,7 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from threading import Barrier
 from unittest.mock import MagicMock
@@ -19,6 +20,7 @@ import acquisition.collect as collect_module
 import acquisition.partner_import as partner_import
 from acquisition.collect import (
     AcquisitionRefused,
+    DownloadRateLimited,
     IntegrityError,
     UnsafeImage,
     collect_batch,
@@ -209,11 +211,74 @@ def test_supported_single_frame_formats_are_sanitized(image_format: str):
 def test_429_retries_are_bounded_and_do_not_write(collector_fixture, cos):
     collector_fixture.set_statuses(429, 429, 429)
 
-    with pytest.raises(IntegrityError, match="after 3 attempts"):
+    with pytest.raises(DownloadRateLimited, match="after 3 attempts"):
         collector_fixture.collect("valid")
 
     assert collector_fixture.http_client.get_pinned.call_count == 3
     assert cos.write_count == 0
+
+
+def test_later_replay_reuses_real_first_collection_time_without_http(
+    allowed_policy, rights, cos
+):
+    first = _collect_body(_png("green"), allowed_policy, rights, cos)
+    http = MagicMock()
+
+    second = collect_batch(
+        [
+            {
+                "source_record_id": "record-1",
+                "source_url": "https://partner.example/record-1",
+                "image_url": "https://partner.example/image-1.png",
+                "declared_reference": "rolex-submariner-126610ln",
+            }
+        ],
+        allowed_policy,
+        rights,
+        access=_access(rights),
+        http_client=http,
+        cos_client=cos,
+        bucket="private",
+        batch_id="b1",
+        now=NOW + timedelta(days=1),
+        dns_resolver=_public_dns,
+    )
+
+    assert first == second
+    http.get_pinned.assert_not_called()
+    [receipt_key] = _receipt_keys(cos, first.accepted_candidate_ids[0])
+    assert json.loads(cos.bodies[receipt_key])["collected_at"] == NOW.isoformat()
+
+
+def test_replay_rechecks_expected_hash_before_accepting_existing_receipt(
+    allowed_policy, rights, cos
+):
+    _collect_body(_png("green"), allowed_policy, rights, cos)
+    http = MagicMock()
+
+    with pytest.raises(IntegrityError, match="expected_sha256"):
+        collect_batch(
+            [
+                {
+                    "source_record_id": "record-1",
+                    "source_url": "https://partner.example/record-1",
+                    "image_url": "https://partner.example/image-1.png",
+                    "declared_reference": "rolex-submariner-126610ln",
+                    "expected_sha256": "0" * 64,
+                }
+            ],
+            allowed_policy,
+            rights,
+            access=_access(rights),
+            http_client=http,
+            cos_client=cos,
+            bucket="private",
+            batch_id="b1",
+            now=NOW + timedelta(days=1),
+            dns_resolver=_public_dns,
+        )
+
+    http.get_pinned.assert_not_called()
 
 
 def test_missing_rights_refuses_before_network(allowed_policy, http_client, cos):
@@ -316,16 +381,16 @@ def test_receipt_collision_refuses_without_overwriting(collector_fixture, cos):
     assert cos.bodies[key] == b'{"different":true}'
 
 
-def test_existing_different_receipt_refuses_before_new_cos_uploads(
+def test_existing_receipt_prevents_source_drift_from_replacing_payload(
     allowed_policy, rights, cos
 ):
     first = _collect_body(_png("red"), allowed_policy, rights, cos)
     candidate_id = first.accepted_candidate_ids[0]
     writes = cos.write_count
 
-    with pytest.raises(IntegrityError, match="receipt collision"):
-        _collect_body(_png("blue"), allowed_policy, rights, cos)
+    second = _collect_body(_png("blue"), allowed_policy, rights, cos)
 
+    assert second == first
     assert cos.write_count == writes
     assert len(_receipt_keys(cos, candidate_id)) == 1
 

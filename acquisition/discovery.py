@@ -25,6 +25,7 @@ class DiscoveryRecord:
     declared_reference: str
     image_ids: tuple[str, ...]
     image_urls: tuple[str, ...]
+    metadata: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         for field in (
@@ -50,6 +51,18 @@ class DiscoveryRecord:
             raise ValueError("image_urls must not contain duplicates")
         for image_url in self.image_urls:
             _https_url(image_url, "image_url")
+        if not isinstance(self.metadata, tuple):
+            raise ValueError("metadata must be a tuple")
+        metadata_keys: list[str] = []
+        for item in self.metadata:
+            if not isinstance(item, tuple) or len(item) != 2:
+                raise ValueError("metadata items must be key-value tuples")
+            key, value = item
+            _single_line(key, "metadata key")
+            _single_line(value, "metadata value")
+            metadata_keys.append(key)
+        if len(metadata_keys) != len(set(metadata_keys)):
+            raise ValueError("metadata keys must not contain duplicates")
 
 
 @dataclass(frozen=True)
@@ -69,8 +82,8 @@ class DiscoveryPage:
                 _single_line(value, name)
         if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
             raise ValueError("observed_at must be timezone-aware")
-        if not isinstance(self.records, tuple) or not self.records:
-            raise ValueError("discovery page requires records")
+        if not isinstance(self.records, tuple):
+            raise ValueError("discovery page records must be a tuple")
         if any(record.source != self.source for record in self.records):
             raise ValueError("discovery record source differs from page")
         ids = [record.source_record_id for record in self.records]
@@ -208,6 +221,7 @@ def _record_document(record: DiscoveryRecord) -> dict[str, object]:
         "declared_reference": record.declared_reference,
         "image_ids": list(record.image_ids),
         "image_urls": list(record.image_urls),
+        "metadata": dict(record.metadata),
     }
 
 

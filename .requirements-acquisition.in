@@ -1,0 +1,5 @@
+ibm-cos-sdk==2.16.2
+ibm-cloud-sdk-core==3.28.0
+Pillow==13.0.0
+requests==2.34.2
+certifi==2026.10.23
