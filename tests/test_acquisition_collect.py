@@ -19,6 +19,7 @@ import acquisition.collect as collect_module
 import acquisition.partner_import as partner_import
 from acquisition.collect import (
     AcquisitionRefused,
+    DownloadRateLimited,
     IntegrityError,
     UnsafeImage,
     collect_batch,
@@ -209,11 +210,24 @@ def test_supported_single_frame_formats_are_sanitized(image_format: str):
 def test_429_retries_are_bounded_and_do_not_write(collector_fixture, cos):
     collector_fixture.set_statuses(429, 429, 429)
 
-    with pytest.raises(IntegrityError, match="after 3 attempts"):
+    with pytest.raises(DownloadRateLimited, match="after 3 attempts"):
         collector_fixture.collect("valid")
 
     assert collector_fixture.http_client.get_pinned.call_count == 3
     assert cos.write_count == 0
+
+
+def test_stable_collection_time_makes_replayed_receipt_identical(
+    allowed_policy, rights, cos
+):
+    stable = NOW.replace(year=2025)
+
+    first = _collect_body_at(_png("green"), allowed_policy, rights, cos, stable)
+    second = _collect_body_at(_png("green"), allowed_policy, rights, cos, stable)
+
+    assert first == second
+    [receipt_key] = _receipt_keys(cos, first.accepted_candidate_ids[0])
+    assert json.loads(cos.bodies[receipt_key])["collected_at"] == stable.isoformat()
 
 
 def test_missing_rights_refuses_before_network(allowed_policy, http_client, cos):
@@ -496,6 +510,10 @@ def _png(color: str) -> bytes:
 
 
 def _collect_body(body, policy, rights, cos):
+    return _collect_body_at(body, policy, rights, cos, NOW)
+
+
+def _collect_body_at(body, policy, rights, cos, collected_at):
     http = MagicMock()
     http.get_pinned.return_value = _Response(body, "image/png")
     return collect_batch(
@@ -515,6 +533,7 @@ def _collect_body(body, policy, rights, cos):
         bucket="private",
         batch_id="b1",
         now=NOW,
+        collected_at=collected_at,
         dns_resolver=_public_dns,
     )
 

@@ -115,5 +115,18 @@
     "requests_per_minute": null,
     "reason": "no rights-cleared vendor export and factory evidence are configured",
     "evidence_sha256": "2e420216871f8135266288f8af191e70716f19de6afedf759cc506a49331dc34"
+  },
+  {
+    "access_record_id": "access-wikimedia-commons-20261110",
+    "source": "wikimedia",
+    "acquisition_method": "official-api",
+    "status": "active",
+    "evidence_url": "https://commons.wikimedia.org/w/api.php",
+    "verified_at": "2026-11-10T12:00:00Z",
+    "expires_at": "2027-11-10T12:00:00Z",
+    "allowed_image_hosts": ["upload.wikimedia.org"],
+    "requests_per_minute": 20,
+    "reason": "Commons API and file hosts permit bounded access; per-file license still gates download",
+    "evidence_sha256": "111b62fae2ebd77eb5affc0add78a2e77db7b7f08eff0ce1880c5f629d0acbe0"
   }
 ]

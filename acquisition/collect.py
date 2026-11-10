@@ -47,6 +47,10 @@ class UnsafeImage(ValueError):
     """Downloaded bytes are not a safe, complete single-frame image."""
 
 
+class DownloadRateLimited(IntegrityError):
+    """The approved image host asked this bounded run to resume later."""
+
+
 class PinnedHTTPClient(Protocol):
     def get_pinned(
         self,
@@ -145,6 +149,7 @@ def collect_batch(
     bucket: str,
     batch_id: str,
     now: datetime,
+    collected_at: datetime | None = None,
     dns_resolver: Any = socket.getaddrinfo,
 ) -> BatchReceipt:
     """Collect an authorized batch; refuse policy/rights before HTTP or COS."""
@@ -158,6 +163,10 @@ def collect_batch(
         raise AcquisitionRefused(", ".join(access_decision.reasons))
     assert access is not None
     _safe_id(batch_id, "batch_id")
+    if collected_at is not None and (
+        collected_at.tzinfo is None or collected_at.utcoffset() is None
+    ):
+        raise ValueError("collected_at must be timezone-aware")
 
     normalized_records = tuple(
         record
@@ -191,7 +200,7 @@ def collect_batch(
             source_policy_id=policy.policy_id,
             source_record_id=metadata.source_record_id,
             source_url=metadata.source_url,
-            collected_at=now,
+            collected_at=collected_at or now,
             declared_reference=metadata.declared_reference,
             proposed_label=propose_source_label(
                 source=metadata.source,
@@ -346,7 +355,13 @@ def _download_image(
                         raise IntegrityError("image redirect is missing Location")
                     redirect_url = urljoin(url, location)
                     break
-                if last_status == 429 or 500 <= last_status <= 599:
+                if last_status == 429:
+                    if attempt == MAX_HTTP_ATTEMPTS:
+                        raise DownloadRateLimited(
+                            f"image download rate limited after {attempt} attempts"
+                        )
+                    continue
+                if 500 <= last_status <= 599:
                     if attempt == MAX_HTTP_ATTEMPTS:
                         raise IntegrityError(
                             f"image download failed after {attempt} attempts"

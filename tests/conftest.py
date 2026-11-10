@@ -166,8 +166,20 @@ class _CollectorCOS:
             raise _NotFound
         return {"Body": io.BytesIO(self.bodies[Key])}
 
-    def list_objects_v2(self, *, Bucket: str, Prefix: str):
+    def list_objects_v2(self, *, Bucket: str, Prefix: str, Delimiter: str | None = None):
         del Bucket
+        if Delimiter is not None:
+            prefixes = {
+                Prefix + suffix.split(Delimiter, 1)[0] + Delimiter
+                for key in self.bodies
+                if key.startswith(Prefix)
+                for suffix in (key[len(Prefix) :],)
+                if Delimiter in suffix
+            }
+            return {
+                "CommonPrefixes": [{"Prefix": value} for value in sorted(prefixes)],
+                "IsTruncated": False,
+            }
         return {
             "Contents": [{"Key": key} for key in sorted(self.bodies) if key.startswith(Prefix)],
             "IsTruncated": False,
