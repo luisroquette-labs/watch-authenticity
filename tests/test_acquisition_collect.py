@@ -250,6 +250,37 @@ def test_later_replay_reuses_real_first_collection_time_without_http(
     assert json.loads(cos.bodies[receipt_key])["collected_at"] == NOW.isoformat()
 
 
+def test_replay_rechecks_expected_hash_before_accepting_existing_receipt(
+    allowed_policy, rights, cos
+):
+    _collect_body(_png("green"), allowed_policy, rights, cos)
+    http = MagicMock()
+
+    with pytest.raises(IntegrityError, match="expected_sha256"):
+        collect_batch(
+            [
+                {
+                    "source_record_id": "record-1",
+                    "source_url": "https://partner.example/record-1",
+                    "image_url": "https://partner.example/image-1.png",
+                    "declared_reference": "rolex-submariner-126610ln",
+                    "expected_sha256": "0" * 64,
+                }
+            ],
+            allowed_policy,
+            rights,
+            access=_access(rights),
+            http_client=http,
+            cos_client=cos,
+            bucket="private",
+            batch_id="b1",
+            now=NOW + timedelta(days=1),
+            dns_resolver=_public_dns,
+        )
+
+    http.get_pinned.assert_not_called()
+
+
 def test_missing_rights_refuses_before_network(allowed_policy, http_client, cos):
     with pytest.raises(AcquisitionRefused, match="rights missing"):
         collect_batch(

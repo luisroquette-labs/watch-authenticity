@@ -295,6 +295,11 @@ def _resume_candidate_if_present(
     }
     if not isinstance(receipt, dict) or any(receipt.get(name) != value for name, value in expected.items()):
         raise IntegrityError("receipt lineage differs from replayed candidate")
+    if (
+        metadata.expected_sha256 is not None
+        and receipt.get("raw_sha256") != metadata.expected_sha256
+    ):
+        raise IntegrityError("stored image hash does not match expected_sha256")
     for kind in ("raw", "derivative"):
         value = receipt.get(f"{kind}_sha256")
         key_value = receipt.get(f"{kind}_key")
