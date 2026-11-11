@@ -167,5 +167,18 @@
     "requests_per_minute": 10,
     "reason": "robots.txt advertises public product sitemaps; image copyright permission is absent, so only CPO metadata and image URLs may be stored",
     "evidence_sha256": "a194321fa081a35a1f6e6d844225b9ef2f6df646aa216a8c75c6da5ba0db8bc0"
+  },
+  {
+    "access_record_id": "access-precisionwatches-cpo-sitemap-20261111",
+    "source": "precisionwatches",
+    "acquisition_method": "public-sitemap",
+    "status": "active",
+    "evidence_url": "https://precisionwatches.com/robots.txt",
+    "verified_at": "2026-11-11T17:30:00Z",
+    "expires_at": "2027-11-11T17:30:00Z",
+    "allowed_image_hosts": ["precisionwatches.com"],
+    "requests_per_minute": 10,
+    "reason": "robots.txt advertises public product sitemaps; image copyright permission is absent, so only CPO metadata and image URLs may be stored",
+    "evidence_sha256": "a1a2e954e8228811e6c31945c89d178c081c2745c6e401ac497d24c4a0e80aed"
   }
 ]
