@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -45,6 +47,8 @@ def discover_watchesofswitzerland(
     *,
     now: datetime,
     previous: object | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> DiscoveryPage:
     """Discover exact-reference CPO metadata without downloading image bytes."""
     decision = authorize_discovery(policy, access, now=now)
@@ -54,20 +58,33 @@ def discover_watchesofswitzerland(
         raise PermissionError("source access evidence missing")
     if access.allowed_image_hosts != (_IMAGE_HOST,):
         raise PermissionError("source access image hosts do not match the approved host")
+    if access.requests_per_minute is None:
+        raise PermissionError("source access request limit is missing")
+    requests_per_minute = access.requests_per_minute
     if previous is not None:
         raise WatchesOfSwitzerlandAPIError("CPO sitemap discovery has no continuation cursor")
 
-    robots = _get_bounded(http_client, _ROBOTS_URL, _MAX_ROBOTS_BYTES, "robots.txt")
+    next_request_at = clock()
+
+    def get_bounded(url: str, limit: int, surface: str) -> bytes:
+        nonlocal next_request_at
+        delay = next_request_at - clock()
+        if delay > 0:
+            sleeper(delay)
+        body = _get_bounded(http_client, url, limit, surface)
+        next_request_at = clock() + 60.0 / requests_per_minute
+        return body
+
+    robots = get_bounded(_ROBOTS_URL, _MAX_ROBOTS_BYTES, "robots.txt")
     if f"Sitemap: {_SITEMAP_URL}" not in robots.decode("utf-8", errors="strict"):
         raise WatchesOfSwitzerlandAPIError("robots.txt does not advertise the approved sitemap")
 
-    index = _xml(_get_bounded(http_client, _SITEMAP_URL, _MAX_INDEX_BYTES, "sitemap index"))
+    index = _xml(get_bounded(_SITEMAP_URL, _MAX_INDEX_BYTES, "sitemap index"))
     sitemap_urls = _product_sitemap_urls(index)
     records: list[DiscoveryRecord] = []
     for sitemap_url in sitemap_urls:
         sitemap = _xml(
-            _get_bounded(
-                http_client,
+            get_bounded(
                 sitemap_url,
                 _MAX_PRODUCT_SITEMAP_BYTES,
                 "product sitemap",

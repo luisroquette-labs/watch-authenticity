@@ -92,10 +92,21 @@ def _http(products: str | None = None):
     return http
 
 
+def _discover(http, policy, access):
+    return discover_watchesofswitzerland(
+        http,
+        policy,
+        access,
+        now=NOW,
+        clock=lambda: 0.0,
+        sleeper=lambda _seconds: None,
+    )
+
+
 def test_discovers_exact_cpo_reference_as_metadata_only_original_candidate():
     policy, access = _registry()
 
-    page = discover_watchesofswitzerland(_http(), policy, access, now=NOW)
+    page = _discover(_http(), policy, access)
 
     assert not policy.may_download
     assert not policy.may_train
@@ -121,7 +132,7 @@ def test_reads_only_public_discovery_surfaces_and_does_not_fetch_images():
     policy, access = _registry()
     http = _http()
 
-    discover_watchesofswitzerland(http, policy, access, now=NOW)
+    _discover(http, policy, access)
 
     requested = [call.args[0] for call in http.get.call_args_list]
     assert requested == [
@@ -135,9 +146,7 @@ def test_reads_only_public_discovery_surfaces_and_does_not_fetch_images():
 def test_near_reference_and_other_submariner_are_not_mislabeled():
     policy, access = _registry()
 
-    page = discover_watchesofswitzerland(
-        _http(_products(suffix="126610ln999")), policy, access, now=NOW
-    )
+    page = _discover(_http(_products(suffix="126610ln999")), policy, access)
 
     assert page.records == ()
 
@@ -150,12 +159,10 @@ def test_unapproved_product_or_image_host_fails_closed():
         _Response(_index("https://evil.example/sitemap_products_1.xml")),
     ]
     with pytest.raises(WatchesOfSwitzerlandAPIError, match="approved host"):
-        discover_watchesofswitzerland(bad_index, policy, access, now=NOW)
+        _discover(bad_index, policy, access)
 
     with pytest.raises(WatchesOfSwitzerlandAPIError, match="approved host"):
-        discover_watchesofswitzerland(
-            _http(_products(image_host="evil.example")), policy, access, now=NOW
-        )
+        _discover(_http(_products(image_host="evil.example")), policy, access)
 
 
 def test_missing_cpo_declaration_fails_closed():
@@ -163,7 +170,7 @@ def test_missing_cpo_declaration_fails_closed():
     products = _products().replace("Rolex Certified Pre-owned ", "")
 
     with pytest.raises(WatchesOfSwitzerlandAPIError, match="CPO declaration"):
-        discover_watchesofswitzerland(_http(products), policy, access, now=NOW)
+        _discover(_http(products), policy, access)
 
 
 def test_rate_limit_is_recoverable_and_response_is_closed():
@@ -173,7 +180,7 @@ def test_rate_limit_is_recoverable_and_response_is_closed():
     http.get.return_value = response
 
     with pytest.raises(WatchesOfSwitzerlandAPIError, match="resume later"):
-        discover_watchesofswitzerland(http, policy, access, now=NOW)
+        _discover(http, policy, access)
 
     assert response.closed
 
@@ -182,11 +189,8 @@ def test_access_record_must_bind_the_exact_image_host():
     policy, access = _registry()
 
     with pytest.raises(PermissionError, match="image hosts"):
-        discover_watchesofswitzerland(
-            _http(),
-            policy,
-            replace(access, allowed_image_hosts=("images.example",)),
-            now=NOW,
+        _discover(
+            _http(), policy, replace(access, allowed_image_hosts=("images.example",))
         )
 
 
@@ -200,7 +204,32 @@ def test_oversized_response_stops_stream_and_closes(monkeypatch):
     monkeypatch.setattr("scrapers.watchesofswitzerland._MAX_ROBOTS_BYTES", 8)
 
     with pytest.raises(WatchesOfSwitzerlandAPIError, match="too large"):
-        discover_watchesofswitzerland(http, policy, access, now=NOW)
+        _discover(http, policy, access)
 
     assert response.closed
     assert next(chunks) == b"must-not-be-consumed"
+
+
+def test_requests_are_paced_by_the_access_record_limit():
+    policy, access = _registry()
+
+    class Clock:
+        value = 0.0
+
+        def __call__(self):
+            return self.value
+
+        def sleep(self, seconds):
+            self.value += seconds
+
+    clock = Clock()
+    discover_watchesofswitzerland(
+        _http(),
+        policy,
+        access,
+        now=NOW,
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+
+    assert clock.value == 12.0
