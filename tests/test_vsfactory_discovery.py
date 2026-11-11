@@ -18,8 +18,16 @@ NOW = datetime(2026, 11, 11, 16, 0, tzinfo=timezone.utc)
 
 class _Response:
     def __init__(self, body: str, status_code: int = 200):
-        self.content = body.encode()
+        self.body = body.encode()
         self.status_code = status_code
+        self.closed = False
+
+    def iter_content(self, chunk_size: int):
+        del chunk_size
+        yield self.body
+
+    def close(self):
+        self.closed = True
 
 
 def _registry():
@@ -81,6 +89,7 @@ def test_discovers_exact_replica_reference_as_candidate_only():
         headers={"User-Agent": "watch-authenticity/0.1 (research collector)"},
         timeout=30,
         allow_redirects=False,
+        stream=True,
     )
 
 
@@ -106,3 +115,28 @@ def test_rate_limit_is_recoverable():
 
     with pytest.raises(VSFactoryAPIError, match="resume later"):
         discover_vsfactoryusa(http, policy, access, now=NOW)
+
+
+def test_reference_near_match_is_not_mislabeled():
+    policy, access = _registry()
+    http = MagicMock()
+    http.get.return_value = _Response(_sitemap().replace("126610ln", "126610ln999"))
+
+    with pytest.raises(VSFactoryAPIError, match="no exact-reference"):
+        discover_vsfactoryusa(http, policy, access, now=NOW)
+
+
+def test_oversized_response_stops_stream_and_closes(monkeypatch):
+    policy, access = _registry()
+    response = _Response("")
+    chunks = iter((b"123456789", b"must-not-be-consumed"))
+    response.iter_content = MagicMock(return_value=chunks)
+    http = MagicMock()
+    http.get.return_value = response
+    monkeypatch.setattr("scrapers.vsfactoryusa._MAX_SITEMAP_BYTES", 8)
+
+    with pytest.raises(VSFactoryAPIError, match="too large"):
+        discover_vsfactoryusa(http, policy, access, now=NOW)
+
+    assert response.closed
+    assert next(chunks) == b"must-not-be-consumed"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Any
@@ -15,6 +16,7 @@ from acquisition.types import SourceAccessRecord, SourcePolicy
 _SITEMAP_URL = "https://vsfactoryusa.com/sitemap.xml"
 _HOST = "vsfactoryusa.com"
 _REFERENCE = "126610ln"
+_REFERENCE_TOKEN = re.compile(r"(?<![a-z0-9])126610ln(?![a-z0-9])", re.IGNORECASE)
 _DECLARED_REFERENCE = "rolex-submariner-126610ln"
 _MAX_SITEMAP_BYTES = 5 * 1024 * 1024
 _USER_AGENT = "watch-authenticity/0.1 (research collector)"
@@ -50,15 +52,19 @@ def discover_vsfactoryusa(
         headers={"User-Agent": _USER_AGENT},
         timeout=30,
         allow_redirects=False,
+        stream=True,
     )
     status = getattr(response, "status_code", None)
     if status == 429:
         raise VSFactoryAPIError("VSFactoryUSA rate limited; resume later")
     if status != 200:
         raise VSFactoryAPIError(f"VSFactoryUSA sitemap returned HTTP {status}")
-    body = getattr(response, "content", None)
-    if not isinstance(body, bytes) or not body or len(body) > _MAX_SITEMAP_BYTES:
-        raise VSFactoryAPIError("VSFactoryUSA sitemap body is missing or too large")
+    try:
+        body = _read_bounded(response)
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
     try:
         root = ET.fromstring(body)
     except ET.ParseError as exc:
@@ -86,7 +92,7 @@ def _parse_entry(entry: ET.Element) -> DiscoveryRecord | None:
     parsed = _approved_url(source_url)
     slug = parsed.path.strip("/")
     normalized = slug.lower()
-    if _REFERENCE not in normalized or "submariner" not in normalized:
+    if _REFERENCE_TOKEN.search(normalized) is None or "submariner" not in normalized:
         return None
     if "replica" not in normalized and "super-clone" not in normalized:
         return None
@@ -99,7 +105,7 @@ def _parse_entry(entry: ET.Element) -> DiscoveryRecord | None:
         _approved_url(image_url)
         title_element = image.find("image:title", _NS)
         title = title_element.text.strip() if title_element is not None and title_element.text else ""
-        if _REFERENCE not in title.lower() or "clone" not in title.lower():
+        if _REFERENCE_TOKEN.search(title) is None or "clone" not in title.lower():
             raise VSFactoryAPIError("exact-reference image lacks an explicit replica declaration")
         images.append(image_url)
         titles.append(title)
@@ -124,6 +130,25 @@ def _parse_entry(entry: ET.Element) -> DiscoveryRecord | None:
             ("rights_status", "metadata_only"),
         ),
     )
+
+
+def _read_bounded(response: Any) -> bytes:
+    chunks: list[bytes] = []
+    size = 0
+    iterator = getattr(response, "iter_content", None)
+    if not callable(iterator):
+        raise VSFactoryAPIError("VSFactoryUSA sitemap response is not streamable")
+    for chunk in iterator(chunk_size=64 * 1024):
+        if not isinstance(chunk, bytes):
+            raise VSFactoryAPIError("VSFactoryUSA sitemap stream is invalid")
+        size += len(chunk)
+        if size > _MAX_SITEMAP_BYTES:
+            raise VSFactoryAPIError("VSFactoryUSA sitemap body is too large")
+        chunks.append(chunk)
+    body = b"".join(chunks)
+    if not body:
+        raise VSFactoryAPIError("VSFactoryUSA sitemap body is missing")
+    return body
 
 
 def _text(element: ET.Element | None, field: str) -> str:
