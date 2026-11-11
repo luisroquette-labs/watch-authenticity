@@ -28,6 +28,7 @@ PRODUCT_URL = (
 class _Response:
     def __init__(self, body: str, status_code: int = 200):
         self.body = body.encode()
+        self.headers = {}
         self.raw = self
         self.offset = 0
         self.status_code = status_code
@@ -302,4 +303,20 @@ def test_streaming_response_is_stopped_at_absolute_deadline():
         fetcher.get_bytes("https://example.test", 100, "slow", deadline=16.0)
 
     assert consumed == [b"first"]
+    assert response.closed
+    assert http.get.call_args.kwargs["headers"]["Accept-Encoding"] == "identity"
+
+
+def test_compressed_response_is_rejected_before_streaming():
+    response = _Response("compressed")
+    response.headers = {"Content-Encoding": "gzip"}
+    response.read1 = MagicMock()
+    http = MagicMock()
+    http.get.return_value = response
+    fetcher = PacedBoundedHTTP(http, 10, GoldsmithsAPIError)
+
+    with pytest.raises(GoldsmithsAPIError, match="compressed content"):
+        fetcher.get_bytes("https://example.test", 100, "compressed")
+
+    response.read1.assert_not_called()
     assert response.closed

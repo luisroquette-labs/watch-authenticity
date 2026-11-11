@@ -51,7 +51,7 @@ class PacedBoundedHTTP:
         self._require_read_window(deadline)
         response = self._http_client.get(
             url,
-            headers={"User-Agent": _USER_AGENT},
+            headers={"Accept-Encoding": "identity", "User-Agent": _USER_AGENT},
             timeout=_REQUEST_TIMEOUT_SECONDS,
             allow_redirects=False,
             stream=True,
@@ -62,6 +62,10 @@ class PacedBoundedHTTP:
                 raise self._error_type(f"{surface} rate limited; resume later")
             if status != 200:
                 raise self._error_type(f"{surface} returned HTTP {status}")
+            headers = getattr(response, "headers", {})
+            content_encoding = headers.get("Content-Encoding", "")
+            if content_encoding and content_encoding.lower() != "identity":
+                raise self._error_type(f"{surface} returned compressed content")
             chunks: list[bytes] = []
             size = 0
             raw = getattr(response, "raw", None)
@@ -70,7 +74,7 @@ class PacedBoundedHTTP:
                 raise self._error_type(f"{surface} response lacks bounded streaming")
             while True:
                 self._require_read_window(deadline)
-                chunk = read_one(64 * 1024, decode_content=True)
+                chunk = read_one(64 * 1024, decode_content=False)
                 if chunk == b"":
                     break
                 if not isinstance(chunk, bytes):

@@ -27,6 +27,7 @@ PRODUCT_SITEMAP = (
 class _Response:
     def __init__(self, body: str, status_code: int = 200):
         self.body = body.encode()
+        self.headers = {}
         self.raw = self
         self.offset = 0
         self.status_code = status_code
