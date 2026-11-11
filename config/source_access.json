@@ -154,5 +154,18 @@
     "requests_per_minute": 10,
     "reason": "robots.txt allows public product sitemaps; image copyright permission is absent, so only CPO metadata and image URLs may be stored",
     "evidence_sha256": "aaf4b9320646735dfff3d9ec8cf053a79201b2c8d94ce359b15d5dc16ddd3cc5"
+  },
+  {
+    "access_record_id": "access-goldsmiths-cpo-sitemap-20261111",
+    "source": "goldsmiths",
+    "acquisition_method": "public-sitemap",
+    "status": "active",
+    "evidence_url": "https://www.goldsmiths.co.uk/robots.txt",
+    "verified_at": "2026-11-11T16:12:00Z",
+    "expires_at": "2027-11-11T16:12:00Z",
+    "allowed_image_hosts": ["content.thewosgroup.com"],
+    "requests_per_minute": 10,
+    "reason": "robots.txt advertises public product sitemaps; image copyright permission is absent, so only CPO metadata and image URLs may be stored",
+    "evidence_sha256": "a194321fa081a35a1f6e6d844225b9ef2f6df646aa216a8c75c6da5ba0db8bc0"
   }
 ]

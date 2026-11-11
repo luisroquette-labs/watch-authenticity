@@ -118,5 +118,15 @@
     "required_rights_purposes": [],
     "requires_rightsholder_permission": true,
     "policy_evidence_sha256": "63315622e9290f25328d6636aa5152a2669dca47a2f574eab471f12dd0fec3aa"
+  },
+  {
+    "policy_id": "goldsmiths-cpo-metadata-only-v1",
+    "source": "goldsmiths",
+    "allowed_methods": ["public-sitemap"],
+    "may_download": false,
+    "may_train": false,
+    "required_rights_purposes": [],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "3fbd2bdf93467d0be88182ce4d8f8fac5404fa9daf0e7c7b2d0fa7b500c33612"
   }
 ]

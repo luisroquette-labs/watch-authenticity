@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -27,6 +28,7 @@ from infra.ibm_cos import (
     verify_no_public_access_policies,
     verify_private_versioned_bucket,
 )
+from scrapers.goldsmiths import discover_goldsmiths
 from scrapers.vsfactoryusa import discover_vsfactoryusa
 from scrapers.watchesofswitzerland import discover_watchesofswitzerland
 from scrapers.wikimedia import WikimediaAPIError, WikimediaDiscovery, discover_wikimedia
@@ -381,6 +383,7 @@ def main() -> None:
         raise RuntimeError("Wikimedia rate limit cannot reserve the API request")
     logging.basicConfig(level=logging.INFO)
     now = datetime.now(timezone.utc)
+    job_deadline = time.monotonic() + 420
     run_wikimedia_once(
         cos,
         bucket,
@@ -407,6 +410,23 @@ def main() -> None:
             vsfactory_access,
             now=now,
             previous=previous,
+        ),
+    )
+    goldsmiths_policy = get_source_policy(policies, "goldsmiths")
+    goldsmiths_access = access_registry["goldsmiths"]
+    run_metadata_discovery_once(
+        cos,
+        bucket,
+        prefix,
+        "goldsmiths",
+        now=now,
+        discover=lambda previous: discover_goldsmiths(
+            requests.Session(),
+            goldsmiths_policy,
+            goldsmiths_access,
+            now=now,
+            previous=previous,
+            deadline=job_deadline,
         ),
     )
     wos_policy = get_source_policy(policies, "watchesofswitzerland")

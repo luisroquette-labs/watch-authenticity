@@ -1,0 +1,102 @@
+"""Bounded, paced HTTP reads for public metadata surfaces."""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable
+from typing import Any
+
+_USER_AGENT = "watch-authenticity/0.1 (research collector)"
+_REQUEST_TIMEOUT_SECONDS = 15
+
+
+class HTTPDeadlineExceeded(RuntimeError):
+    """The absolute read deadline cannot accommodate another network wait."""
+
+
+class PacedBoundedHTTP:
+    def __init__(
+        self,
+        http_client: Any,
+        requests_per_minute: int,
+        error_type: type[RuntimeError],
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        sleeper: Callable[[float], None] = time.sleep,
+    ) -> None:
+        if (
+            isinstance(requests_per_minute, bool)
+            or not isinstance(requests_per_minute, int)
+            or requests_per_minute < 1
+        ):
+            raise ValueError("requests_per_minute must be a positive integer")
+        self._http_client = http_client
+        self._minimum_interval = 60.0 / requests_per_minute
+        self._error_type = error_type
+        self._clock = clock
+        self._sleeper = sleeper
+        self._next_request_at = clock()
+
+    def get_bytes(
+        self,
+        url: str,
+        limit: int,
+        surface: str,
+        *,
+        deadline: float | None = None,
+    ) -> bytes:
+        delay = self._next_request_at - self._clock()
+        if delay > 0:
+            self._sleeper(delay)
+        self._require_read_window(deadline)
+        response = self._http_client.get(
+            url,
+            headers={"Accept-Encoding": "identity", "User-Agent": _USER_AGENT},
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+            allow_redirects=False,
+            stream=True,
+        )
+        try:
+            status = getattr(response, "status_code", None)
+            if status == 429:
+                raise self._error_type(f"{surface} rate limited; resume later")
+            if status != 200:
+                raise self._error_type(f"{surface} returned HTTP {status}")
+            headers = getattr(response, "headers", {})
+            content_encoding = headers.get("Content-Encoding", "")
+            if content_encoding and content_encoding.lower() != "identity":
+                raise self._error_type(f"{surface} returned compressed content")
+            chunks: list[bytes] = []
+            size = 0
+            raw = getattr(response, "raw", None)
+            read_one = getattr(raw, "read1", None)
+            if not callable(read_one):
+                raise self._error_type(f"{surface} response lacks bounded streaming")
+            while True:
+                self._require_read_window(deadline)
+                chunk = read_one(64 * 1024, decode_content=False)
+                if chunk == b"":
+                    break
+                if not isinstance(chunk, bytes):
+                    raise self._error_type(f"{surface} stream is invalid")
+                size += len(chunk)
+                if size > limit:
+                    raise self._error_type(f"{surface} body is too large")
+                chunks.append(chunk)
+            body = b"".join(chunks)
+            if not body:
+                raise self._error_type(f"{surface} body is missing")
+            return body
+        finally:
+            self._next_request_at = self._clock() + self._minimum_interval
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
+
+    def can_complete_before(self, deadline: float) -> bool:
+        """Reserve pacing plus one full request timeout before starting."""
+        return max(self._clock(), self._next_request_at) + _REQUEST_TIMEOUT_SECONDS <= deadline
+
+    def _require_read_window(self, deadline: float | None) -> None:
+        if deadline is not None and self._clock() + _REQUEST_TIMEOUT_SECONDS > deadline:
+            raise HTTPDeadlineExceeded("HTTP read deadline exhausted")
