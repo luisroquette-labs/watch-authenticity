@@ -27,6 +27,7 @@ _PRODUCT_PATH = re.compile(
     re.IGNORECASE,
 )
 _UNIT_ID = re.compile(r"(?<![A-Z0-9])PA[0-9]+(?![A-Z0-9])")
+_REQUIRED_VIEWS = ("SOLDIER_BLACK_01", "V_360M_06", "V_360M_17", "V_360M_32")
 _MAX_ROBOTS_BYTES = 256 * 1024
 _MAX_INDEX_BYTES = 1024 * 1024
 _MAX_PRODUCT_SITEMAP_BYTES = 8 * 1024 * 1024
@@ -152,19 +153,31 @@ def _parse_product(source_url: str, last_modified: str, body: bytes) -> Discover
         document,
         re.IGNORECASE,
     )
-    candidates = [url for url in page_images if _UNIT_ID.search(url)]
-    images = tuple(dict.fromkeys(candidates))
-    if not images:
+    candidates = tuple(dict.fromkeys(url for url in page_images if _UNIT_ID.search(url)))
+    if not candidates:
         raise PrecisionWatchesAPIError("exact-reference product images are missing")
-    unit_ids: set[str] = set()
-    for image_url in images:
+    galleries: dict[str, dict[str, str]] = {}
+    for image_url in candidates:
         _approved_url(image_url, image=True)
-        unit_ids.update(_UNIT_ID.findall(image_url))
-    if len(unit_ids) != 1:
+        unit_match = _UNIT_ID.search(image_url)
+        if unit_match is None:
+            continue
+        view = next((name for name in _REQUIRED_VIEWS if name in image_url), None)
+        if view is None:
+            continue
+        unit_views = galleries.setdefault(unit_match.group(0), {})
+        if view in unit_views and unit_views[view] != image_url:
+            raise PrecisionWatchesAPIError("product gallery contains an ambiguous view")
+        unit_views[view] = image_url
+    complete = [
+        (unit_id, views)
+        for unit_id, views in galleries.items()
+        if all(view in views for view in _REQUIRED_VIEWS)
+    ]
+    if len(complete) != 1:
         raise PrecisionWatchesAPIError("product images do not identify one physical watch")
-    unit_id = unit_ids.pop()
-    if any(unit_id not in image_url for image_url in images):
-        raise PrecisionWatchesAPIError("product images do not identify one physical watch")
+    unit_id, selected = complete[0]
+    images = tuple(selected[view] for view in _REQUIRED_VIEWS)
 
     version_input = "\0".join((last_modified, title, source_url, *images)).encode()
     return DiscoveryRecord(
