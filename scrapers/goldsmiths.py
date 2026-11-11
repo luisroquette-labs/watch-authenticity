@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 from acquisition.discovery import DiscoveryPage, DiscoveryRecord
 from acquisition.source_policy import authorize_discovery
 from acquisition.types import SourceAccessRecord, SourcePolicy
-from scrapers.metadata_http import PacedBoundedHTTP
+from scrapers.metadata_http import HTTPDeadlineExceeded, PacedBoundedHTTP
 
 _HOST = "www.goldsmiths.co.uk"
 _IMAGE_HOST = "content.thewosgroup.com"
@@ -68,7 +68,7 @@ def discover_goldsmiths(
     cursor_match = _CURSOR.fullmatch(cursor) if cursor is not None else None
     if cursor is not None and cursor_match is None:
         raise GoldsmithsAPIError("CPO discovery continuation cursor is invalid")
-    after_unit = cursor_match.group("unit_id") if cursor_match is not None else None
+    after_unit = int(cursor_match.group("unit_id")) if cursor_match is not None else None
     source_deadline = deadline if deadline is not None else clock() + _SOURCE_BUDGET_SECONDS
 
     fetcher = PacedBoundedHTTP(
@@ -78,12 +78,16 @@ def discover_goldsmiths(
         clock=clock,
         sleeper=sleeper,
     )
-    robots = fetcher.get_bytes(_ROBOTS_URL, _MAX_ROBOTS_BYTES, "robots.txt")
+    robots = fetcher.get_bytes(
+        _ROBOTS_URL, _MAX_ROBOTS_BYTES, "robots.txt", deadline=source_deadline
+    )
     if f"Sitemap: {_SITEMAP_URL}" not in robots.decode("utf-8", errors="strict"):
         raise GoldsmithsAPIError("robots.txt does not advertise the approved sitemap")
 
     sitemap_urls = _product_sitemap_urls(
-        fetcher.get_bytes(_SITEMAP_URL, _MAX_INDEX_BYTES, "sitemap index")
+        fetcher.get_bytes(
+            _SITEMAP_URL, _MAX_INDEX_BYTES, "sitemap index", deadline=source_deadline
+        )
     )
     products: list[tuple[str, str]] = []
     for sitemap_url in sitemap_urls:
@@ -92,6 +96,7 @@ def discover_goldsmiths(
                 sitemap_url,
                 _MAX_PRODUCT_SITEMAP_BYTES,
                 "product sitemap",
+                deadline=source_deadline,
             )
         )
         for entry in root.findall("sm:url", _NS):
@@ -104,21 +109,27 @@ def discover_goldsmiths(
         raise GoldsmithsAPIError("exact-reference product inventory is invalid")
 
     remaining = sorted(
-        (source_url, unit_id)
-        for source_url, unit_id in products
-        if after_unit is None or unit_id > after_unit
+        (
+            (source_url, unit_id)
+            for source_url, unit_id in products
+            if after_unit is None or int(unit_id) > after_unit
+        ),
+        key=lambda item: int(item[1]),
     )
     records: list[DiscoveryRecord] = []
     for source_url, unit_id in remaining:
         if not fetcher.can_complete_before(source_deadline):
             break
-        records.append(
-            _parse_product_page(
+        try:
+            body = fetcher.get_bytes(
                 source_url,
-                unit_id,
-                fetcher.get_bytes(source_url, _MAX_PRODUCT_PAGE_BYTES, "product page"),
+                _MAX_PRODUCT_PAGE_BYTES,
+                "product page",
+                deadline=source_deadline,
             )
-        )
+        except HTTPDeadlineExceeded:
+            break
+        records.append(_parse_product_page(source_url, unit_id, body))
     if remaining and not records:
         raise GoldsmithsAPIError("CPO discovery budget exhausted before progress")
     next_cursor = None

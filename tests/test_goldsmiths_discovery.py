@@ -14,6 +14,7 @@ from acquisition.source_policy import (
     load_source_policies,
 )
 from scrapers.goldsmiths import GoldsmithsAPIError, discover_goldsmiths
+from scrapers.metadata_http import HTTPDeadlineExceeded, PacedBoundedHTTP
 
 NOW = datetime(2026, 11, 11, 16, 30, tzinfo=timezone.utc)
 INDEX_URL = "https://www.goldsmiths.co.uk/sitemap.xml"
@@ -206,7 +207,9 @@ def test_product_inventory_above_job_budget_fails_before_product_page(monkeypatc
 
 def test_deadline_checkpoint_persists_and_resumes_without_repeating_product(cos):
     policy, access = _registry()
-    second_url = PRODUCT_URL.replace("406107907490", "406107907491")
+    second_url = PRODUCT_URL.replace(
+        "Date-126610LN/p/406107907490", "Date-M126610LN/p/406107907489"
+    )
     sitemap = _sitemap().replace(
         "</urlset>", f"  <url><loc>{second_url}</loc></url>\n</urlset>"
     )
@@ -260,9 +263,39 @@ def test_deadline_checkpoint_persists_and_resumes_without_repeating_product(cos)
 
     assert first["state"] == "page_complete"
     assert second["state"] == "complete"
-    assert [record.source_record_id for record in pages[0].records] == ["406107907490"]
-    assert pages[0].next_cursor == "after:406107907490"
+    assert [record.source_record_id for record in pages[0].records] == ["406107907489"]
+    assert pages[0].next_cursor == "after:406107907489"
     assert pages[1].cursor == pages[0].next_cursor
-    assert [record.source_record_id for record in pages[1].records] == ["406107907491"]
-    assert PRODUCT_URL in requests_by_run[0]
-    assert PRODUCT_URL not in requests_by_run[1]
+    assert [record.source_record_id for record in pages[1].records] == ["406107907490"]
+    assert second_url in requests_by_run[0]
+    assert second_url not in requests_by_run[1]
+
+
+def test_streaming_response_is_stopped_at_absolute_deadline():
+    elapsed = [0.0]
+    response = _Response("unused")
+    consumed = []
+
+    def slow_chunks(*, chunk_size):
+        del chunk_size
+        for chunk in (b"first", b"second"):
+            elapsed[0] += 2
+            consumed.append(chunk)
+            yield chunk
+
+    response.iter_content = slow_chunks
+    http = MagicMock()
+    http.get.return_value = response
+    fetcher = PacedBoundedHTTP(
+        http,
+        10,
+        GoldsmithsAPIError,
+        clock=lambda: elapsed[0],
+        sleeper=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds),
+    )
+
+    with pytest.raises(HTTPDeadlineExceeded, match="deadline exhausted"):
+        fetcher.get_bytes("https://example.test", 100, "slow", deadline=16.0)
+
+    assert consumed == [b"first"]
+    assert response.closed

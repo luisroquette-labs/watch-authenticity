@@ -10,6 +10,10 @@ _USER_AGENT = "watch-authenticity/0.1 (research collector)"
 _REQUEST_TIMEOUT_SECONDS = 15
 
 
+class HTTPDeadlineExceeded(RuntimeError):
+    """The absolute read deadline cannot accommodate another network wait."""
+
+
 class PacedBoundedHTTP:
     def __init__(
         self,
@@ -33,10 +37,18 @@ class PacedBoundedHTTP:
         self._sleeper = sleeper
         self._next_request_at = clock()
 
-    def get_bytes(self, url: str, limit: int, surface: str) -> bytes:
+    def get_bytes(
+        self,
+        url: str,
+        limit: int,
+        surface: str,
+        *,
+        deadline: float | None = None,
+    ) -> bytes:
         delay = self._next_request_at - self._clock()
         if delay > 0:
             self._sleeper(delay)
+        self._require_read_window(deadline)
         response = self._http_client.get(
             url,
             headers={"User-Agent": _USER_AGENT},
@@ -55,7 +67,13 @@ class PacedBoundedHTTP:
             iterator = getattr(response, "iter_content", None)
             if not callable(iterator):
                 raise self._error_type(f"{surface} response is not streamable")
-            for chunk in iterator(chunk_size=64 * 1024):
+            chunks_iterator = iter(iterator(chunk_size=64 * 1024))
+            while True:
+                self._require_read_window(deadline)
+                try:
+                    chunk = next(chunks_iterator)
+                except StopIteration:
+                    break
                 if not isinstance(chunk, bytes):
                     raise self._error_type(f"{surface} stream is invalid")
                 size += len(chunk)
@@ -75,3 +93,7 @@ class PacedBoundedHTTP:
     def can_complete_before(self, deadline: float) -> bool:
         """Reserve pacing plus one full request timeout before starting."""
         return max(self._clock(), self._next_request_at) + _REQUEST_TIMEOUT_SECONDS <= deadline
+
+    def _require_read_window(self, deadline: float | None) -> None:
+        if deadline is not None and self._clock() + _REQUEST_TIMEOUT_SECONDS > deadline:
+            raise HTTPDeadlineExceeded("HTTP read deadline exhausted")
