@@ -9,7 +9,7 @@ import pytest
 
 from acquisition.collect import DownloadRateLimited
 from acquisition.discovery import DiscoveryPage, DiscoveryRecord
-from acquisition.run import run_wikimedia_once
+from acquisition.run import run_metadata_discovery_once, run_wikimedia_once
 from scrapers.wikimedia import WikimediaAPIError, WikimediaCandidate, WikimediaDiscovery
 
 NOW = datetime(2026, 11, 10, 19, 0, tzinfo=timezone.utc)
@@ -83,6 +83,132 @@ def test_run_collects_before_committing_and_repeated_run_is_noop(cos, monkeypatc
     assert result["accepted_candidate_ids"] == ["candidate-123"]
     assert repeated["state"] == "already_complete"
     assert cos.write_count == writes
+
+
+def test_metadata_only_source_commits_without_downloading(cos):
+    page = DiscoveryPage(
+        source="vsfactoryusa",
+        access_record_id="access-vsfactoryusa-1",
+        cursor=None,
+        next_cursor=None,
+        observed_at=NOW,
+        records=(
+            DiscoveryRecord(
+                source="vsfactoryusa",
+                source_record_id="126610ln-super-clone",
+                source_version="2026-11-09",
+                source_url="https://vsfactoryusa.com/126610ln-super-clone/",
+                seller_group_id="vsfactoryusa",
+                declared_reference="rolex-submariner-126610ln",
+                image_ids=("image-1",),
+                image_urls=("https://vsfactoryusa.com/images/126610ln-01.webp",),
+            ),
+        ),
+    )
+
+    result = run_metadata_discovery_once(
+        cos,
+        "private",
+        "datasets",
+        "vsfactoryusa",
+        now=NOW,
+        discover=lambda previous: page,
+    )
+    writes = cos.write_count
+    repeated = run_metadata_discovery_once(
+        cos,
+        "private",
+        "datasets",
+        "vsfactoryusa",
+        now=NOW,
+        discover=lambda _previous: pytest.fail("completed cycle was rediscovered"),
+    )
+
+    assert result["record_count"] == 1
+    assert result["state"] == "complete"
+    assert repeated["state"] == "already_complete"
+    assert cos.write_count == writes
+
+
+def test_metadata_source_resumes_its_older_cycle_after_another_source_runs(cos):
+    first_page = DiscoveryPage(
+        source="vsfactoryusa",
+        access_record_id="access-vsfactoryusa-1",
+        cursor=None,
+        next_cursor="page-2",
+        observed_at=NOW,
+        records=(
+            DiscoveryRecord(
+                source="vsfactoryusa",
+                source_record_id="first",
+                source_version="v1",
+                source_url="https://vsfactoryusa.com/first/",
+                seller_group_id="vsfactoryusa",
+                declared_reference="rolex-submariner-126610ln",
+                image_ids=("first",),
+                image_urls=("https://vsfactoryusa.com/images/first.webp",),
+            ),
+        ),
+    )
+    run_metadata_discovery_once(
+        cos,
+        "private",
+        "datasets",
+        "vsfactoryusa",
+        now=NOW,
+        discover=lambda _previous: first_page,
+    )
+    next_day = datetime(2026, 11, 11, 19, 0, tzinfo=timezone.utc)
+    other_page = DiscoveryPage(
+        source="other",
+        access_record_id="access-other-1",
+        cursor=None,
+        next_cursor=None,
+        observed_at=next_day,
+        records=(
+            DiscoveryRecord(
+                source="other",
+                source_record_id="other",
+                source_version="v1",
+                source_url="https://other.example/item/",
+                seller_group_id="other",
+                declared_reference="watch",
+                image_ids=("other",),
+                image_urls=("https://other.example/image.webp",),
+            ),
+        ),
+    )
+    run_metadata_discovery_once(
+        cos,
+        "private",
+        "datasets",
+        "other",
+        now=next_day,
+        discover=lambda _previous: other_page,
+    )
+
+    def resume(previous):
+        assert previous is not None and previous.next_cursor == "page-2"
+        return DiscoveryPage(
+            source="vsfactoryusa",
+            access_record_id="access-vsfactoryusa-1",
+            cursor="page-2",
+            next_cursor=None,
+            observed_at=next_day,
+            records=(),
+        )
+
+    result = run_metadata_discovery_once(
+        cos,
+        "private",
+        "datasets",
+        "vsfactoryusa",
+        now=next_day,
+        discover=resume,
+    )
+
+    assert result["cycle"] == "2026-11-10"
+    assert result["state"] == "complete"
 
 
 def test_collection_failure_does_not_advance_checkpoint(cos, monkeypatch):

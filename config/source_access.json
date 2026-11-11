@@ -128,5 +128,18 @@
     "requests_per_minute": 20,
     "reason": "Commons API and official upload/thumbnail hosts permit bounded access; per-file license still gates download",
     "evidence_sha256": "48f973ed8ac8361416619f585d46f8be3f5ad09a9e269b5da00ced70796c6a96"
+  },
+  {
+    "access_record_id": "access-vsfactoryusa-sitemap-20261111",
+    "source": "vsfactoryusa",
+    "acquisition_method": "public-sitemap",
+    "status": "active",
+    "evidence_url": "https://vsfactoryusa.com/robots.txt",
+    "verified_at": "2026-11-11T15:13:03Z",
+    "expires_at": "2027-11-11T15:13:03Z",
+    "allowed_image_hosts": ["vsfactoryusa.com"],
+    "requests_per_minute": 6,
+    "reason": "robots.txt allows product and sitemap crawling; copyright permission is absent, so only metadata and image URLs may be stored",
+    "evidence_sha256": "fee55e96348f2ae3b126ebbcc97c58dadaea0cf6957f125fa4e3937a49d42933"
   }
 ]

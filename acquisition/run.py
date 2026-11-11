@@ -1,4 +1,4 @@
-"""One bounded, resumable Wikimedia acquisition run for IBM Code Engine."""
+"""Bounded, resumable source acquisition for IBM Code Engine."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import requests
 
 from acquisition.collect import DownloadRateLimited, collect_batch
 from acquisition.cos import AtomicCOSClient
-from acquisition.discovery import DiscoveryCommit, append_discovery_page
+from acquisition.discovery import DiscoveryCommit, DiscoveryPage, append_discovery_page
 from acquisition.http import PinnedRequestsClient
 from acquisition.source_policy import (
     get_source_policy,
@@ -27,6 +27,7 @@ from infra.ibm_cos import (
     verify_no_public_access_policies,
     verify_private_versioned_bucket,
 )
+from scrapers.vsfactoryusa import discover_vsfactoryusa
 from scrapers.wikimedia import WikimediaAPIError, WikimediaDiscovery, discover_wikimedia
 
 _LOG = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ def run_wikimedia_once(
         bucket,
         prefix,
         now.date().isoformat(),
+        "wikimedia",
     )
     ledger_prefix = f"{prefix.strip('/')}/discovery/{cycle}"
     if previous is not None and previous.next_cursor is None:
@@ -107,10 +109,10 @@ def run_wikimedia_once(
         if str(exc) == _RATE_LIMITED:
             status = {"cycle": cycle, "source": "wikimedia", "state": "rate_limited"}
         else:
-            _persist_failed(cos_client, bucket, prefix, cycle, exc)
+            _persist_failed(cos_client, bucket, prefix, cycle, "wikimedia", exc)
             raise
     except Exception as exc:
-        _persist_failed(cos_client, bucket, prefix, cycle, exc)
+        _persist_failed(cos_client, bucket, prefix, cycle, "wikimedia", exc)
         raise
     _persist_status(cos_client, bucket, prefix, status)
     _LOG.info("acquisition_terminal %s", _canonical(status).decode())
@@ -122,6 +124,7 @@ def _active_cycle(
     bucket: str,
     prefix: str,
     today: str,
+    source: str,
 ) -> tuple[str, DiscoveryCommit | None]:
     root = f"{prefix.strip('/')}/discovery/"
     page = cos_client.list_objects_v2(Bucket=bucket, Prefix=root, Delimiter="/")
@@ -137,19 +140,18 @@ def _active_cycle(
             cycle = item_prefix[len(root) :].removesuffix("/")
             if len(cycle) == 10 and cycle[4] == "-" and cycle[7] == "-":
                 cycles.add(cycle)
-    if not cycles:
-        return today, None
-    latest = max(cycles)
-    previous = _load_latest_commit(
-        cos_client,
-        bucket,
-        f"{root}{latest}",
-        "wikimedia",
-    )
-    if previous is not None and previous.next_cursor is not None:
-        return latest, previous
-    if latest == today:
-        return latest, previous
+    for latest in sorted(cycles, reverse=True):
+        previous = _load_latest_commit(
+            cos_client,
+            bucket,
+            f"{root}{latest}",
+            source,
+        )
+        if previous is None:
+            continue
+        if previous.next_cursor is not None or latest == today:
+            return latest, previous
+        break
     return today, None
 
 
@@ -224,16 +226,62 @@ def _persist_failed(
     bucket: str,
     prefix: str,
     cycle: str,
+    source: str,
     error: Exception,
 ) -> None:
     status: dict[str, object] = {
         "cycle": cycle,
         "error_type": type(error).__name__,
-        "source": "wikimedia",
+        "source": source,
         "state": "failed",
     }
     _persist_status(cos_client, bucket, prefix, status)
     _LOG.error("acquisition_terminal %s", _canonical(status).decode())
+
+
+def run_metadata_discovery_once(
+    cos_client: Any,
+    bucket: str,
+    prefix: str,
+    source: str,
+    *,
+    now: datetime,
+    discover: Callable[[DiscoveryCommit | None], Any],
+) -> dict[str, object]:
+    """Commit one metadata-only source page without downloading image bytes."""
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
+    if not bucket or not prefix.strip("/") or not source:
+        raise ValueError("bucket, prefix and source must be non-empty")
+    cycle, previous = _active_cycle(
+        cos_client, bucket, prefix, now.date().isoformat(), source
+    )
+    if previous is not None and previous.next_cursor is None:
+        return {"cycle": cycle, "source": source, "state": "already_complete"}
+    try:
+        page = discover(previous)
+        if not isinstance(page, DiscoveryPage) or page.source != source:
+            raise RuntimeError("metadata discovery returned the wrong source")
+        commit = append_discovery_page(
+            cos_client,
+            bucket,
+            f"{prefix.strip('/')}/discovery/{cycle}",
+            page,
+            previous=previous,
+        )
+        status: dict[str, object] = {
+            "commit_sha256": commit.sha256,
+            "cycle": cycle,
+            "record_count": len(page.records),
+            "source": source,
+            "state": "complete" if commit.next_cursor is None else "page_complete",
+        }
+    except Exception as exc:
+        _persist_failed(cos_client, bucket, prefix, cycle, source, exc)
+        raise
+    _persist_status(cos_client, bucket, prefix, status)
+    _LOG.info("acquisition_terminal %s", _canonical(status).decode())
+    return status
 
 
 def _canonical(status: Mapping[str, object]) -> bytes:
@@ -331,16 +379,33 @@ def main() -> None:
     if image_requests_per_minute is None or image_requests_per_minute < 2:
         raise RuntimeError("Wikimedia rate limit cannot reserve the API request")
     logging.basicConfig(level=logging.INFO)
+    now = datetime.now(timezone.utc)
     run_wikimedia_once(
         cos,
         bucket,
         prefix,
         get_source_policy(policies, "wikimedia"),
         access_registry["wikimedia"],
-        now=datetime.now(timezone.utc),
+        now=now,
         api_client=requests.Session(),
         image_client=PinnedRequestsClient(
             requests_per_minute=image_requests_per_minute - 1
+        ),
+    )
+    vsfactory_policy = get_source_policy(policies, "vsfactoryusa")
+    vsfactory_access = access_registry["vsfactoryusa"]
+    run_metadata_discovery_once(
+        cos,
+        bucket,
+        prefix,
+        "vsfactoryusa",
+        now=now,
+        discover=lambda previous: discover_vsfactoryusa(
+            requests.Session(),
+            vsfactory_policy,
+            vsfactory_access,
+            now=now,
+            previous=previous,
         ),
     )
 
