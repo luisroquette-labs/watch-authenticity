@@ -98,5 +98,15 @@
     "required_rights_purposes": ["download"],
     "requires_rightsholder_permission": false,
     "policy_evidence_sha256": "c5b5d7ab2593e4076eda52b50f43f57c764cdcc1e93f5e47ed8067c7cce8ea0b"
+  },
+  {
+    "policy_id": "vsfactoryusa-metadata-only-v1",
+    "source": "vsfactoryusa",
+    "allowed_methods": ["public-sitemap"],
+    "may_download": false,
+    "may_train": false,
+    "required_rights_purposes": [],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "2cb78afbeb4ec937f71c3ba424d189e2d5ad9679778820631924b0cd8cf1ab68"
   }
 ]
