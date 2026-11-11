@@ -28,6 +28,7 @@ from infra.ibm_cos import (
     verify_private_versioned_bucket,
 )
 from scrapers.vsfactoryusa import discover_vsfactoryusa
+from scrapers.watchesofswitzerland import discover_watchesofswitzerland
 from scrapers.wikimedia import WikimediaAPIError, WikimediaDiscovery, discover_wikimedia
 
 _LOG = logging.getLogger(__name__)
@@ -404,6 +405,22 @@ def main() -> None:
             requests.Session(),
             vsfactory_policy,
             vsfactory_access,
+            now=now,
+            previous=previous,
+        ),
+    )
+    wos_policy = get_source_policy(policies, "watchesofswitzerland")
+    wos_access = access_registry["watchesofswitzerland"]
+    run_metadata_discovery_once(
+        cos,
+        bucket,
+        prefix,
+        "watchesofswitzerland",
+        now=now,
+        discover=lambda previous: discover_watchesofswitzerland(
+            requests.Session(),
+            wos_policy,
+            wos_access,
             now=now,
             previous=previous,
         ),

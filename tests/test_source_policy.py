@@ -40,6 +40,7 @@ def test_registry_loads_every_declared_source_policy(policy_set):
         "chinese_replica",
         "wikimedia",
         "vsfactoryusa",
+        "watchesofswitzerland",
     }
 
 
@@ -180,13 +181,15 @@ def test_versioned_access_registry_keeps_unproven_sources_inactive():
         "chinese_replica",
         "wikimedia",
         "vsfactoryusa",
+        "watchesofswitzerland",
     }
     assert registry["wikimedia"].status is SourceAccessStatus.ACTIVE
     assert registry["vsfactoryusa"].status is SourceAccessStatus.ACTIVE
+    assert registry["watchesofswitzerland"].status is SourceAccessStatus.ACTIVE
     assert all(
         record.status is not SourceAccessStatus.ACTIVE
         for source, record in registry.items()
-        if source not in {"wikimedia", "vsfactoryusa"}
+        if source not in {"wikimedia", "vsfactoryusa", "watchesofswitzerland"}
     )
 
 

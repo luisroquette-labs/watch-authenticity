@@ -141,5 +141,18 @@
     "requests_per_minute": 6,
     "reason": "robots.txt allows product and sitemap crawling; copyright permission is absent, so only metadata and image URLs may be stored",
     "evidence_sha256": "fee55e96348f2ae3b126ebbcc97c58dadaea0cf6957f125fa4e3937a49d42933"
+  },
+  {
+    "access_record_id": "access-watchesofswitzerland-cpo-sitemap-20261111",
+    "source": "watchesofswitzerland",
+    "acquisition_method": "public-sitemap",
+    "status": "active",
+    "evidence_url": "https://www.watchesofswitzerland.com/robots.txt",
+    "verified_at": "2026-11-11T15:48:10Z",
+    "expires_at": "2027-11-11T15:48:10Z",
+    "allowed_image_hosts": ["cdn.shopify.com"],
+    "requests_per_minute": 10,
+    "reason": "robots.txt allows public product sitemaps; image copyright permission is absent, so only CPO metadata and image URLs may be stored",
+    "evidence_sha256": "aaf4b9320646735dfff3d9ec8cf053a79201b2c8d94ce359b15d5dc16ddd3cc5"
   }
 ]
