@@ -34,6 +34,8 @@ _MAX_PRODUCT_SITEMAP_BYTES = 16 * 1024 * 1024
 _MAX_PRODUCT_PAGE_BYTES = 8 * 1024 * 1024
 _MAX_PRODUCT_SITEMAPS = 8
 _MAX_EXACT_PRODUCTS = 50
+_SOURCE_BUDGET_SECONDS = 420
+_CURSOR = re.compile(r"after:(?P<unit_id>[0-9]+)")
 _NS = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
 
@@ -50,6 +52,7 @@ def discover_goldsmiths(
     previous: object | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
+    deadline: float | None = None,
 ) -> DiscoveryPage:
     """Discover exact-reference CPO pages and image links without downloading images."""
     decision = authorize_discovery(policy, access, now=now)
@@ -61,8 +64,12 @@ def discover_goldsmiths(
         raise PermissionError("source access image hosts do not match the approved host")
     if access.requests_per_minute is None:
         raise PermissionError("source access request limit is missing")
-    if previous is not None:
-        raise GoldsmithsAPIError("CPO sitemap discovery has no continuation cursor")
+    cursor = getattr(previous, "next_cursor", None) if previous is not None else None
+    cursor_match = _CURSOR.fullmatch(cursor) if cursor is not None else None
+    if cursor is not None and cursor_match is None:
+        raise GoldsmithsAPIError("CPO discovery continuation cursor is invalid")
+    after_unit = cursor_match.group("unit_id") if cursor_match is not None else None
+    source_deadline = deadline if deadline is not None else clock() + _SOURCE_BUDGET_SECONDS
 
     fetcher = PacedBoundedHTTP(
         http_client,
@@ -96,21 +103,34 @@ def discover_goldsmiths(
     if len(products) > _MAX_EXACT_PRODUCTS or len(products) != len(set(products)):
         raise GoldsmithsAPIError("exact-reference product inventory is invalid")
 
-    records = tuple(
-        _parse_product_page(
-            source_url,
-            unit_id,
-            fetcher.get_bytes(source_url, _MAX_PRODUCT_PAGE_BYTES, "product page"),
-        )
+    remaining = sorted(
+        (source_url, unit_id)
         for source_url, unit_id in products
+        if after_unit is None or unit_id > after_unit
     )
+    records: list[DiscoveryRecord] = []
+    for source_url, unit_id in remaining:
+        if not fetcher.can_complete_before(source_deadline):
+            break
+        records.append(
+            _parse_product_page(
+                source_url,
+                unit_id,
+                fetcher.get_bytes(source_url, _MAX_PRODUCT_PAGE_BYTES, "product page"),
+            )
+        )
+    if remaining and not records:
+        raise GoldsmithsAPIError("CPO discovery budget exhausted before progress")
+    next_cursor = None
+    if len(records) < len(remaining):
+        next_cursor = f"after:{records[-1].source_record_id}"
     return DiscoveryPage(
         source="goldsmiths",
         access_record_id=access.access_record_id,
-        cursor=None,
-        next_cursor=None,
+        cursor=cursor,
+        next_cursor=next_cursor,
         observed_at=now,
-        records=records,
+        records=tuple(records),
     )
 
 

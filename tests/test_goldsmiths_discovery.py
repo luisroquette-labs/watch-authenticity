@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from acquisition.run import run_metadata_discovery_once
 from acquisition.source_policy import (
     get_source_policy,
     load_source_access_registry,
@@ -56,16 +57,22 @@ def _sitemap(product_url: str = PRODUCT_URL):
 </urlset>"""
 
 
-def _product_page(*, title: str | None = None, image_host: str = "content.thewosgroup.com"):
+def _product_page(
+    *,
+    title: str | None = None,
+    image_host: str = "content.thewosgroup.com",
+    product_url: str = PRODUCT_URL,
+):
+    unit_id = product_url.rsplit("/", 1)[-1]
     product_title = title or "Rolex Certified Pre-Owned Submariner Date 126610LN | Goldsmiths"
     images = "".join(
-        f'<img src="https://{image_host}/productimage/406107907490/'
-        f'406107907490_{position}.png?impolicy=lister">'
+        f'<img src="https://{image_host}/productimage/{unit_id}/'
+        f'{unit_id}_{position}.png?impolicy=lister">'
         for position in (1, 2, 3)
     )
     return (
         f"<html><head><title>{product_title}</title>"
-        f'<link rel="canonical" href="{PRODUCT_URL}"></head><body>{images}</body></html>'
+        f'<link rel="canonical" href="{product_url}"></head><body>{images}</body></html>'
     )
 
 
@@ -195,3 +202,67 @@ def test_product_inventory_above_job_budget_fails_before_product_page(monkeypatc
         _discover(http, policy, access)
 
     assert PRODUCT_URL not in [call.args[0] for call in http.get.call_args_list]
+
+
+def test_deadline_checkpoint_persists_and_resumes_without_repeating_product(cos):
+    policy, access = _registry()
+    second_url = PRODUCT_URL.replace("406107907490", "406107907491")
+    sitemap = _sitemap().replace(
+        "</urlset>", f"  <url><loc>{second_url}</loc></url>\n</urlset>"
+    )
+    bodies = {
+        "https://www.goldsmiths.co.uk/robots.txt": _Response(
+            f"User-agent: *\nSitemap: {INDEX_URL}\n"
+        ),
+        INDEX_URL: _Response(_index()),
+        PRODUCT_SITEMAP: _Response(sitemap),
+        PRODUCT_URL: _Response(_product_page()),
+        second_url: _Response(_product_page(product_url=second_url)),
+    }
+
+    pages = []
+    requests_by_run = []
+
+    def discover(previous, deadline):
+        elapsed = [0.0]
+        http = MagicMock()
+        http.get.side_effect = lambda url, **_kwargs: bodies[url]
+        page = discover_goldsmiths(
+            http,
+            policy,
+            access,
+            now=NOW,
+            previous=previous,
+            clock=lambda: elapsed[0],
+            sleeper=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds),
+            deadline=deadline,
+        )
+        pages.append(page)
+        requests_by_run.append([call.args[0] for call in http.get.call_args_list])
+        return page
+
+    first = run_metadata_discovery_once(
+        cos,
+        "private",
+        "datasets",
+        "goldsmiths",
+        now=NOW,
+        discover=lambda previous: discover(previous, 38.0),
+    )
+    second = run_metadata_discovery_once(
+        cos,
+        "private",
+        "datasets",
+        "goldsmiths",
+        now=NOW,
+        discover=lambda previous: discover(previous, 100.0),
+    )
+
+    assert first["state"] == "page_complete"
+    assert second["state"] == "complete"
+    assert [record.source_record_id for record in pages[0].records] == ["406107907490"]
+    assert pages[0].next_cursor == "after:406107907490"
+    assert pages[1].cursor == pages[0].next_cursor
+    assert [record.source_record_id for record in pages[1].records] == ["406107907491"]
+    assert PRODUCT_URL in requests_by_run[0]
+    assert PRODUCT_URL not in requests_by_run[1]

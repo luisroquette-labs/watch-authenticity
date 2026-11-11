@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 _USER_AGENT = "watch-authenticity/0.1 (research collector)"
+_REQUEST_TIMEOUT_SECONDS = 15
 
 
 class PacedBoundedHTTP:
@@ -39,7 +40,7 @@ class PacedBoundedHTTP:
         response = self._http_client.get(
             url,
             headers={"User-Agent": _USER_AGENT},
-            timeout=30,
+            timeout=_REQUEST_TIMEOUT_SECONDS,
             allow_redirects=False,
             stream=True,
         )
@@ -70,3 +71,7 @@ class PacedBoundedHTTP:
             close = getattr(response, "close", None)
             if callable(close):
                 close()
+
+    def can_complete_before(self, deadline: float) -> bool:
+        """Reserve pacing plus one full request timeout before starting."""
+        return max(self._clock(), self._next_request_at) + _REQUEST_TIMEOUT_SECONDS <= deadline

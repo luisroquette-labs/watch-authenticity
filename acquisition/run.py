@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -382,6 +383,7 @@ def main() -> None:
         raise RuntimeError("Wikimedia rate limit cannot reserve the API request")
     logging.basicConfig(level=logging.INFO)
     now = datetime.now(timezone.utc)
+    job_deadline = time.monotonic() + 420
     run_wikimedia_once(
         cos,
         bucket,
@@ -424,6 +426,7 @@ def main() -> None:
             goldsmiths_access,
             now=now,
             previous=previous,
+            deadline=job_deadline,
         ),
     )
     wos_policy = get_source_policy(policies, "watchesofswitzerland")
