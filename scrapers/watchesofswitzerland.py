@@ -14,12 +14,12 @@ from urllib.parse import urlsplit
 from acquisition.discovery import DiscoveryPage, DiscoveryRecord
 from acquisition.source_policy import authorize_discovery
 from acquisition.types import SourceAccessRecord, SourcePolicy
+from scrapers.metadata_http import PacedBoundedHTTP
 
 _HOST = "www.watchesofswitzerland.com"
 _IMAGE_HOST = "cdn.shopify.com"
 _ROBOTS_URL = f"https://{_HOST}/robots.txt"
 _SITEMAP_URL = f"https://{_HOST}/sitemap.xml"
-_USER_AGENT = "watch-authenticity/0.1 (research collector)"
 _REFERENCE = re.compile(r"(?<![a-z0-9])m?126610ln(?:-0001)?(?![a-z0-9])", re.IGNORECASE)
 _PRODUCT_PATH = re.compile(
     r"/products/submariner(?:-date)?-m126610ln-0001-(?P<unit_id>[0-9]+)$",
@@ -60,31 +60,27 @@ def discover_watchesofswitzerland(
         raise PermissionError("source access image hosts do not match the approved host")
     if access.requests_per_minute is None:
         raise PermissionError("source access request limit is missing")
-    requests_per_minute = access.requests_per_minute
     if previous is not None:
         raise WatchesOfSwitzerlandAPIError("CPO sitemap discovery has no continuation cursor")
 
-    next_request_at = clock()
+    fetcher = PacedBoundedHTTP(
+        http_client,
+        access.requests_per_minute,
+        WatchesOfSwitzerlandAPIError,
+        clock=clock,
+        sleeper=sleeper,
+    )
 
-    def get_bounded(url: str, limit: int, surface: str) -> bytes:
-        nonlocal next_request_at
-        delay = next_request_at - clock()
-        if delay > 0:
-            sleeper(delay)
-        body = _get_bounded(http_client, url, limit, surface)
-        next_request_at = clock() + 60.0 / requests_per_minute
-        return body
-
-    robots = get_bounded(_ROBOTS_URL, _MAX_ROBOTS_BYTES, "robots.txt")
+    robots = fetcher.get_bytes(_ROBOTS_URL, _MAX_ROBOTS_BYTES, "robots.txt")
     if f"Sitemap: {_SITEMAP_URL}" not in robots.decode("utf-8", errors="strict"):
         raise WatchesOfSwitzerlandAPIError("robots.txt does not advertise the approved sitemap")
 
-    index = _xml(get_bounded(_SITEMAP_URL, _MAX_INDEX_BYTES, "sitemap index"))
+    index = _xml(fetcher.get_bytes(_SITEMAP_URL, _MAX_INDEX_BYTES, "sitemap index"))
     sitemap_urls = _product_sitemap_urls(index)
     records: list[DiscoveryRecord] = []
     for sitemap_url in sitemap_urls:
         sitemap = _xml(
-            get_bounded(
+            fetcher.get_bytes(
                 sitemap_url,
                 _MAX_PRODUCT_SITEMAP_BYTES,
                 "product sitemap",
@@ -155,7 +151,7 @@ def _parse_entry(entry: ET.Element) -> DiscoveryRecord | None:
         source_record_id=unit_id,
         source_version=hashlib.sha256(version_input).hexdigest(),
         source_url=source_url,
-        seller_group_id="watchesofswitzerland-cpo",
+        seller_group_id="wos-group-cpo",
         declared_reference="rolex-submariner-126610ln",
         image_ids=tuple(hashlib.sha256(url.encode()).hexdigest() for url in images),
         image_urls=tuple(images),
@@ -168,42 +164,6 @@ def _parse_entry(entry: ET.Element) -> DiscoveryRecord | None:
             ("rights_status", "metadata_only"),
         ),
     )
-
-
-def _get_bounded(http_client: Any, url: str, limit: int, surface: str) -> bytes:
-    response = http_client.get(
-        url,
-        headers={"User-Agent": _USER_AGENT},
-        timeout=30,
-        allow_redirects=False,
-        stream=True,
-    )
-    try:
-        status = getattr(response, "status_code", None)
-        if status == 429:
-            raise WatchesOfSwitzerlandAPIError(f"{surface} rate limited; resume later")
-        if status != 200:
-            raise WatchesOfSwitzerlandAPIError(f"{surface} returned HTTP {status}")
-        chunks: list[bytes] = []
-        size = 0
-        iterator = getattr(response, "iter_content", None)
-        if not callable(iterator):
-            raise WatchesOfSwitzerlandAPIError(f"{surface} response is not streamable")
-        for chunk in iterator(chunk_size=64 * 1024):
-            if not isinstance(chunk, bytes):
-                raise WatchesOfSwitzerlandAPIError(f"{surface} stream is invalid")
-            size += len(chunk)
-            if size > limit:
-                raise WatchesOfSwitzerlandAPIError(f"{surface} body is too large")
-            chunks.append(chunk)
-        body = b"".join(chunks)
-        if not body:
-            raise WatchesOfSwitzerlandAPIError(f"{surface} body is missing")
-        return body
-    finally:
-        close = getattr(response, "close", None)
-        if callable(close):
-            close()
 
 
 def _xml(body: bytes) -> ET.Element:

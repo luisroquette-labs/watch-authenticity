@@ -112,6 +112,7 @@ def test_discovers_exact_cpo_reference_as_metadata_only_original_candidate():
     assert not policy.may_train
     assert len(page.records) == 1
     record = page.records[0]
+    assert record.seller_group_id == "wos-group-cpo"
     assert record.source_record_id == "40615391"
     assert record.source_url.endswith("m126610ln-0001-40615391")
     assert record.declared_reference == "rolex-submariner-126610ln"
