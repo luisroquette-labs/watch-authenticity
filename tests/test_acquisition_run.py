@@ -463,3 +463,13 @@ esac
     assert result.returncode == 2
     assert "trusted-profile link inventory failed" in result.stderr
     assert "trusted-profile-link-create" not in log.read_text()
+
+
+def test_bounded_metadata_sources_run_before_unbounded_wos():
+    source = Path("acquisition/run.py").read_text(encoding="utf-8")
+
+    precision = source.index('"precisionwatches",', source.index("def main"))
+    goldsmiths = source.index('"goldsmiths",', precision)
+    watches_of_switzerland = source.index('"watchesofswitzerland",', goldsmiths)
+
+    assert precision < goldsmiths < watches_of_switzerland

@@ -413,22 +413,6 @@ def main() -> None:
             previous=previous,
         ),
     )
-    wos_policy = get_source_policy(policies, "watchesofswitzerland")
-    wos_access = access_registry["watchesofswitzerland"]
-    run_metadata_discovery_once(
-        cos,
-        bucket,
-        prefix,
-        "watchesofswitzerland",
-        now=now,
-        discover=lambda previous: discover_watchesofswitzerland(
-            requests.Session(),
-            wos_policy,
-            wos_access,
-            now=now,
-            previous=previous,
-        ),
-    )
     precision_policy = get_source_policy(policies, "precisionwatches")
     precision_access = access_registry["precisionwatches"]
     run_metadata_discovery_once(
@@ -461,6 +445,22 @@ def main() -> None:
             now=now,
             previous=previous,
             deadline=job_deadline,
+        ),
+    )
+    wos_policy = get_source_policy(policies, "watchesofswitzerland")
+    wos_access = access_registry["watchesofswitzerland"]
+    run_metadata_discovery_once(
+        cos,
+        bucket,
+        prefix,
+        "watchesofswitzerland",
+        now=now,
+        discover=lambda previous: discover_watchesofswitzerland(
+            requests.Session(),
+            wos_policy,
+            wos_access,
+            now=now,
+            previous=previous,
         ),
     )
 
