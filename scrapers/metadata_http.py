@@ -64,15 +64,14 @@ class PacedBoundedHTTP:
                 raise self._error_type(f"{surface} returned HTTP {status}")
             chunks: list[bytes] = []
             size = 0
-            iterator = getattr(response, "iter_content", None)
-            if not callable(iterator):
-                raise self._error_type(f"{surface} response is not streamable")
-            chunks_iterator = iter(iterator(chunk_size=64 * 1024))
+            raw = getattr(response, "raw", None)
+            read_one = getattr(raw, "read1", None)
+            if not callable(read_one):
+                raise self._error_type(f"{surface} response lacks bounded streaming")
             while True:
                 self._require_read_window(deadline)
-                try:
-                    chunk = next(chunks_iterator)
-                except StopIteration:
+                chunk = read_one(64 * 1024, decode_content=True)
+                if chunk == b"":
                     break
                 if not isinstance(chunk, bytes):
                     raise self._error_type(f"{surface} stream is invalid")

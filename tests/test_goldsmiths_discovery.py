@@ -28,12 +28,16 @@ PRODUCT_URL = (
 class _Response:
     def __init__(self, body: str, status_code: int = 200):
         self.body = body.encode()
+        self.raw = self
+        self.offset = 0
         self.status_code = status_code
         self.closed = False
 
-    def iter_content(self, chunk_size: int):
-        del chunk_size
-        yield self.body
+    def read1(self, amount: int, *, decode_content: bool):
+        del decode_content
+        chunk = self.body[self.offset : self.offset + amount]
+        self.offset += len(chunk)
+        return chunk
 
     def close(self):
         self.closed = True
@@ -182,7 +186,7 @@ def test_oversized_response_stops_stream_and_closes(monkeypatch):
     policy, access = _registry()
     response = _Response("")
     chunks = iter((b"123456789", b"must-not-be-consumed"))
-    response.iter_content = MagicMock(return_value=chunks)
+    response.read1 = MagicMock(side_effect=lambda *_args, **_kwargs: next(chunks, b""))
     http = MagicMock()
     http.get.return_value = response
     monkeypatch.setattr("scrapers.goldsmiths._MAX_ROBOTS_BYTES", 8)
@@ -213,21 +217,20 @@ def test_deadline_checkpoint_persists_and_resumes_without_repeating_product(cos)
     sitemap = _sitemap().replace(
         "</urlset>", f"  <url><loc>{second_url}</loc></url>\n</urlset>"
     )
-    bodies = {
-        "https://www.goldsmiths.co.uk/robots.txt": _Response(
-            f"User-agent: *\nSitemap: {INDEX_URL}\n"
-        ),
-        INDEX_URL: _Response(_index()),
-        PRODUCT_SITEMAP: _Response(sitemap),
-        PRODUCT_URL: _Response(_product_page()),
-        second_url: _Response(_product_page(product_url=second_url)),
-    }
-
     pages = []
     requests_by_run = []
 
     def discover(previous, deadline):
         elapsed = [0.0]
+        bodies = {
+            "https://www.goldsmiths.co.uk/robots.txt": _Response(
+                f"User-agent: *\nSitemap: {INDEX_URL}\n"
+            ),
+            INDEX_URL: _Response(_index()),
+            PRODUCT_SITEMAP: _Response(sitemap),
+            PRODUCT_URL: _Response(_product_page()),
+            second_url: _Response(_product_page(product_url=second_url)),
+        }
         http = MagicMock()
         http.get.side_effect = lambda url, **_kwargs: bodies[url]
         page = discover_goldsmiths(
@@ -276,14 +279,15 @@ def test_streaming_response_is_stopped_at_absolute_deadline():
     response = _Response("unused")
     consumed = []
 
-    def slow_chunks(*, chunk_size):
-        del chunk_size
-        for chunk in (b"first", b"second"):
-            elapsed[0] += 2
-            consumed.append(chunk)
-            yield chunk
+    chunks = iter((b"first", b"second"))
 
-    response.iter_content = slow_chunks
+    def slow_read(*_args, **_kwargs):
+        elapsed[0] += 2
+        chunk = next(chunks, b"")
+        consumed.append(chunk)
+        return chunk
+
+    response.read1 = slow_read
     http = MagicMock()
     http.get.return_value = response
     fetcher = PacedBoundedHTTP(

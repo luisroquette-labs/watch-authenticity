@@ -27,12 +27,16 @@ PRODUCT_SITEMAP = (
 class _Response:
     def __init__(self, body: str, status_code: int = 200):
         self.body = body.encode()
+        self.raw = self
+        self.offset = 0
         self.status_code = status_code
         self.closed = False
 
-    def iter_content(self, chunk_size: int):
-        del chunk_size
-        yield self.body
+    def read1(self, amount: int, *, decode_content: bool):
+        del decode_content
+        chunk = self.body[self.offset : self.offset + amount]
+        self.offset += len(chunk)
+        return chunk
 
     def close(self):
         self.closed = True
@@ -199,7 +203,7 @@ def test_oversized_response_stops_stream_and_closes(monkeypatch):
     policy, access = _registry()
     response = _Response("")
     chunks = iter((b"123456789", b"must-not-be-consumed"))
-    response.iter_content = MagicMock(return_value=chunks)
+    response.read1 = MagicMock(side_effect=lambda *_args, **_kwargs: next(chunks, b""))
     http = MagicMock()
     http.get.return_value = response
     monkeypatch.setattr("scrapers.watchesofswitzerland._MAX_ROBOTS_BYTES", 8)
