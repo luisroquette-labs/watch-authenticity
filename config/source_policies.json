@@ -108,5 +108,15 @@
     "required_rights_purposes": [],
     "requires_rightsholder_permission": true,
     "policy_evidence_sha256": "2cb78afbeb4ec937f71c3ba424d189e2d5ad9679778820631924b0cd8cf1ab68"
+  },
+  {
+    "policy_id": "watchesofswitzerland-cpo-metadata-only-v1",
+    "source": "watchesofswitzerland",
+    "allowed_methods": ["public-sitemap"],
+    "may_download": false,
+    "may_train": false,
+    "required_rights_purposes": [],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "63315622e9290f25328d6636aa5152a2669dca47a2f574eab471f12dd0fec3aa"
   }
 ]
