@@ -484,4 +484,7 @@ def test_github_fallback_runs_preflight_without_building_images():
     assert "bash scripts/preflight-ci.sh" in workflow
     assert "docker build" not in workflow + script
     assert "next build" not in workflow + script
+    assert "ruff check ." in script
+    assert "mypy . --config-file pyproject.toml" in script
+    assert "pytest tests/" in script
     assert "--ignore=tests/test_training_image_runtime.py" in script
