@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "reference_id": "rolex-submariner-126610ln",
+  "claims": [
+    {
+      "field": "diameter_mm",
+      "value": "41",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/submariner/m126610ln-0001",
+      "citation": "More Submariner technical details > Model case > Diameter",
+      "observed_at": "2026-11-12",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "case_material",
+      "value": "Oystersteel",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/submariner/m126610ln-0001",
+      "citation": "More Submariner technical details > Model case > Material",
+      "observed_at": "2026-11-12",
+      "applicable_angles": ["crown", "caseback"]
+    },
+    {
+      "field": "bezel_color",
+      "value": "black",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/submariner/m126610ln-0001",
+      "citation": "More Submariner technical details > Model case > Bezel",
+      "observed_at": "2026-11-12",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "dial_color",
+      "value": "black",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/submariner/m126610ln-0001",
+      "citation": "More Submariner technical details > Dial",
+      "observed_at": "2026-11-12",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "date_magnifier",
+      "value": "Cyclops",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/submariner/m126610ln-0001",
+      "citation": "More Submariner technical details > Model case > Crystal",
+      "observed_at": "2026-11-12",
+      "applicable_angles": ["cyclops"]
+    },
+    {
+      "field": "calibre",
+      "value": "3235",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/submariner/m126610ln-0001",
+      "citation": "More Submariner technical details > Movement > Calibre",
+      "observed_at": "2026-11-12",
+      "applicable_angles": []
+    },
+    {
+      "field": "water_resistance_m",
+      "value": "300",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/submariner/m126610ln-0001",
+      "citation": "More Submariner technical details > Model case > Water resistance",
+      "observed_at": "2026-11-12",
+      "applicable_angles": []
+    }
+  ]
+}
