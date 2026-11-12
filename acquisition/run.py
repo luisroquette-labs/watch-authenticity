@@ -28,16 +28,28 @@ from infra.ibm_cos import (
     verify_no_public_access_policies,
     verify_private_versioned_bucket,
 )
-from scrapers.goldsmiths import discover_goldsmiths
-from scrapers.precisionwatches import discover_precisionwatches
+from scrapers.goldsmiths import GoldsmithsAPIError, discover_goldsmiths
+from scrapers.precisionwatches import PrecisionWatchesAPIError, discover_precisionwatches
+from scrapers.replica_sitemap import ReplicaSitemapError
 from scrapers.richfactoryus import discover_richfactoryus
-from scrapers.superclonerolex import discover_superclonerolex
+from scrapers.superclonerolex import SuperCloneRolexAPIError, discover_superclonerolex
 from scrapers.vsfactoryusa import discover_vsfactoryusa
-from scrapers.watchesofswitzerland import discover_watchesofswitzerland
+from scrapers.watchesofswitzerland import (
+    WatchesOfSwitzerlandAPIError,
+    discover_watchesofswitzerland,
+)
 from scrapers.wikimedia import WikimediaAPIError, WikimediaDiscovery, discover_wikimedia
 
 _LOG = logging.getLogger(__name__)
 _RATE_LIMITED = "Wikimedia rate limited; resume later"
+_RECOVERABLE_METADATA_ERRORS = (
+    GoldsmithsAPIError,
+    PrecisionWatchesAPIError,
+    ReplicaSitemapError,
+    requests.RequestException,
+    SuperCloneRolexAPIError,
+    WatchesOfSwitzerlandAPIError,
+)
 
 
 def run_wikimedia_once(
@@ -290,6 +302,37 @@ def run_metadata_discovery_once(
     return status
 
 
+def run_metadata_discovery_resilient(
+    cos_client: Any,
+    bucket: str,
+    prefix: str,
+    source: str,
+    *,
+    now: datetime,
+    discover: Callable[[DiscoveryCommit | None], Any],
+) -> dict[str, object]:
+    """Keep independent sources running after a recorded provider failure."""
+    try:
+        return run_metadata_discovery_once(
+            cos_client,
+            bucket,
+            prefix,
+            source,
+            now=now,
+            discover=discover,
+        )
+    except _RECOVERABLE_METADATA_ERRORS as exc:
+        cycle, _previous = _active_cycle(
+            cos_client, bucket, prefix, now.date().isoformat(), source
+        )
+        return {
+            "cycle": cycle,
+            "error_type": type(exc).__name__,
+            "source": source,
+            "state": "failed",
+        }
+
+
 def _canonical(status: Mapping[str, object]) -> bytes:
     return json.dumps(status, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
@@ -401,7 +444,7 @@ def main() -> None:
     )
     vsfactory_policy = get_source_policy(policies, "vsfactoryusa")
     vsfactory_access = access_registry["vsfactoryusa"]
-    run_metadata_discovery_once(
+    run_metadata_discovery_resilient(
         cos,
         bucket,
         prefix,
@@ -417,7 +460,7 @@ def main() -> None:
     )
     richfactory_policy = get_source_policy(policies, "richfactoryus")
     richfactory_access = access_registry["richfactoryus"]
-    run_metadata_discovery_once(
+    run_metadata_discovery_resilient(
         cos,
         bucket,
         prefix,
@@ -433,7 +476,7 @@ def main() -> None:
     )
     superclone_policy = get_source_policy(policies, "superclonerolex")
     superclone_access = access_registry["superclonerolex"]
-    run_metadata_discovery_once(
+    run_metadata_discovery_resilient(
         cos,
         bucket,
         prefix,
@@ -450,7 +493,7 @@ def main() -> None:
     )
     precision_policy = get_source_policy(policies, "precisionwatches")
     precision_access = access_registry["precisionwatches"]
-    run_metadata_discovery_once(
+    run_metadata_discovery_resilient(
         cos,
         bucket,
         prefix,
@@ -467,7 +510,7 @@ def main() -> None:
     )
     goldsmiths_policy = get_source_policy(policies, "goldsmiths")
     goldsmiths_access = access_registry["goldsmiths"]
-    run_metadata_discovery_once(
+    run_metadata_discovery_resilient(
         cos,
         bucket,
         prefix,
@@ -484,7 +527,7 @@ def main() -> None:
     )
     wos_policy = get_source_policy(policies, "watchesofswitzerland")
     wos_access = access_registry["watchesofswitzerland"]
-    run_metadata_discovery_once(
+    run_metadata_discovery_resilient(
         cos,
         bucket,
         prefix,
