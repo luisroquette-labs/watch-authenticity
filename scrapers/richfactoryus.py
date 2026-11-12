@@ -1,4 +1,4 @@
-"""Metadata-only discovery for vendor-declared RICH Factory replicas."""
+"""Public-image discovery for vendor-declared RICH Factory replicas."""
 
 from __future__ import annotations
 

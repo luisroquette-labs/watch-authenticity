@@ -139,8 +139,8 @@
     "expires_at": "2027-11-11T15:13:03Z",
     "allowed_image_hosts": ["vsfactoryusa.com"],
     "requests_per_minute": 6,
-    "reason": "robots.txt allows product and sitemap crawling; copyright permission is absent, so only metadata and image URLs may be stored",
-    "evidence_sha256": "fee55e96348f2ae3b126ebbcc97c58dadaea0cf6957f125fa4e3937a49d42933"
+    "reason": "robots.txt allows product and sitemap crawling; the owner authorized private public-image archiving, while training remains blocked",
+    "evidence_sha256": "7aa423979b4daf83e0e7921e7c21e0fa04342d7e5709a34dcd6aa4fda198bb99"
   },
   {
     "access_record_id": "access-richfactoryus-sitemap-20261112",
@@ -152,8 +152,8 @@
     "expires_at": "2027-11-12T16:00:00Z",
     "allowed_image_hosts": ["richfactoryus.com"],
     "requests_per_minute": 6,
-    "reason": "robots.txt permits search/reference collection but reserves AI training; only metadata and image URLs may be stored",
-    "evidence_sha256": "b0d8f06eb42fa55fb0da272496deec510a1aab2b37312ec3d0a315165709b712"
+    "reason": "robots.txt permits search/reference collection but reserves AI training; the owner authorized private image archiving only",
+    "evidence_sha256": "bf328dd97cf6a5da7ccc313c2acbbf2f1d3a8123fd35029f25712052f233a090"
   },
   {
     "access_record_id": "access-superclonerolex-sitemap-20261112",
@@ -165,8 +165,8 @@
     "expires_at": "2027-11-12T16:00:00Z",
     "allowed_image_hosts": ["superclonerolex.io"],
     "requests_per_minute": 6,
-    "reason": "robots.txt allows public product and sitemap reads; written image license is pending, so only metadata and image URLs may be stored",
-    "evidence_sha256": "8a2c8dbac0be082e93970a813702c7b68c44e3ad90fb4db3ecee93cc0df477b4"
+    "reason": "robots.txt allows public product and sitemap reads; the owner authorized private image archiving, while training remains blocked",
+    "evidence_sha256": "2031c69770b890c350b7ecf6d9369fe21dd0cab148d37b9457e6c09dffc44609"
   },
   {
     "access_record_id": "access-watchesofswitzerland-cpo-sitemap-20261111",

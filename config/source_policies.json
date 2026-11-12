@@ -100,34 +100,34 @@
     "policy_evidence_sha256": "c5b5d7ab2593e4076eda52b50f43f57c764cdcc1e93f5e47ed8067c7cce8ea0b"
   },
   {
-    "policy_id": "vsfactoryusa-metadata-only-v1",
+    "policy_id": "vsfactoryusa-public-private-download-v1",
     "source": "vsfactoryusa",
     "allowed_methods": ["public-sitemap"],
-    "may_download": false,
+    "may_download": true,
     "may_train": false,
-    "required_rights_purposes": [],
-    "requires_rightsholder_permission": true,
-    "policy_evidence_sha256": "2cb78afbeb4ec937f71c3ba424d189e2d5ad9679778820631924b0cd8cf1ab68"
+    "required_rights_purposes": ["download"],
+    "requires_rightsholder_permission": false,
+    "policy_evidence_sha256": "becf6c4d06cf819b081ac1d05af4ed06839be378ca53a580d70688b086d70c35"
   },
   {
-    "policy_id": "richfactoryus-metadata-only-v1",
+    "policy_id": "richfactoryus-public-private-download-v1",
     "source": "richfactoryus",
     "allowed_methods": ["public-sitemap"],
-    "may_download": false,
+    "may_download": true,
     "may_train": false,
-    "required_rights_purposes": [],
-    "requires_rightsholder_permission": true,
-    "policy_evidence_sha256": "9c0fded3a85600f529ae4d2f78b3dcf339f6bd00732351a7962657cf012a30bb"
+    "required_rights_purposes": ["download"],
+    "requires_rightsholder_permission": false,
+    "policy_evidence_sha256": "9ba0ba563f40fd8ba580f2eabf27dc78a7558fce94d9e38c765d0904d053c463"
   },
   {
-    "policy_id": "superclonerolex-metadata-only-v1",
+    "policy_id": "superclonerolex-public-private-download-v1",
     "source": "superclonerolex",
     "allowed_methods": ["public-sitemap-product-pages"],
-    "may_download": false,
+    "may_download": true,
     "may_train": false,
-    "required_rights_purposes": [],
-    "requires_rightsholder_permission": true,
-    "policy_evidence_sha256": "b4297a469e098265abb87863b4ebc4a66ed98ea0b191c6c3f439e22207790f67"
+    "required_rights_purposes": ["download"],
+    "requires_rightsholder_permission": false,
+    "policy_evidence_sha256": "712615c6595f6fbe8d31b197f90d814a8cf4ba7aa68f2b7e4c0c4ad4b4da62b9"
   },
   {
     "policy_id": "watchesofswitzerland-cpo-metadata-only-v1",

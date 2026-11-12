@@ -57,7 +57,7 @@ def _sitemap(*, image_host: str = "richfactoryus.com", title: str | None = None)
 </urlset>"""
 
 
-def test_discovers_rich_factory_qc_metadata_without_download_permission():
+def test_discovers_rich_factory_qc_images_for_private_download_only():
     policy, access = _registry()
     http = MagicMock()
     response = _Response(_sitemap())
@@ -65,7 +65,7 @@ def test_discovers_rich_factory_qc_metadata_without_download_permission():
 
     page = discover_richfactoryus(http, policy, access, now=NOW)
 
-    assert not policy.may_download
+    assert policy.may_download
     assert not policy.may_train
     assert response.closed
     assert len(page.records) == 1
@@ -78,7 +78,7 @@ def test_discovers_rich_factory_qc_metadata_without_download_permission():
         "evidence_tier": "c",
         "factory_claim": "RICH Factory",
         "last_modified": "2026-11-12",
-        "rights_status": "metadata_only",
+        "rights_status": "owner_private_download_only",
     }
 
 

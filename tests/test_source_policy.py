@@ -18,7 +18,12 @@ from acquisition.source_policy import (
     load_source_access_registry,
     load_source_policies,
 )
-from acquisition.types import RightsStatus, SourceAccessRecord, SourceAccessStatus
+from acquisition.types import (
+    CollectionAuthorizationRecord,
+    RightsStatus,
+    SourceAccessRecord,
+    SourceAccessStatus,
+)
 
 
 def policy_content_hash(entry):
@@ -57,6 +62,31 @@ def test_unknown_source_cannot_download_or_train(policy_set, rights):
     assert decision.reasons == ("source policy denies download",)
     with pytest.raises(FrozenInstanceError):
         cast(Any, policy).may_download = True
+
+
+@pytest.mark.parametrize(
+    "source",
+    ("vsfactoryusa", "richfactoryus", "superclonerolex"),
+)
+def test_owner_authorized_public_replica_source_downloads_privately_but_cannot_train(
+    policy_set, source, rights
+):
+    policy = get_source_policy(policy_set, source)
+    authorization = CollectionAuthorizationRecord(
+        rights_record_id=f"owner-public-download-20261112-{source}",
+        source=source,
+        acquisition_method=policy.allowed_methods[0],
+        allowed_purposes=("download",),
+        authorized_at=rights.effective_at,
+        authorized_by="project-owner",
+        evidence_sha256="a" * 64,
+    )
+
+    decision = authorize_candidate(policy, authorization, now=rights.effective_at)
+
+    assert decision.may_download
+    assert not decision.may_train
+    assert decision.reasons == ("collection authorization does not permit training",)
 
 
 def test_expired_grant_fails_closed(policy_set, expired_rights):

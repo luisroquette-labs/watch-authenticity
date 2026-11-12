@@ -1,4 +1,4 @@
-"""Metadata-only discovery for vendor-declared SuperClone Rolex products."""
+"""Public-image discovery for vendor-declared SuperClone Rolex products."""
 
 from __future__ import annotations
 
@@ -182,7 +182,7 @@ def _parse_product(source_url: str, last_modified: str, body: bytes) -> Discover
             ("evidence_tier", "c"),
             ("seller_claim", "Super Clone Rolex"),
             ("last_modified", last_modified),
-            ("rights_status", "metadata_only"),
+            ("rights_status", "owner_private_download_only"),
         ),
     )
 

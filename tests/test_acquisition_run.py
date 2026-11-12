@@ -12,8 +12,10 @@ from acquisition.discovery import DiscoveryPage, DiscoveryRecord
 from acquisition.run import (
     run_metadata_discovery_once,
     run_metadata_discovery_resilient,
+    run_public_image_collection_once,
     run_wikimedia_once,
 )
+from acquisition.types import CollectionAuthorizationRecord
 from scrapers.metadata_http import HTTPDeadlineExceeded
 from scrapers.replica_sitemap import ReplicaSitemapError
 from scrapers.wikimedia import WikimediaAPIError, WikimediaCandidate, WikimediaDiscovery
@@ -134,6 +136,154 @@ def test_metadata_only_source_commits_without_downloading(cos):
     assert result["state"] == "complete"
     assert repeated["state"] == "already_complete"
     assert cos.write_count == writes
+
+
+def test_public_collection_downloads_every_discovered_image_before_committing(
+    cos, monkeypatch
+):
+    page = DiscoveryPage(
+        source="richfactoryus",
+        access_record_id="access-richfactoryus-1",
+        cursor=None,
+        next_cursor=None,
+        observed_at=NOW,
+        records=(
+            DiscoveryRecord(
+                source="richfactoryus",
+                source_record_id="qc-sets/rolex-submariner-126610ln-black",
+                source_version="v1",
+                source_url="https://richfactoryus.com/qc-sets/rolex-submariner-126610ln-black/",
+                seller_group_id="richfactoryus",
+                declared_reference="rolex-submariner-126610ln",
+                image_ids=("image-1", "image-2", "image-3"),
+                image_urls=(
+                    "https://richfactoryus.com/images/one.webp",
+                    "https://richfactoryus.com/images/two.webp",
+                    "https://richfactoryus.com/images/three.webp",
+                ),
+                metadata=(
+                    ("classification", "replica_candidate_vendor_declared"),
+                    ("factory_claim", "RICH Factory"),
+                ),
+            ),
+        ),
+    )
+    authorization = CollectionAuthorizationRecord(
+        rights_record_id="owner-public-download-20261112-richfactoryus",
+        source="richfactoryus",
+        acquisition_method="public-sitemap",
+        allowed_purposes=("download",),
+        authorized_at=NOW,
+        authorized_by="project-owner",
+        evidence_sha256="a" * 64,
+    )
+    calls = []
+
+    def collect(records, *_args, **_kwargs):
+        normalized = tuple(records)
+        calls.append(normalized)
+        assert not any("/discovery/" in key for key in cos.bodies)
+        return SimpleNamespace(
+            accepted_candidate_ids=tuple(record.source_record_id for record in normalized)
+        )
+
+    monkeypatch.setattr("acquisition.run.collect_batch", collect)
+    result = run_public_image_collection_once(
+        cos,
+        "private",
+        "datasets",
+        SimpleNamespace(source="richfactoryus", policy_id="rich-public-v1"),
+        SimpleNamespace(),
+        authorization,
+        now=NOW,
+        image_client=object(),
+        discover=lambda _previous: page,
+    )
+
+    assert len(calls) == 1
+    assert [record.image_url for record in calls[0]] == list(page.records[0].image_urls)
+    assert all(record.listing_text == "replica" for record in calls[0])
+    assert all(record.factory == "RICH Factory" for record in calls[0])
+    assert result["accepted_count"] == 3
+    assert result["state"] == "complete"
+    assert any("/public-downloads/discovery/" in key for key in cos.bodies)
+
+
+def test_public_image_failure_is_recorded_without_advancing_checkpoint(
+    cos, monkeypatch
+):
+    from acquisition.run import run_public_image_collection_resilient
+    from infra.ibm_cos import IntegrityError
+
+    policy = SimpleNamespace(source="richfactoryus")
+    access = SimpleNamespace(
+        acquisition_method="public-sitemap", requests_per_minute=6
+    )
+    monkeypatch.setattr(
+        "acquisition.run.run_public_image_collection_once",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            IntegrityError("invalid public image")
+        ),
+    )
+
+    result = run_public_image_collection_resilient(
+        cos,
+        "private",
+        "datasets",
+        policy,
+        access,
+        now=NOW,
+        discover=lambda _previous: pytest.fail("stubbed collector must own discovery"),
+    )
+
+    assert result["state"] == "failed"
+    assert result["error_type"] == "IntegrityError"
+    assert not any("/public-downloads/discovery/" in key for key in cos.bodies)
+    assert any("/public-downloads/acquisition-status/" in key for key in cos.bodies)
+
+
+def test_public_permission_failure_does_not_block_later_source(cos, monkeypatch):
+    from acquisition.run import run_public_image_collection_resilient
+
+    access = SimpleNamespace(
+        acquisition_method="public-sitemap", requests_per_minute=6
+    )
+    outcomes = iter(
+        (
+            PermissionError("expired source access"),
+            {"source": "superclonerolex", "state": "complete"},
+        )
+    )
+
+    def collect(*_args, **_kwargs):
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr("acquisition.run.run_public_image_collection_once", collect)
+    failed = run_public_image_collection_resilient(
+        cos,
+        "private",
+        "datasets",
+        SimpleNamespace(source="richfactoryus"),
+        access,
+        now=NOW,
+        discover=lambda _previous: pytest.fail("stubbed collector owns discovery"),
+    )
+    completed = run_public_image_collection_resilient(
+        cos,
+        "private",
+        "datasets",
+        SimpleNamespace(source="superclonerolex"),
+        access,
+        now=NOW,
+        discover=lambda _previous: pytest.fail("stubbed collector owns discovery"),
+    )
+
+    assert failed["state"] == "failed"
+    assert failed["error_type"] == "PermissionError"
+    assert completed == {"source": "superclonerolex", "state": "complete"}
 
 
 def test_recoverable_metadata_failure_does_not_block_later_source(cos):

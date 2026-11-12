@@ -239,6 +239,32 @@ class RightsRecord:
 
 
 @dataclass(frozen=True)
+class CollectionAuthorizationRecord:
+    """Owner authorization to archive public bytes privately, never to train."""
+
+    rights_record_id: str
+    source: str
+    acquisition_method: str
+    allowed_purposes: tuple[str, ...]
+    authorized_at: datetime
+    authorized_by: str
+    evidence_sha256: str
+
+    def __post_init__(self) -> None:
+        for field in (
+            "rights_record_id",
+            "source",
+            "acquisition_method",
+            "authorized_by",
+        ):
+            _nonempty(getattr(self, field), field)
+        if self.allowed_purposes != ("download",):
+            raise ValueError("collection authorization permits only download")
+        _aware(self.authorized_at, "authorized_at")
+        _sha256(self.evidence_sha256, "evidence_sha256")
+
+
+@dataclass(frozen=True)
 class CandidateRecord:
     candidate_id: str
     acquisition_batch_id: str

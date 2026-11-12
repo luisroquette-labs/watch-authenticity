@@ -1,4 +1,4 @@
-"""Shared metadata-only discovery for declared replica-vendor sitemaps."""
+"""Shared discovery for declared replica-vendor public sitemaps."""
 
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ def discover_replica_sitemap(
     records = tuple(
         record
         for entry in root.findall("sm:url", _NS)
-        if (record := _parse_entry(entry, config)) is not None
+        if (record := _parse_entry(entry, config, policy.may_download)) is not None
     )
     if not records:
         raise ReplicaSitemapError(
@@ -100,7 +100,7 @@ def discover_replica_sitemap(
 
 
 def _parse_entry(
-    entry: ET.Element, config: ReplicaSitemapConfig
+    entry: ET.Element, config: ReplicaSitemapConfig, private_download: bool
 ) -> DiscoveryRecord | None:
     source_url = _text(entry.find("sm:loc", _NS), "product URL", config.source)
     parsed = _approved_url(source_url, config.host, config.source)
@@ -158,7 +158,10 @@ def _parse_entry(
             ("evidence_tier", "c"),
             ("factory_claim", config.factory_claim),
             ("last_modified", last_modified),
-            ("rights_status", "metadata_only"),
+            (
+                "rights_status",
+                "owner_private_download_only" if private_download else "metadata_only",
+            ),
         ),
     )
 
