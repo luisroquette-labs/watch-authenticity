@@ -15,7 +15,7 @@ _CONFIG = ReplicaSitemapConfig(
     host="richfactoryus.com",
     seller_group_id="richfactoryus",
     factory_claim="RICH Factory",
-    required_path_markers=("qc-sets", "product"),
+    required_path_markers=("qc-sets",),
 )
 
 
