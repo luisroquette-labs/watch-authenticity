@@ -31,6 +31,7 @@ from infra.ibm_cos import (
 from scrapers.goldsmiths import discover_goldsmiths
 from scrapers.precisionwatches import discover_precisionwatches
 from scrapers.richfactoryus import discover_richfactoryus
+from scrapers.superclonerolex import discover_superclonerolex
 from scrapers.vsfactoryusa import discover_vsfactoryusa
 from scrapers.watchesofswitzerland import discover_watchesofswitzerland
 from scrapers.wikimedia import WikimediaAPIError, WikimediaDiscovery, discover_wikimedia
@@ -428,6 +429,23 @@ def main() -> None:
             richfactory_access,
             now=now,
             previous=previous,
+        ),
+    )
+    superclone_policy = get_source_policy(policies, "superclonerolex")
+    superclone_access = access_registry["superclonerolex"]
+    run_metadata_discovery_once(
+        cos,
+        bucket,
+        prefix,
+        "superclonerolex",
+        now=now,
+        discover=lambda previous: discover_superclonerolex(
+            requests.Session(),
+            superclone_policy,
+            superclone_access,
+            now=now,
+            previous=previous,
+            deadline=job_deadline,
         ),
     )
     precision_policy = get_source_policy(policies, "precisionwatches")

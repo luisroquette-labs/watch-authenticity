@@ -156,6 +156,19 @@
     "evidence_sha256": "b0d8f06eb42fa55fb0da272496deec510a1aab2b37312ec3d0a315165709b712"
   },
   {
+    "access_record_id": "access-superclonerolex-sitemap-20261112",
+    "source": "superclonerolex",
+    "acquisition_method": "public-sitemap-product-pages",
+    "status": "active",
+    "evidence_url": "https://superclonerolex.io/robots.txt",
+    "verified_at": "2026-11-12T16:00:00Z",
+    "expires_at": "2027-11-12T16:00:00Z",
+    "allowed_image_hosts": ["superclonerolex.io"],
+    "requests_per_minute": 6,
+    "reason": "robots.txt allows public product and sitemap reads; written image license is pending, so only metadata and image URLs may be stored",
+    "evidence_sha256": "8a2c8dbac0be082e93970a813702c7b68c44e3ad90fb4db3ecee93cc0df477b4"
+  },
+  {
     "access_record_id": "access-watchesofswitzerland-cpo-sitemap-20261111",
     "source": "watchesofswitzerland",
     "acquisition_method": "public-sitemap",
