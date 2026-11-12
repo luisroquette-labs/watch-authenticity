@@ -29,6 +29,7 @@ from infra.ibm_cos import (
     verify_private_versioned_bucket,
 )
 from scrapers.goldsmiths import GoldsmithsAPIError, discover_goldsmiths
+from scrapers.metadata_http import HTTPDeadlineExceeded
 from scrapers.precisionwatches import PrecisionWatchesAPIError, discover_precisionwatches
 from scrapers.replica_sitemap import ReplicaSitemapError
 from scrapers.richfactoryus import discover_richfactoryus
@@ -44,10 +45,12 @@ _LOG = logging.getLogger(__name__)
 _RATE_LIMITED = "Wikimedia rate limited; resume later"
 _RECOVERABLE_METADATA_ERRORS = (
     GoldsmithsAPIError,
+    HTTPDeadlineExceeded,
     PrecisionWatchesAPIError,
     ReplicaSitemapError,
     requests.RequestException,
     SuperCloneRolexAPIError,
+    UnicodeDecodeError,
     WatchesOfSwitzerlandAPIError,
 )
 

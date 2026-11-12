@@ -14,6 +14,7 @@ from acquisition.run import (
     run_metadata_discovery_resilient,
     run_wikimedia_once,
 )
+from scrapers.metadata_http import HTTPDeadlineExceeded
 from scrapers.replica_sitemap import ReplicaSitemapError
 from scrapers.wikimedia import WikimediaAPIError, WikimediaCandidate, WikimediaDiscovery
 
@@ -185,6 +186,27 @@ def test_unexpected_metadata_failure_still_fails_job(cos):
                 RuntimeError("programming defect")
             ),
         )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    (
+        HTTPDeadlineExceeded("HTTP read deadline exhausted"),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+    ),
+)
+def test_expected_metadata_read_failure_does_not_block_job(cos, failure):
+    result = run_metadata_discovery_resilient(
+        cos,
+        "private",
+        "datasets",
+        "superclonerolex",
+        now=NOW,
+        discover=lambda _previous: (_ for _ in ()).throw(failure),
+    )
+
+    assert result["state"] == "failed"
+    assert result["error_type"] == type(failure).__name__
 
 
 def test_metadata_source_resumes_its_older_cycle_after_another_source_runs(cos):
