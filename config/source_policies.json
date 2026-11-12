@@ -120,6 +120,16 @@
     "policy_evidence_sha256": "9c0fded3a85600f529ae4d2f78b3dcf339f6bd00732351a7962657cf012a30bb"
   },
   {
+    "policy_id": "superclonerolex-metadata-only-v1",
+    "source": "superclonerolex",
+    "allowed_methods": ["public-sitemap-product-pages"],
+    "may_download": false,
+    "may_train": false,
+    "required_rights_purposes": [],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "b4297a469e098265abb87863b4ebc4a66ed98ea0b191c6c3f439e22207790f67"
+  },
+  {
     "policy_id": "watchesofswitzerland-cpo-metadata-only-v1",
     "source": "watchesofswitzerland",
     "allowed_methods": ["public-sitemap"],
