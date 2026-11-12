@@ -12,6 +12,7 @@ from acquisition.types import Angle
 
 _REFERENCE_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)+")
 _FIELD = re.compile(r"[a-z][a-z0-9_]*")
+_OFFICIAL_DOMAINS = {"rolex": "rolex.com"}
 
 
 def _single_line(value: str, field: str) -> None:
@@ -71,6 +72,14 @@ class TechnicalClaim:
         parsed = urlsplit(self.source_url)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("source_url must be an absolute HTTPS URL without credentials")
+        if self.source_class is SourceClass.OFFICIAL_BRAND:
+            brand = self.reference_id.split("-", 1)[0]
+            official_domain = _OFFICIAL_DOMAINS.get(brand)
+            if official_domain is None or (
+                parsed.hostname != official_domain
+                and not parsed.hostname.endswith(f".{official_domain}")
+            ):
+                raise ValueError("official_brand source_url must use the brand's approved domain")
         if not isinstance(self.observed_at, date) or self.observed_at > date.today():
             raise ValueError("observed_at must be a date not in the future")
         if not isinstance(self.applicable_angles, tuple) or any(

@@ -9,7 +9,7 @@
       "source_url": "https://www.rolex.com/en-us/watches/submariner/m126610ln-0001",
       "citation": "More Submariner technical details > Model case > Diameter",
       "observed_at": "2026-11-12",
-      "applicable_angles": ["dial"]
+      "applicable_angles": []
     },
     {
       "field": "case_material",
@@ -18,7 +18,7 @@
       "source_url": "https://www.rolex.com/en-us/watches/submariner/m126610ln-0001",
       "citation": "More Submariner technical details > Model case > Material",
       "observed_at": "2026-11-12",
-      "applicable_angles": ["crown", "caseback"]
+      "applicable_angles": []
     },
     {
       "field": "bezel_color",

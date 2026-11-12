@@ -20,8 +20,10 @@ def assess_reference(
     claims: tuple[TechnicalClaim, ...],
     observations: tuple[VisualObservation, ...],
     *,
-    minimum_source_date: date | None = None,
+    minimum_source_date: date,
 ) -> ReferenceAssessment:
+    if not isinstance(minimum_source_date, date):
+        raise ValueError("minimum_source_date must be explicit")
     if any(claim.reference_id != reference_id for claim in claims):
         raise ValueError("claims belong to another exact reference")
     fields = [observation.field for observation in observations]
@@ -39,6 +41,13 @@ def assess_reference(
         else:
             lead_count += 1
 
+    unknown_observations = set(fields) - set(authoritative)
+    if unknown_observations:
+        raise ValueError(
+            "visual observations contain unknown technical fields: "
+            + ", ".join(sorted(unknown_observations))
+        )
+
     selected: dict[str, TechnicalClaim] = {}
     source_conflicts: list[str] = []
     stale_fields: list[str] = []
@@ -48,7 +57,7 @@ def assess_reference(
             source_conflicts.append(field)
             continue
         latest = max(candidates, key=lambda candidate: candidate.observed_at)
-        if minimum_source_date is not None and latest.observed_at < minimum_source_date:
+        if latest.observed_at < minimum_source_date:
             stale_fields.append(field)
             continue
         selected[field] = latest

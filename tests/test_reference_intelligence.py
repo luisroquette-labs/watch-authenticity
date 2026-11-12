@@ -19,6 +19,7 @@ from reference_intelligence import (
 
 REFERENCE = "rolex-submariner-126610ln"
 KNOWLEDGE = Path("config/references/rolex-submariner-126610ln.json")
+FRESH_AFTER = date(2026, 1, 1)
 
 
 def test_official_126610ln_knowledge_is_versioned_and_cited() -> None:
@@ -36,6 +37,7 @@ def test_matching_fact_is_consistent_but_never_authenticates() -> None:
         REFERENCE,
         claims,
         (VisualObservation("dial_color", " BLACK ", Angle.DIAL, True),),
+        minimum_source_date=FRESH_AFTER,
     )
 
     assert result.status is AssessmentStatus.CONSISTENT
@@ -49,6 +51,7 @@ def test_visible_conflict_is_reported_with_source() -> None:
         REFERENCE,
         claims,
         (VisualObservation("bezel_color", "green", Angle.DIAL, True),),
+        minimum_source_date=FRESH_AFTER,
     )
 
     assert result.status is AssessmentStatus.CONFLICTING
@@ -60,7 +63,9 @@ def test_visible_conflict_is_reported_with_source() -> None:
 
 def test_missing_visible_evidence_is_inconclusive() -> None:
     claims = load_knowledge(KNOWLEDGE, REFERENCE)
-    result = assess_reference(REFERENCE, claims, ())
+    result = assess_reference(
+        REFERENCE, claims, (), minimum_source_date=FRESH_AFTER
+    )
 
     assert result.status is AssessmentStatus.INCONCLUSIVE
     assert all(check.status is CheckStatus.UNOBSERVABLE for check in result.checks)
@@ -78,7 +83,8 @@ def test_forum_claim_is_counted_only_as_a_lead() -> None:
     result = assess_reference(
         REFERENCE,
         (forum,),
-        (VisualObservation("dial_color", "blue", Angle.DIAL, True),),
+        (),
+        minimum_source_date=FRESH_AFTER,
     )
 
     assert result.status is AssessmentStatus.INCONCLUSIVE
@@ -97,7 +103,8 @@ def test_expert_claim_corroborates_but_cannot_replace_official_fact() -> None:
     result = assess_reference(
         REFERENCE,
         (expert,),
-        (VisualObservation("dial_color", "black", Angle.DIAL, True),),
+        (),
+        minimum_source_date=FRESH_AFTER,
     )
 
     assert result.status is AssessmentStatus.INCONCLUSIVE
@@ -112,6 +119,7 @@ def test_conflicting_official_claims_fail_closed() -> None:
         REFERENCE,
         (official, conflict),
         (VisualObservation("dial_color", "black", Angle.DIAL, True),),
+        minimum_source_date=FRESH_AFTER,
     )
 
     assert result.status is AssessmentStatus.INCONCLUSIVE
@@ -151,6 +159,7 @@ def test_non_visual_specification_cannot_be_proved_by_a_photo() -> None:
         REFERENCE,
         claims,
         (VisualObservation("calibre", "3235", Angle.CASEBACK, True),),
+        minimum_source_date=FRESH_AFTER,
     )
 
     calibre = next(check for check in result.checks if check.field == "calibre")
@@ -161,3 +170,40 @@ def test_non_visual_specification_cannot_be_proved_by_a_photo() -> None:
 def test_knowledge_refuses_another_reference() -> None:
     with pytest.raises(ValueError, match="another exact reference"):
         load_knowledge(KNOWLEDGE, "rolex-submariner-116610ln")
+
+
+def test_official_claim_rejects_spoofed_domain() -> None:
+    official = load_knowledge(KNOWLEDGE, REFERENCE)[0]
+
+    with pytest.raises(ValueError, match="approved domain"):
+        replace(official, source_url="https://rolex.com.seller.example/spec")
+
+
+@pytest.mark.parametrize("field", ["authenticity", "unknown_detail"])
+def test_hallucinated_observation_field_is_rejected(field: str) -> None:
+    claims = load_knowledge(KNOWLEDGE, REFERENCE)
+
+    with pytest.raises(ValueError, match="unknown technical fields"):
+        assess_reference(
+            REFERENCE,
+            claims,
+            (VisualObservation(field, "genuine", Angle.DIAL, True),),
+            minimum_source_date=FRESH_AFTER,
+        )
+
+
+def test_diameter_and_material_are_not_visually_provable_without_measurement() -> None:
+    claims = load_knowledge(KNOWLEDGE, REFERENCE)
+    result = assess_reference(
+        REFERENCE,
+        claims,
+        (
+            VisualObservation("diameter_mm", "41", Angle.DIAL, True),
+            VisualObservation("case_material", "Oystersteel", Angle.CROWN, True),
+        ),
+        minimum_source_date=FRESH_AFTER,
+    )
+
+    checks = {check.field: check for check in result.checks}
+    assert checks["diameter_mm"].status is CheckStatus.UNOBSERVABLE
+    assert checks["case_material"].status is CheckStatus.UNOBSERVABLE
