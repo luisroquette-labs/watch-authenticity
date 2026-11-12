@@ -77,6 +77,8 @@ def _page(*, title: str | None = None, image_host: str = "precisionwatches.com")
         f"<html><head><title>{product_title}</title>"
         f'<link rel="canonical" href="{PRODUCT_URL}" /></head><body>'
         f'<img src="https://{image_host}/wp-content/uploads/logo.png">'
+        f'<img src="https://{image_host}/wp-content/uploads/2026/11/'
+        f'R_3120.PA0000494675_SOLDIER_BLACK_01-scaled.jpg">'
         f"{images}</body></html>"
     )
 
