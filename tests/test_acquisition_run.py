@@ -9,7 +9,13 @@ import pytest
 
 from acquisition.collect import DownloadRateLimited
 from acquisition.discovery import DiscoveryPage, DiscoveryRecord
-from acquisition.run import run_metadata_discovery_once, run_wikimedia_once
+from acquisition.run import (
+    run_metadata_discovery_once,
+    run_metadata_discovery_resilient,
+    run_wikimedia_once,
+)
+from scrapers.metadata_http import HTTPDeadlineExceeded
+from scrapers.replica_sitemap import ReplicaSitemapError
 from scrapers.wikimedia import WikimediaAPIError, WikimediaCandidate, WikimediaDiscovery
 
 NOW = datetime(2026, 11, 10, 19, 0, tzinfo=timezone.utc)
@@ -128,6 +134,79 @@ def test_metadata_only_source_commits_without_downloading(cos):
     assert result["state"] == "complete"
     assert repeated["state"] == "already_complete"
     assert cos.write_count == writes
+
+
+def test_recoverable_metadata_failure_does_not_block_later_source(cos):
+    failed = run_metadata_discovery_resilient(
+        cos,
+        "private",
+        "datasets",
+        "richfactoryus",
+        now=NOW,
+        discover=lambda _previous: (_ for _ in ()).throw(
+            ReplicaSitemapError("exact-reference product images are missing")
+        ),
+    )
+    completed = run_metadata_discovery_resilient(
+        cos,
+        "private",
+        "datasets",
+        "superclonerolex",
+        now=NOW,
+        discover=lambda _previous: DiscoveryPage(
+            source="superclonerolex",
+            access_record_id="access-superclonerolex-1",
+            cursor=None,
+            next_cursor=None,
+            observed_at=NOW,
+            records=(),
+        ),
+    )
+
+    assert failed == {
+        "cycle": "2026-11-10",
+        "error_type": "ReplicaSitemapError",
+        "source": "richfactoryus",
+        "state": "failed",
+    }
+    assert completed["state"] == "complete"
+    assert any(b'"source":"richfactoryus","state":"failed"' in body for body in cos.bodies.values())
+    assert any(b'"source":"superclonerolex","state":"complete"' in body for body in cos.bodies.values())
+
+
+def test_unexpected_metadata_failure_still_fails_job(cos):
+    with pytest.raises(RuntimeError, match="programming defect"):
+        run_metadata_discovery_resilient(
+            cos,
+            "private",
+            "datasets",
+            "richfactoryus",
+            now=NOW,
+            discover=lambda _previous: (_ for _ in ()).throw(
+                RuntimeError("programming defect")
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    (
+        HTTPDeadlineExceeded("HTTP read deadline exhausted"),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+    ),
+)
+def test_expected_metadata_read_failure_does_not_block_job(cos, failure):
+    result = run_metadata_discovery_resilient(
+        cos,
+        "private",
+        "datasets",
+        "superclonerolex",
+        now=NOW,
+        discover=lambda _previous: (_ for _ in ()).throw(failure),
+    )
+
+    assert result["state"] == "failed"
+    assert result["error_type"] == type(failure).__name__
 
 
 def test_metadata_source_resumes_its_older_cycle_after_another_source_runs(cos):
