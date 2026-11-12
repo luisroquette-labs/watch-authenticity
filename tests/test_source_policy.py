@@ -40,6 +40,7 @@ def test_registry_loads_every_declared_source_policy(policy_set):
         "chinese_replica",
         "wikimedia",
         "vsfactoryusa",
+        "richfactoryus",
         "watchesofswitzerland",
         "goldsmiths",
         "precisionwatches",
@@ -183,12 +184,14 @@ def test_versioned_access_registry_keeps_unproven_sources_inactive():
         "chinese_replica",
         "wikimedia",
         "vsfactoryusa",
+        "richfactoryus",
         "watchesofswitzerland",
         "goldsmiths",
         "precisionwatches",
     }
     assert registry["wikimedia"].status is SourceAccessStatus.ACTIVE
     assert registry["vsfactoryusa"].status is SourceAccessStatus.ACTIVE
+    assert registry["richfactoryus"].status is SourceAccessStatus.ACTIVE
     assert registry["watchesofswitzerland"].status is SourceAccessStatus.ACTIVE
     assert registry["goldsmiths"].status is SourceAccessStatus.ACTIVE
     assert registry["precisionwatches"].status is SourceAccessStatus.ACTIVE
@@ -199,6 +202,7 @@ def test_versioned_access_registry_keeps_unproven_sources_inactive():
         not in {
             "wikimedia",
             "vsfactoryusa",
+            "richfactoryus",
             "watchesofswitzerland",
             "goldsmiths",
             "precisionwatches",
