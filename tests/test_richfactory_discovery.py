@@ -51,7 +51,7 @@ def _sitemap(*, image_host: str = "richfactoryus.com", title: str | None = None)
     </image:image>
   </url>
   <url>
-    <loc>https://richfactoryus.com/product/rf-submariner-116610ln/</loc>
+    <loc>https://richfactoryus.com/product/rf-submariner-126610ln/</loc>
     <lastmod>2026-11-12</lastmod>
   </url>
 </urlset>"""
