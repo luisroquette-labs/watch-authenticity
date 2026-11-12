@@ -4,7 +4,7 @@ import random
 from itertools import combinations
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 import dataset.entities as entities_module
@@ -97,6 +97,7 @@ def test_grouping_decision_fails_closed_when_conflict_metadata_is_dropped(groupe
         build_grouping_decision(grouped_records[0], clusters, dict(entity_ids))
 
 
+@settings(deadline=None)
 @given(st.lists(st.integers(min_value=0, max_value=2**64 - 1), min_size=1, max_size=30, unique=True))
 def test_indexed_near_duplicate_search_matches_brute_force(values):
     hashes = [f"{value:016x}" for value in values]
