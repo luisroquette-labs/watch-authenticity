@@ -30,6 +30,7 @@ from infra.ibm_cos import (
 )
 from scrapers.goldsmiths import discover_goldsmiths
 from scrapers.precisionwatches import discover_precisionwatches
+from scrapers.richfactoryus import discover_richfactoryus
 from scrapers.vsfactoryusa import discover_vsfactoryusa
 from scrapers.watchesofswitzerland import discover_watchesofswitzerland
 from scrapers.wikimedia import WikimediaAPIError, WikimediaDiscovery, discover_wikimedia
@@ -409,6 +410,22 @@ def main() -> None:
             requests.Session(),
             vsfactory_policy,
             vsfactory_access,
+            now=now,
+            previous=previous,
+        ),
+    )
+    richfactory_policy = get_source_policy(policies, "richfactoryus")
+    richfactory_access = access_registry["richfactoryus"]
+    run_metadata_discovery_once(
+        cos,
+        bucket,
+        prefix,
+        "richfactoryus",
+        now=now,
+        discover=lambda previous: discover_richfactoryus(
+            requests.Session(),
+            richfactory_policy,
+            richfactory_access,
             now=now,
             previous=previous,
         ),

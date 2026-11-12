@@ -126,6 +126,23 @@ def test_reference_near_match_is_not_mislabeled():
         discover_vsfactoryusa(http, policy, access, now=NOW)
 
 
+def test_one_exact_reference_without_images_fails_the_whole_page():
+    policy, access = _registry()
+    body = _sitemap().replace(
+        "</urlset>",
+        """<url>
+    <loc>https://vsfactoryusa.com/vs-factory-rolex-submariner-date-126610ln-super-clone-missing/</loc>
+    <lastmod>2026-11-10</lastmod>
+  </url>
+</urlset>""",
+    )
+    http = MagicMock()
+    http.get.return_value = _Response(body)
+
+    with pytest.raises(VSFactoryAPIError, match="product images are missing"):
+        discover_vsfactoryusa(http, policy, access, now=NOW)
+
+
 def test_oversized_response_stops_stream_and_closes(monkeypatch):
     policy, access = _registry()
     response = _Response("")
@@ -133,7 +150,7 @@ def test_oversized_response_stops_stream_and_closes(monkeypatch):
     response.iter_content = MagicMock(return_value=chunks)
     http = MagicMock()
     http.get.return_value = response
-    monkeypatch.setattr("scrapers.vsfactoryusa._MAX_SITEMAP_BYTES", 8)
+    monkeypatch.setattr("scrapers.replica_sitemap._MAX_SITEMAP_BYTES", 8)
 
     with pytest.raises(VSFactoryAPIError, match="too large"):
         discover_vsfactoryusa(http, policy, access, now=NOW)
