@@ -24,6 +24,7 @@ from acquisition.source_policy import authorize_candidate, authorize_discovery
 from acquisition.types import (
     BatchReceipt,
     CandidateRecord,
+    CollectionAuthorizationRecord,
     RightsRecord,
     SourceAccessRecord,
     SourcePolicy,
@@ -141,7 +142,7 @@ def normalize_candidate_metadata(source: str, record: Mapping[str, object]) -> C
 def collect_batch(
     records: Iterable[CandidateMetadata | Mapping[str, object]],
     policy: SourcePolicy,
-    rights: RightsRecord | None,
+    rights: RightsRecord | CollectionAuthorizationRecord | None,
     *,
     access: SourceAccessRecord | None,
     http_client: PinnedHTTPClient,
@@ -251,7 +252,7 @@ def _resume_candidate_if_present(
     batch_id: str,
     candidate_id: str,
     policy: SourcePolicy,
-    rights: RightsRecord,
+    rights: RightsRecord | CollectionAuthorizationRecord,
     metadata: CandidateMetadata,
 ) -> str | None:
     prefix = f"datasets/receipts/{batch_id}/{candidate_id}-"

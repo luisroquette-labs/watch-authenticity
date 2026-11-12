@@ -1,4 +1,4 @@
-"""Metadata-only discovery for vendor-declared VSFactoryUSA replicas."""
+"""Public-image discovery for vendor-declared VSFactoryUSA replicas."""
 
 from __future__ import annotations
 

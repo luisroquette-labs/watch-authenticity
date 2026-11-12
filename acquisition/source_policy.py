@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from acquisition.types import (
+    CollectionAuthorizationRecord,
     RightsRecord,
     RightsStatus,
     SourceAccessRecord,
@@ -189,7 +190,7 @@ def authorize_discovery(
 
 def authorize_candidate(
     policy: SourcePolicy,
-    rights: RightsRecord | None,
+    rights: RightsRecord | CollectionAuthorizationRecord | None,
     *,
     now: datetime,
 ) -> AcquisitionDecision:
@@ -200,6 +201,24 @@ def authorize_candidate(
         return _denied("source policy denies download")
     if rights is None:
         return _denied("rights missing")
+    if isinstance(rights, CollectionAuthorizationRecord):
+        if now < rights.authorized_at:
+            return _denied("collection authorization not effective")
+        if policy.requires_rightsholder_permission:
+            return _denied("source policy requires rightsholder permission")
+        if rights.source.strip().lower() != policy.source.strip().lower():
+            return _denied("rights source mismatch")
+        if rights.acquisition_method not in policy.allowed_methods:
+            return _denied("acquisition method not allowed")
+        if not set(policy.required_rights_purposes).issubset(rights.allowed_purposes):
+            return _denied("rights purpose mismatch")
+        if policy.may_train:
+            return _denied("collection authorization cannot satisfy a training policy")
+        return AcquisitionDecision(
+            True,
+            False,
+            ("collection authorization does not permit training",),
+        )
     if rights.status is RightsStatus.EXPIRED or now >= rights.expires_at:
         return _denied("rights expired")
     if rights.status is RightsStatus.REVOKED:

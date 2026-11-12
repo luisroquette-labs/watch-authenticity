@@ -67,7 +67,7 @@ def test_discovers_exact_replica_reference_as_candidate_only():
 
     page = discover_vsfactoryusa(http, policy, access, now=NOW)
 
-    assert not policy.may_download
+    assert policy.may_download
     assert not policy.may_train
     assert len(page.records) == 1
     record = page.records[0]
@@ -82,7 +82,7 @@ def test_discovers_exact_replica_reference_as_candidate_only():
         "evidence_tier": "c",
         "factory_claim": "VS Factory (VSF)",
         "last_modified": "2026-11-09",
-        "rights_status": "metadata_only",
+        "rights_status": "owner_private_download_only",
     }
     http.get.assert_called_once_with(
         "https://vsfactoryusa.com/sitemap.xml",

@@ -13,7 +13,12 @@ from typing import Any, Callable, Mapping
 
 import requests
 
-from acquisition.collect import DownloadRateLimited, collect_batch
+from acquisition.collect import (
+    CandidateMetadata,
+    DownloadRateLimited,
+    UnsafeImage,
+    collect_batch,
+)
 from acquisition.cos import AtomicCOSClient
 from acquisition.discovery import DiscoveryCommit, DiscoveryPage, append_discovery_page
 from acquisition.http import PinnedRequestsClient
@@ -22,8 +27,13 @@ from acquisition.source_policy import (
     load_source_access_registry,
     load_source_policies,
 )
-from acquisition.types import SourceAccessRecord, SourcePolicy
+from acquisition.types import (
+    CollectionAuthorizationRecord,
+    SourceAccessRecord,
+    SourcePolicy,
+)
 from infra.ibm_cos import (
+    IntegrityError,
     create_oauth_cos_client,
     verify_no_public_access_policies,
     verify_private_versioned_bucket,
@@ -43,6 +53,10 @@ from scrapers.wikimedia import WikimediaAPIError, WikimediaDiscovery, discover_w
 
 _LOG = logging.getLogger(__name__)
 _RATE_LIMITED = "Wikimedia rate limited; resume later"
+_OWNER_PUBLIC_DOWNLOAD_DIRECTIVE = (
+    "2026-11-12 project owner authorization: archive publicly accessible watch "
+    "images privately; do not treat download as permission to train or proof of authenticity"
+)
 _RECOVERABLE_METADATA_ERRORS = (
     GoldsmithsAPIError,
     HTTPDeadlineExceeded,
@@ -336,6 +350,154 @@ def run_metadata_discovery_resilient(
         }
 
 
+def owner_public_download_authorization(
+    policy: SourcePolicy,
+    access: SourceAccessRecord,
+) -> CollectionAuthorizationRecord:
+    """Bind the owner's standing private-download directive to one source."""
+    return CollectionAuthorizationRecord(
+        rights_record_id=f"owner-public-download-20261112-{policy.source}",
+        source=policy.source,
+        acquisition_method=access.acquisition_method,
+        allowed_purposes=("download",),
+        authorized_at=datetime(2026, 11, 12, tzinfo=timezone.utc),
+        authorized_by="project-owner",
+        evidence_sha256=hashlib.sha256(
+            _OWNER_PUBLIC_DOWNLOAD_DIRECTIVE.encode()
+        ).hexdigest(),
+    )
+
+
+def run_public_image_collection_once(
+    cos_client: Any,
+    bucket: str,
+    prefix: str,
+    policy: SourcePolicy,
+    access: SourceAccessRecord,
+    authorization: CollectionAuthorizationRecord,
+    *,
+    now: datetime,
+    image_client: Any,
+    discover: Callable[[DiscoveryCommit | None], Any],
+) -> dict[str, object]:
+    """Discover, privately archive every image, then commit the source cursor."""
+    collection_prefix = f"{prefix.strip('/')}/public-downloads"
+    source = policy.source
+    cycle, previous = _active_cycle(
+        cos_client, bucket, collection_prefix, now.date().isoformat(), source
+    )
+    if previous is not None and previous.next_cursor is None:
+        return {"cycle": cycle, "source": source, "state": "already_complete"}
+
+    page = discover(previous)
+    if not isinstance(page, DiscoveryPage) or page.source != source:
+        raise RuntimeError("public image discovery returned the wrong source")
+    candidates: list[CandidateMetadata] = []
+    for record in page.records:
+        metadata = dict(record.metadata)
+        listing_text = (
+            "replica" if "replica" in metadata.get("classification", "").lower() else None
+        )
+        for index, (image_id, image_url) in enumerate(
+            zip(record.image_ids, record.image_urls, strict=True), start=1
+        ):
+            candidates.append(
+                CandidateMetadata(
+                    source=source,
+                    source_record_id=(
+                        f"{record.source_record_id}#image-{index}-{image_id[:12]}"
+                    ),
+                    source_url=record.source_url,
+                    image_url=image_url,
+                    declared_reference=record.declared_reference,
+                    listing_text=listing_text,
+                    factory=metadata.get("factory_claim"),
+                )
+            )
+    batch_id = "public-" + hashlib.sha256(
+        f"{source}\0{cycle}\0{page.cursor or 'root'}".encode()
+    ).hexdigest()[:24]
+    receipt = collect_batch(
+        candidates,
+        policy,
+        authorization,
+        access=access,
+        http_client=image_client,
+        cos_client=cos_client,
+        bucket=bucket,
+        batch_id=batch_id,
+        now=now,
+    )
+    commit = append_discovery_page(
+        cos_client,
+        bucket,
+        f"{collection_prefix}/discovery/{cycle}",
+        page,
+        previous=previous,
+    )
+    status: dict[str, object] = {
+        "accepted_candidate_ids": sorted(receipt.accepted_candidate_ids),
+        "accepted_count": len(receipt.accepted_candidate_ids),
+        "commit_sha256": commit.sha256,
+        "cycle": cycle,
+        "next_cursor": commit.next_cursor,
+        "source": source,
+        "state": "complete" if commit.next_cursor is None else "page_complete",
+    }
+    _persist_status(cos_client, bucket, collection_prefix, status)
+    _LOG.info("acquisition_terminal %s", _canonical(status).decode())
+    return status
+
+
+def run_public_image_collection_resilient(
+    cos_client: Any,
+    bucket: str,
+    prefix: str,
+    policy: SourcePolicy,
+    access: SourceAccessRecord,
+    *,
+    now: datetime,
+    discover: Callable[[DiscoveryCommit | None], Any],
+) -> dict[str, object]:
+    """Keep later public sources running after a recorded provider failure."""
+    try:
+        requests_per_minute = access.requests_per_minute
+        if requests_per_minute is None:
+            raise RuntimeError("public image source lacks a rate limit")
+        return run_public_image_collection_once(
+            cos_client,
+            bucket,
+            prefix,
+            policy,
+            access,
+            owner_public_download_authorization(policy, access),
+            now=now,
+            image_client=PinnedRequestsClient(
+                requests_per_minute=requests_per_minute
+            ),
+            discover=discover,
+        )
+    except _RECOVERABLE_METADATA_ERRORS + (
+        DownloadRateLimited,
+        IntegrityError,
+        PermissionError,
+        UnsafeImage,
+    ) as exc:
+        collection_prefix = f"{prefix.strip('/')}/public-downloads"
+        cycle, _previous = _active_cycle(
+            cos_client, bucket, collection_prefix, now.date().isoformat(), policy.source
+        )
+        _persist_failed(
+            cos_client, bucket, collection_prefix, cycle, policy.source, exc
+        )
+        return {
+            "cycle": cycle,
+            "error_type": type(exc).__name__,
+            "source": policy.source,
+            "state": "failed",
+        }
+
+
 def _canonical(status: Mapping[str, object]) -> bytes:
     return json.dumps(status, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
@@ -447,11 +609,12 @@ def main() -> None:
     )
     vsfactory_policy = get_source_policy(policies, "vsfactoryusa")
     vsfactory_access = access_registry["vsfactoryusa"]
-    run_metadata_discovery_resilient(
+    run_public_image_collection_resilient(
         cos,
         bucket,
         prefix,
-        "vsfactoryusa",
+        vsfactory_policy,
+        vsfactory_access,
         now=now,
         discover=lambda previous: discover_vsfactoryusa(
             requests.Session(),
@@ -463,11 +626,12 @@ def main() -> None:
     )
     richfactory_policy = get_source_policy(policies, "richfactoryus")
     richfactory_access = access_registry["richfactoryus"]
-    run_metadata_discovery_resilient(
+    run_public_image_collection_resilient(
         cos,
         bucket,
         prefix,
-        "richfactoryus",
+        richfactory_policy,
+        richfactory_access,
         now=now,
         discover=lambda previous: discover_richfactoryus(
             requests.Session(),
@@ -479,11 +643,12 @@ def main() -> None:
     )
     superclone_policy = get_source_policy(policies, "superclonerolex")
     superclone_access = access_registry["superclonerolex"]
-    run_metadata_discovery_resilient(
+    run_public_image_collection_resilient(
         cos,
         bucket,
         prefix,
-        "superclonerolex",
+        superclone_policy,
+        superclone_access,
         now=now,
         discover=lambda previous: discover_superclonerolex(
             requests.Session(),

@@ -105,12 +105,12 @@ def _discover(http):
     return policy, page
 
 
-def test_discovers_vendor_declared_product_metadata_without_downloading_images():
+def test_discovers_vendor_declared_product_images_for_private_download_only():
     http = _http()
 
     policy, page = _discover(http)
 
-    assert not policy.may_download
+    assert policy.may_download
     assert not policy.may_train
     assert len(page.records) == 1
     record = page.records[0]
@@ -121,7 +121,7 @@ def test_discovers_vendor_declared_product_metadata_without_downloading_images()
         "evidence_tier": "c",
         "seller_claim": "Super Clone Rolex",
         "last_modified": "2026-10-22T04:55:53+00:00",
-        "rights_status": "metadata_only",
+        "rights_status": "owner_private_download_only",
     }
     assert [call.args[0] for call in http.get.call_args_list] == [
         "https://superclonerolex.io/robots.txt",
