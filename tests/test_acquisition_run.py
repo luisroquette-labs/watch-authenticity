@@ -473,3 +473,15 @@ def test_bounded_metadata_sources_run_before_unbounded_wos():
     watches_of_switzerland = source.index('"watchesofswitzerland",', goldsmiths)
 
     assert precision < goldsmiths < watches_of_switzerland
+
+
+def test_github_fallback_runs_preflight_without_building_images():
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    script = Path("scripts/preflight-ci.sh").read_text(encoding="utf-8")
+
+    assert "runs-on: ubuntu-latest" in workflow
+    assert "timeout-minutes: 10" in workflow
+    assert "bash scripts/preflight-ci.sh" in workflow
+    assert "docker build" not in workflow + script
+    assert "next build" not in workflow + script
+    assert "--ignore=tests/test_training_image_runtime.py" in script
