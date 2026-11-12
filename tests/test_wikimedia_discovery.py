@@ -65,8 +65,8 @@ def _page(
         extmetadata["LicenseUrl"] = {"value": license_url}
     return {
         "pageid": 123,
-        "title": "File:Rolex Submariner.jpg",
-        "canonicalurl": "https://commons.wikimedia.org/wiki/File:Rolex_Submariner.jpg",
+        "title": "File:Rolex Submariner 126610LN.jpg",
+        "canonicalurl": "https://commons.wikimedia.org/wiki/File:Rolex_Submariner_126610LN.jpg",
         "imageinfo": [{
             "timestamp": "2020-01-02T03:04:05Z",
             "sha1": "abc123",
@@ -143,8 +143,8 @@ def test_real_commons_license_shapes_are_normalized():
                     {
                         **_page(license_name="Public domain", license_url=None),
                         "pageid": 124,
-                        "title": "File:Public domain Submariner.jpg",
-                        "canonicalurl": "https://commons.wikimedia.org/wiki/File:Public_domain_Submariner.jpg",
+                        "title": "File:Public domain Submariner 126610LN.jpg",
+                        "canonicalurl": "https://commons.wikimedia.org/wiki/File:Public_domain_Submariner_126610LN.jpg",
                     },
                 ]
             }
@@ -155,7 +155,7 @@ def test_real_commons_license_shapes_are_normalized():
 
     assert [candidate.license_url for candidate in result.candidates] == [
         "https://creativecommons.org/licenses/by-sa/3.0/",
-        "https://commons.wikimedia.org/wiki/File:Public_domain_Submariner.jpg",
+        "https://commons.wikimedia.org/wiki/File:Public_domain_Submariner_126610LN.jpg",
     ]
 
 
@@ -182,6 +182,20 @@ def test_current_registry_accepts_commons_thumbnail_host():
 def test_denied_license_is_skipped_without_download_candidate(cos, license_name):
     http = MagicMock()
     http.get.return_value = _Response({"query": {"pages": [_page(license_name=license_name)]}})
+
+    result = _discover(http, cos)
+
+    assert result.candidates == ()
+    assert result.page.records == ()
+    assert cos.write_count == 0
+
+
+def test_generic_submariner_is_not_mislabeled_as_126610ln(cos):
+    http = MagicMock()
+    page = _page()
+    page["title"] = "File:Rolex Submariner 16613.jpg"
+    page["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Rolex_Submariner_16613.jpg"
+    http.get.return_value = _Response({"query": {"pages": [page]}})
 
     result = _discover(http, cos)
 

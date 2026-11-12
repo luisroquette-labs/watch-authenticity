@@ -39,6 +39,7 @@ _ALLOWED_LICENSES = frozenset(
     }
 )
 _TAG = re.compile(r"<[^>]*>")
+_REFERENCE = re.compile(r"^[a-z0-9]+$")
 
 
 class WikimediaAPIError(RuntimeError):
@@ -173,6 +174,21 @@ def _parse_page(
     metadata = info.get("extmetadata")
     if not isinstance(metadata, Mapping):
         raise WikimediaAPIError("image metadata is missing")
+    reference = reference_id.rsplit("-", 1)[-1].lower()
+    if _REFERENCE.fullmatch(reference) is None:
+        raise WikimediaAPIError("reference_id must end with an alphanumeric reference")
+    reference_token = re.compile(
+        rf"(?<![a-z0-9]){re.escape(reference)}(?![a-z0-9])", re.IGNORECASE
+    )
+    searchable = " ".join(
+        (
+            title,
+            _optional_metadata_text(metadata, "ObjectName"),
+            _optional_metadata_text(metadata, "ImageDescription"),
+        )
+    )
+    if reference_token.search(searchable) is None:
+        return None
     license_name = _metadata_value(metadata, "LicenseShortName")
     if license_name not in _ALLOWED_LICENSES:
         return None
@@ -259,6 +275,14 @@ def _metadata_value(metadata: Mapping[str, object], name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise WikimediaAPIError(f"{name} must be a non-empty string")
     return value.strip()
+
+
+def _optional_metadata_text(metadata: Mapping[str, object], name: str) -> str:
+    entry = metadata.get(name)
+    value = entry.get("value") if isinstance(entry, Mapping) else None
+    if not isinstance(value, str):
+        return ""
+    return " ".join(_TAG.sub(" ", html.unescape(value)).split())
 
 
 def _license_url(
