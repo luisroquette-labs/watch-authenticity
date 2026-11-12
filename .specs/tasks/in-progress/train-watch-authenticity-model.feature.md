@@ -45,6 +45,7 @@ Adições de arquitetura (03/11/2026):
 19. **Estado do crédito**: código aplicado segundo confirmação do dono em 05/11/2026. Saldo, data terminal e elegibilidade de cada SKU permanecem `PENDENTE E2E` até leitura autoritativa em `Billing and usage > Promotions and credits`. Nenhum provisionamento pode ocorrer antes dessa prova e de uma estimativa inferior ao saldo com margem para atraso de faturamento.
 20. **Aquisição operacional e direitos (05/11/2026)**: APIs oficiais, exports de parceiros e uploads autorizados geram recibos imutáveis. Fonte desconhecida, direito ausente/expirado/revogado ou endpoint ilustrativo falham fechados antes da rede. Cada ativo conserva hashes, batch, relógio físico, cluster de repost, vendedor, estilo de captura, evidência e direitos.
 21. **Escala por referência (05/11/2026)**: o primeiro artefato continua restrito ao Submariner. Nova referência reutiliza o backbone, mas só recebe cabeça/calibração próprias após passar os mesmos gates de evidência, entidade, classe/ângulo, fonte, gold e holdout; volume bruto não autoriza cobertura.
+22. **Inteligência técnica por referência (12/11/2026)**: a imagem é obrigatória, mas não é a única evidência. Antes de responder, o sistema identifica referência/geração/ano provável e consulta uma base técnica versionada com fonte e data. Documentação da marca prevalece para especificações; revendedores oficiais e especialistas podem corroborar; fóruns e anúncios geram somente pistas. O comparador confronta cada fato aplicável com o detalhe visível, cita as fontes e declara `inconclusivo` quando a referência, a fonte ou o ângulo não permitem uma verificação. Texto nunca cria ground truth, uma especificação compatível nunca autentica sozinha o relógio e o LLM nunca inventa fatos ausentes.
 
 Papel do dono: decidir escopo/publicação e validar labels por amostragem (20-30 fotos por rodada). O crédito IBM financia GPU/storage; qualquer risco de overage fora do saldo exige nova autorização explícita. Todo o código é do agente.
 
@@ -60,6 +61,7 @@ The people who benefit are: the future end user of the (separately-built) guided
 
 **Scope**:
 - Included: rights-gated candidate acquisition, A/B/C/inconclusive evidence review, immutable receipts, physical-watch/repost/seller/batch grouping, a versioned manifest and a frozen ≥200-photo Tier-A gold set; perceptual-hash dedup and capture-style classification; a frozen DINOv2 ViT-B/14 backbone with per-angle linear-probe heads and a simple (non-learned) angle-aggregation rule; heavy lighting/blur/JPEG augmentation; IBM Cloud VPC L4 training with credit/balance/cost/TTL gates; IBM Cloud Object Storage, Container Registry, IAM and job observability; temperature-scaling calibration on held-out validation; a fixed confidence ceiling for grade-4-consistent output; confidence clipping to (0.1%, 99.9%); an out-of-distribution/low-quality rejection path with a pre-inference quality gate; Grad-CAM explainability on every prediction; standard, cross-source, held-out-factory, temporal and gold evaluation with release gates; and preparation of open weights (~400MB) + model card, excluding raw dataset/evidence documents.
+- Included também: pesquisa técnica por referência exata, hierarquia de fontes, fatos versionados com URL/data, confronto entre especificação e observação visual, citações no resultado e recusa explícita quando as fontes conflitam ou o detalhe não está visível.
 - Excluded: the Next.js/Vercel guided-capture app and its UI (a separate, later task); any watch model other than the Rolex Submariner; publishing the raw dataset photos themselves; hosted API / monetization; the owner's own actions (approving GPU/storage spend, deciding final scope/publication, manually sampling 20-30 labels per round for QA).
 
 **User Scenarios**:
@@ -111,6 +113,12 @@ The people who benefit are: the future end user of the (separately-built) guided
 | CK-34 | Does dataset freeze fail when class/angle/entity/source/gold readiness thresholds are unmet? | hard_rule | essential |
 | CK-35 | Does rights expiry/revocation block reuse, produce impacted-artifact and disposition reports, and require observed quarantine/deletion without mutating prior freezes? | hard_rule | essential |
 | CK-36 | Does a new watch reference require its own passing readiness/gold/holdout admission before receiving a head or coverage claim? | hard_rule | important |
+| CK-37 | Does every technical fact carry exact reference, source URL, source class, observation date and citation text? | hard_rule | essential |
+| CK-38 | Do official-brand facts outrank corroborating experts while forum/marketplace claims remain lead-only? | hard_rule | essential |
+| CK-39 | Does the system return `inconclusive` when authoritative sources conflict, are stale/missing, or the required detail is not visible? | hard_rule | essential |
+| CK-40 | Can a matching specification or an LLM/forum statement ever authenticate a photographed watch or create training ground truth by itself? | principle | pitfall |
+| CK-41 | Does the result expose matched, conflicting and unobservable checks with citations and retrieval dates? | hard_rule | important |
+| CK-42 | Can technical evidence reduce confidence on a visible conflict without increasing genuine confidence merely because a specification matches? | hard_rule | essential |
 
 **Regular Checks:**
 
