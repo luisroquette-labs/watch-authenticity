@@ -37,6 +37,8 @@ class ReplicaSitemapConfig:
     host: str
     seller_group_id: str
     factory_claim: str
+    exact_path: str | None = None
+    expected_image_count: int | None = None
     required_path_markers: tuple[str, ...] = ()
     required_title_markers: tuple[str, ...] = ()
     required_page_title_markers: tuple[str, ...] = ()
@@ -119,6 +121,8 @@ def _parse_entry(
     normalized = slug.lower()
     if _REFERENCE_TOKEN.search(normalized) is None:
         return None
+    if config.exact_path is not None and parsed.path != config.exact_path:
+        return None
     if "submariner" not in normalized and not config.required_page_title_markers:
         return None
     if config.required_path_markers and not any(
@@ -169,6 +173,14 @@ def _parse_entry(
     if len(images) != len(set(images)):
         raise ReplicaSitemapError(
             f"{config.source} exact-reference product images are duplicated"
+        )
+    if (
+        config.expected_image_count is not None
+        and len(images) != config.expected_image_count
+    ):
+        raise ReplicaSitemapError(
+            f"{config.source} exact-reference product must expose "
+            f"{config.expected_image_count} images"
         )
 
     version_input = "\0".join((last_modified, *images, *titles)).encode()

@@ -15,6 +15,8 @@ _CONFIG = ReplicaSitemapConfig(
     host="vsfwatcheshub.com",
     seller_group_id="vsfwatcheshub",
     factory_claim="VS Factory (VSF)",
+    exact_path="/products/rolex-126610ln-vsf-2/",
+    expected_image_count=10,
     required_path_markers=("products/rolex-126610ln-vsf-2",),
     required_page_title_markers=("super clone",),
 )
