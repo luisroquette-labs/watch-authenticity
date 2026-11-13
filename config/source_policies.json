@@ -110,6 +110,16 @@
     "policy_evidence_sha256": "becf6c4d06cf819b081ac1d05af4ed06839be378ca53a580d70688b086d70c35"
   },
   {
+    "policy_id": "vsfwatcheshub-public-private-download-v1",
+    "source": "vsfwatcheshub",
+    "allowed_methods": ["public-sitemap-product-page"],
+    "may_download": true,
+    "may_train": false,
+    "required_rights_purposes": ["download"],
+    "requires_rightsholder_permission": false,
+    "policy_evidence_sha256": "3d2ed0b23079274d610a713ee88f983f8dc8eea519172f0c704a88c0b49f85cc"
+  },
+  {
     "policy_id": "richfactoryus-public-private-download-v1",
     "source": "richfactoryus",
     "allowed_methods": ["public-sitemap"],

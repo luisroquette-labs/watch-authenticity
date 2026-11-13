@@ -45,6 +45,7 @@ from scrapers.replica_sitemap import ReplicaSitemapError
 from scrapers.richfactoryus import discover_richfactoryus
 from scrapers.superclonerolex import SuperCloneRolexAPIError, discover_superclonerolex
 from scrapers.vsfactoryusa import discover_vsfactoryusa
+from scrapers.vsfwatcheshub import discover_vsfwatcheshub
 from scrapers.watchesofswitzerland import (
     WatchesOfSwitzerlandAPIError,
     discover_watchesofswitzerland,
@@ -620,6 +621,23 @@ def main() -> None:
             requests.Session(),
             vsfactory_policy,
             vsfactory_access,
+            now=now,
+            previous=previous,
+        ),
+    )
+    vsfwatcheshub_policy = get_source_policy(policies, "vsfwatcheshub")
+    vsfwatcheshub_access = access_registry["vsfwatcheshub"]
+    run_public_image_collection_resilient(
+        cos,
+        bucket,
+        prefix,
+        vsfwatcheshub_policy,
+        vsfwatcheshub_access,
+        now=now,
+        discover=lambda previous: discover_vsfwatcheshub(
+            requests.Session(),
+            vsfwatcheshub_policy,
+            vsfwatcheshub_access,
             now=now,
             previous=previous,
         ),

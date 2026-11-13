@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from acquisition.types import SourceAccessRecord, SourcePolicy
 _REFERENCE_TOKEN = re.compile(r"(?<![a-z0-9])126610ln(?![a-z0-9])", re.IGNORECASE)
 _DECLARED_REFERENCE = "rolex-submariner-126610ln"
 _MAX_SITEMAP_BYTES = 5 * 1024 * 1024
+_MAX_PRODUCT_PAGE_BYTES = 4 * 1024 * 1024
 _USER_AGENT = "watch-authenticity/0.1 (research collector)"
 _NS = {
     "sm": "http://www.sitemaps.org/schemas/sitemap/0.9",
@@ -37,6 +39,7 @@ class ReplicaSitemapConfig:
     factory_claim: str
     required_path_markers: tuple[str, ...] = ()
     required_title_markers: tuple[str, ...] = ()
+    required_page_title_markers: tuple[str, ...] = ()
 
 
 def discover_replica_sitemap(
@@ -83,7 +86,12 @@ def discover_replica_sitemap(
     records = tuple(
         record
         for entry in root.findall("sm:url", _NS)
-        if (record := _parse_entry(entry, config, policy.may_download)) is not None
+        if (
+            record := _parse_entry(
+                entry, config, policy.may_download, http_client
+            )
+        )
+        is not None
     )
     if not records:
         raise ReplicaSitemapError(
@@ -100,18 +108,29 @@ def discover_replica_sitemap(
 
 
 def _parse_entry(
-    entry: ET.Element, config: ReplicaSitemapConfig, private_download: bool
+    entry: ET.Element,
+    config: ReplicaSitemapConfig,
+    private_download: bool,
+    http_client: Any,
 ) -> DiscoveryRecord | None:
     source_url = _text(entry.find("sm:loc", _NS), "product URL", config.source)
     parsed = _approved_url(source_url, config.host, config.source)
     slug = parsed.path.strip("/")
     normalized = slug.lower()
-    if _REFERENCE_TOKEN.search(normalized) is None or "submariner" not in normalized:
+    if _REFERENCE_TOKEN.search(normalized) is None:
+        return None
+    if "submariner" not in normalized and not config.required_page_title_markers:
         return None
     if config.required_path_markers and not any(
         marker in normalized for marker in config.required_path_markers
     ):
         return None
+
+    page_title = (
+        _verify_product_page(http_client, source_url, config)
+        if config.required_page_title_markers
+        else None
+    )
 
     last_modified = _text(
         entry.find("sm:lastmod", _NS), "last modified", config.source
@@ -121,7 +140,16 @@ def _parse_entry(
     for image in entry.findall("image:image", _NS):
         image_url = _text(image.find("image:loc", _NS), "image URL", config.source)
         _approved_url(image_url, config.host, config.source)
-        title = _text(image.find("image:title", _NS), "image title", config.source)
+        title_element = image.find("image:title", _NS)
+        title = (
+            _text(title_element, "image title", config.source)
+            if title_element is not None
+            else page_title
+        )
+        if title is None:
+            raise ReplicaSitemapError(
+                f"{config.source} exact-reference image title is missing"
+            )
         if _REFERENCE_TOKEN.search(title) is None:
             raise ReplicaSitemapError(
                 f"{config.source} exact-reference image title lacks the reference"
@@ -166,7 +194,74 @@ def _parse_entry(
     )
 
 
-def _read_bounded(response: Any, source: str) -> bytes:
+def _verify_product_page(
+    http_client: Any, source_url: str, config: ReplicaSitemapConfig
+) -> str:
+    response = http_client.get(
+        source_url,
+        headers={"User-Agent": _USER_AGENT},
+        timeout=30,
+        allow_redirects=False,
+        stream=True,
+    )
+    status = getattr(response, "status_code", None)
+    if status == 429:
+        raise ReplicaSitemapError(f"{config.source} rate limited; resume later")
+    if status != 200:
+        raise ReplicaSitemapError(
+            f"{config.source} product page returned HTTP {status}"
+        )
+    try:
+        body = _read_bounded(
+            response,
+            config.source,
+            max_bytes=_MAX_PRODUCT_PAGE_BYTES,
+            label="product page",
+        )
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+    try:
+        document = html.unescape(body.decode("utf-8", errors="strict"))
+    except UnicodeDecodeError as exc:
+        raise ReplicaSitemapError(
+            f"{config.source} product page is not UTF-8"
+        ) from exc
+    title_match = re.search(r"<title>\s*([^<]+?)\s*</title>", document, re.IGNORECASE)
+    title = title_match.group(1).strip() if title_match else ""
+    normalized_title = title.lower()
+    if (
+        _REFERENCE_TOKEN.search(title) is None
+        or "submariner" not in normalized_title
+        or not any(
+            marker in normalized_title
+            for marker in config.required_page_title_markers
+        )
+    ):
+        raise ReplicaSitemapError(
+            f"{config.source} product page lacks an exact replica declaration"
+        )
+    canonical = re.search(
+        r'<link\s+rel=["\']canonical["\']\s+href=["\']([^"\']+)["\']\s*/?>',
+        document,
+        re.IGNORECASE,
+    )
+    if canonical is None or canonical.group(1) != source_url:
+        raise ReplicaSitemapError(
+            f"{config.source} product page canonical URL is missing or invalid"
+        )
+    return title
+
+
+def _read_bounded(
+    response: Any,
+    source: str,
+    *,
+    max_bytes: int | None = None,
+    label: str = "sitemap",
+) -> bytes:
+    limit = _MAX_SITEMAP_BYTES if max_bytes is None else max_bytes
     chunks: list[bytes] = []
     size = 0
     iterator = getattr(response, "iter_content", None)
@@ -176,12 +271,12 @@ def _read_bounded(response: Any, source: str) -> bytes:
         if not isinstance(chunk, bytes):
             raise ReplicaSitemapError(f"{source} sitemap stream is invalid")
         size += len(chunk)
-        if size > _MAX_SITEMAP_BYTES:
-            raise ReplicaSitemapError(f"{source} sitemap body is too large")
+        if size > limit:
+            raise ReplicaSitemapError(f"{source} {label} body is too large")
         chunks.append(chunk)
     body = b"".join(chunks)
     if not body:
-        raise ReplicaSitemapError(f"{source} sitemap body is missing")
+        raise ReplicaSitemapError(f"{source} {label} body is missing")
     return body
 
 
