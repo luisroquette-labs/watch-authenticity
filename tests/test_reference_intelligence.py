@@ -25,9 +25,14 @@ FRESH_AFTER = date(2026, 1, 1)
 def test_official_126610ln_knowledge_is_versioned_and_cited() -> None:
     claims = load_knowledge(KNOWLEDGE, REFERENCE)
 
-    assert len(claims) == 7
-    assert {claim.source_class for claim in claims} == {SourceClass.OFFICIAL_BRAND}
-    assert all(claim.source_url.startswith("https://www.rolex.com/") for claim in claims)
+    assert len(claims) == 10
+    assert {claim.source_class for claim in claims} == {
+        SourceClass.OFFICIAL_BRAND,
+        SourceClass.FORUM,
+    }
+    official = tuple(claim for claim in claims if claim.source_class is SourceClass.OFFICIAL_BRAND)
+    assert len(official) == 7
+    assert all(claim.source_url.startswith("https://www.rolex.com/") for claim in official)
     assert all(claim.citation and claim.observed_at <= date.today() for claim in claims)
 
 
