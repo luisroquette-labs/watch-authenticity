@@ -22,21 +22,22 @@ Create `inference/predict.py`: order = `quality_gate` → `model.rejection` (OOD
 
 #### Success Criteria
 
-- [ ] `predict(valid_fixture)` returns a `Prediction` with confidence strictly in (0.001, 0.999) (CK-1)
-- [ ] A fake prediction reports an associated grade 1-4 (CK-2); a genuine prediction has no grade
-- [ ] Grade-4-consistent output has genuine-confidence ≤ ceiling and `ceiling_applied=True` (CK-3)
-- [ ] OOD input returns `Rejection`, not a score (CK-4)
-- [ ] A blurry fixture through the full pipeline causes ZERO calls to the authenticity model (CK-5 integration)
-- [ ] Every `Prediction` includes a heatmap matching image dimensions (CK-6)
-- [ ] `pytest tests/test_predict.py` passes
+- [X] `predict(valid_fixture)` returns a `Prediction` with confidence strictly in (0.001, 0.999) (CK-1)
+- [X] A fake prediction reports an associated grade 1-4 (CK-2); a genuine prediction has no grade
+- [X] Grade-4-consistent output has genuine-confidence ≤ ceiling and `ceiling_applied=True` (CK-3)
+- [X] OOD input returns `Rejection`, not a score (CK-4)
+- [X] A blurry fixture through the full pipeline causes ZERO calls to the authenticity model (CK-5 integration)
+- [X] Every `Prediction` includes a heatmap matching image dimensions (CK-6)
+- [X] `pytest tests/test_predict.py` passes
 
 #### Subtasks
 
-- [ ] Implement `predict(image)` ordered orchestration in `inference/predict.py`
-- [ ] Short-circuit quality-gate + OOD before any scoring
-- [ ] Reuse `core.aggregate_angles`, `calibration.calibrate`, `explainability.grad_cam`
-- [ ] Write integration test asserting zero authenticity-model calls on a blurry input (CK-5)
-- [ ] Write unit tests for confidence range, grade presence, ceiling, heatmap (CK-1,2,3,6)
+- [X] Implement ordered multi-angle orchestration in `inference/predict.py`
+- [X] Short-circuit quality-gate + OOD before any scoring
+- [X] Reuse `core.aggregate_angles`, `calibration.calibrate`, `explainability.grad_cam`
+- [X] Attach reference-specific technical checks, citations and the smallest next angle
+- [X] Write integration test asserting zero authenticity-model calls on a blurry input (CK-5)
+- [X] Write unit tests for confidence range, grade presence, ceiling, heatmap (CK-1,2,3,6)
 
 #### Blockers & Risks
 

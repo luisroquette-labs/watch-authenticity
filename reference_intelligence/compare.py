@@ -115,7 +115,11 @@ def _check(
         source_url=claim.source_url,
         citation=claim.citation,
         source_observed_at=claim.observed_at,
-        angle=observation.angle if observation else None,
+        angle=(
+            observation.angle
+            if observation is not None
+            else (claim.applicable_angles[0] if claim.applicable_angles else None)
+        ),
     )
 
 

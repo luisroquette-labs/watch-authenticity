@@ -755,7 +755,7 @@ Phase 4: Inference path (depends on Phase 3)
   - Reuse: SKILL.md:174-175 sharpness_score; threshold tuned per angle
 - [ ] explainability/gradcam.py targeting blocks[-1].norm1
   - Reuse: SKILL.md:81-82; smoke-test on real checkpoint
-- [ ] inference/predict.py orchestration (quality→rejection→model→aggregate→calibrate→clamp→ceiling→gradcam)
+- [X] inference/predict.py orchestration (quality→rejection→model→aggregate→calibrate→clamp→ceiling→gradcam→reference intelligence)
   - Reuse: core.aggregate_angles, core.clip_confidence, core.apply_grade4_ceiling
 
 Phase 5: Evaluation + release (depends on Phase 4)
@@ -856,7 +856,7 @@ Phase 5
 | `07b-calibration` [DONE] | Phase 3 | sonnet | sdd:developer | `06-backbone-heads` | `07a-rejection` | `.specs/sub-tasks/train-watch-authenticity-model.feature/07b-calibration.md` |
 | `08a-quality-gate` [DONE] | Phase 4 | sonnet | sdd:developer | `03-core-rules` | `08b-gradcam` | `.specs/sub-tasks/train-watch-authenticity-model.feature/08a-quality-gate.md` |
 | `08b-gradcam` [DONE] | Phase 4 | sonnet | sdd:developer | `06-backbone-heads` | `08a-quality-gate` | `.specs/sub-tasks/train-watch-authenticity-model.feature/08b-gradcam.md` |
-| `09-inference-predict` | Phase 4 | sonnet | sdd:developer | `06-backbone-heads`, `07a-rejection`, `07b-calibration`, `08a-quality-gate`, `08b-gradcam` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/09-inference-predict.md` |
+| `09-inference-predict` [DONE] | Phase 4 | sonnet | sdd:developer | `06-backbone-heads`, `07a-rejection`, `07b-calibration`, `08a-quality-gate`, `08b-gradcam` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/09-inference-predict.md` |
 | `10-evaluate` | Phase 5 | sonnet | sdd:developer | `09-inference-predict` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/10-evaluate.md` |
 | `11-release-gate` | Phase 5 | sonnet | sdd:developer | `10-evaluate` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/11-release-gate.md` |
 | `12-publish-weights` | Phase 5 | sonnet | sdd:developer | `11-release-gate` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/12-publish-weights.md` |

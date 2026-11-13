@@ -33,7 +33,7 @@ else:
 
 from core.types import Rejection  # noqa: E402
 from model.heads import GENUINE_CLASS_INDEX, GUIDED_ANGLES, NUM_CLASSES  # noqa: E402
-from model.rejection import REJECTION_CLASS_INDEX, classify  # noqa: E402
+from model.rejection import REJECTION_CLASS_INDEX, classify, classify_logits  # noqa: E402
 
 
 def _logits_for_class(class_index: int, batch_size: int = 1) -> torch.Tensor:
@@ -123,3 +123,14 @@ def test_classify_returns_none_for_a_genuine_submariner_photo():
     result = classify(genuine_photo, predict=_stub_predict(no_angle_rejects))
 
     assert result is None
+
+
+def test_classify_logits_reuses_precomputed_model_output():
+    logits = {angle: _logits_for_class(GENUINE_CLASS_INDEX) for angle in GUIDED_ANGLES}
+
+    assert classify_logits(logits) is None
+
+
+def test_classify_logits_rejects_empty_output():
+    with pytest.raises(ValueError, match="at least one angle"):
+        classify_logits({})
