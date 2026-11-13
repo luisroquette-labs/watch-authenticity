@@ -715,7 +715,7 @@ def test_github_fallback_runs_preflight_without_building_images():
     assert '"reference_intelligence/**"' in workflow
     assert "docker build" not in workflow + script
     assert "next build" not in workflow + script
-    assert "ruff check ." in script
-    assert "mypy . --config-file pyproject.toml" in script
-    assert "pytest tests/" in script
+    assert "python3 -m ruff check ." in script
+    assert "python3 -m mypy . --config-file pyproject.toml" in script
+    assert "python3 -m pytest tests/" in script
     assert "--ignore=tests/test_training_image_runtime.py" in script
