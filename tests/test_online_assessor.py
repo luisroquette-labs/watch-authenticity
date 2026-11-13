@@ -44,7 +44,12 @@ def test_short_model_choice_accepts_only_exact_allowed_answer() -> None:
 def test_uncertain_fact_match_cannot_report_no_visible_inconsistency() -> None:
     assessor = LocalVisionAssessor.__new__(LocalVisionAssessor)
     answers = iter((("yes", "Yes."), ("yes", "Yes."), ("uncertain", "Uncertain.")))
-    assessor._ask_choice = lambda _image, _question: next(answers)  # type: ignore[method-assign]
+
+    def answer(image: Image.Image, question: str) -> tuple[str | None, str]:
+        del image, question
+        return next(answers)
+
+    assessor._ask_choice = answer  # type: ignore[method-assign]
 
     result = assessor.assess(Image.new("RGB", (224, 224)), "dial", (_claim("dial_color"),))
 
@@ -54,7 +59,12 @@ def test_uncertain_fact_match_cannot_report_no_visible_inconsistency() -> None:
 def test_forum_lead_alone_cannot_report_no_visible_inconsistency() -> None:
     assessor = LocalVisionAssessor.__new__(LocalVisionAssessor)
     answers = iter((("yes", "Yes."),))
-    assessor._ask_choice = lambda _image, _question: next(answers)  # type: ignore[method-assign]
+
+    def answer(image: Image.Image, question: str) -> tuple[str | None, str]:
+        del image, question
+        return next(answers)
+
+    assessor._ask_choice = answer  # type: ignore[method-assign]
 
     result = assessor.assess(
         Image.new("RGB", (224, 224)), "dial", (_claim("forum_only", authoritative=False),)
