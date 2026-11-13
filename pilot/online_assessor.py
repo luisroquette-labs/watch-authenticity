@@ -11,7 +11,8 @@ import torch
 from PIL import Image
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
-from reference_intelligence.types import TechnicalClaim
+from reference_intelligence.compare import assess_reference
+from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
 MODEL_ID = "HuggingFaceTB/SmolVLM-500M-Instruct"
 MODEL_REVISION = "753c1752602b5e739af7a7fa6947a635051897a3"
@@ -90,7 +91,9 @@ If no official contradiction is clearly visible, official_conflicts must be empt
 
 
 def parse_assessment(text: str, claims: Sequence[TechnicalClaim]) -> OnlineAssessment:
-    official = {claim.field for claim in claims if claim.source_class.authoritative}
+    official_claims = tuple(claim for claim in claims if claim.source_class.authoritative)
+    official_by_field = {claim.field: claim for claim in official_claims}
+    official = set(official_by_field)
     try:
         start = text.index("{")
         end = text.rindex("}") + 1
@@ -128,7 +131,18 @@ def parse_assessment(text: str, claims: Sequence[TechnicalClaim]) -> OnlineAsses
             or "\n" in observed
         ):
             return _inconclusive("Conflito visual nao verificavel; envie outra foto.", text)
-        parsed_conflicts.append((field, observed.strip()))
+        claim = official_by_field[field]
+        if not claim.applicable_angles:
+            return _inconclusive("Conflito visual sem angulo verificavel.", text)
+        comparison = assess_reference(
+            claim.reference_id,
+            official_claims,
+            (VisualObservation(field, observed.strip(), claim.applicable_angles[0], True),),
+            minimum_source_date=min(item.observed_at for item in official_claims),
+        )
+        check = next(item for item in comparison.checks if item.field == field)
+        if check.status is CheckStatus.CONFLICTING:
+            parsed_conflicts.append((field, observed.strip()))
     if present != "yes":
         verdict = "inconclusivo"
     elif parsed_conflicts:

@@ -54,6 +54,18 @@ def test_all_official_fields_visible_without_conflict_is_not_authentication() ->
     assert result.verdict == "sem_inconsistencia_visivel"
 
 
+def test_model_cannot_invent_conflict_when_observed_value_matches_official() -> None:
+    result = parse_assessment(
+        '{"watch_present":"yes","visible_fields":["dial_color"],'
+        '"official_conflicts":[{"field":"dial_color","observed":" BLACK "}],'
+        '"missing_detail":"send rehaut"}',
+        (_claim("dial_color"),),
+    )
+
+    assert result.verdict == "sem_inconsistencia_visivel"
+    assert result.official_conflicts == ()
+
+
 def test_malformed_unknown_or_community_conflict_fails_inconclusive() -> None:
     official = _claim("dial_color")
     forum = _claim("rehaut_lead", authoritative=False)
