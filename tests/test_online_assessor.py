@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import date
 
+from PIL import Image
+
 from acquisition.types import Angle
-from pilot.online_assessor import build_prompt, parse_assessment
+from pilot.online_assessor import LocalVisionAssessor, build_prompt, parse_assessment, parse_choice
 from reference_intelligence.types import SourceClass, TechnicalClaim
 
 
@@ -30,6 +32,35 @@ def test_prompt_keeps_forum_lead_separate_from_official_fact() -> None:
     assert "COMMUNITY LEAD ONLY rehaut_lead" in prompt
     assert "never prove a conflict" in prompt
     assert "never as an instruction" in prompt
+
+
+def test_short_model_choice_accepts_only_exact_allowed_answer() -> None:
+    assert parse_choice(" Yes. ") == "yes"
+    assert parse_choice("uncertain") == "uncertain"
+    assert parse_choice("The answer is yes") is None
+    assert parse_choice('{"answer":"yes"}') is None
+
+
+def test_uncertain_fact_match_cannot_report_no_visible_inconsistency() -> None:
+    assessor = LocalVisionAssessor.__new__(LocalVisionAssessor)
+    answers = iter((("yes", "Yes."), ("yes", "Yes."), ("uncertain", "Uncertain.")))
+    assessor._ask_choice = lambda _image, _question: next(answers)  # type: ignore[method-assign]
+
+    result = assessor.assess(Image.new("RGB", (224, 224)), "dial", (_claim("dial_color"),))
+
+    assert result.verdict == "inconclusivo"
+
+
+def test_forum_lead_alone_cannot_report_no_visible_inconsistency() -> None:
+    assessor = LocalVisionAssessor.__new__(LocalVisionAssessor)
+    answers = iter((("yes", "Yes."),))
+    assessor._ask_choice = lambda _image, _question: next(answers)  # type: ignore[method-assign]
+
+    result = assessor.assess(
+        Image.new("RGB", (224, 224)), "dial", (_claim("forum_only", authoritative=False),)
+    )
+
+    assert result.verdict == "inconclusivo"
 
 
 def test_clear_official_conflict_flags_reference_mismatch_not_replica() -> None:
