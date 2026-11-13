@@ -9,7 +9,13 @@ on:
       - "acquisition/**"
       - "scrapers/**"
       - "config/source_*.json"
+      - "config/references/**"
+      - "pilot/**"
+      - "reference_intelligence/**"
       - "tests/test_acquisition_run.py"
+      - "tests/test_online_assessor.py"
+      - "tests/test_pilot_server.py"
+      - "tests/test_reference_intelligence.py"
       - "tests/test_*discovery.py"
       - "tests/test_source_policy.py"
 

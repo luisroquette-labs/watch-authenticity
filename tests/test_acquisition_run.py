@@ -711,6 +711,8 @@ def test_github_fallback_runs_preflight_without_building_images():
     assert "runs-on: ubuntu-latest" in workflow
     assert "timeout-minutes: 10" in workflow
     assert "bash scripts/preflight-ci.sh" in workflow
+    assert '"pilot/**"' in workflow
+    assert '"reference_intelligence/**"' in workflow
     assert "docker build" not in workflow + script
     assert "next build" not in workflow + script
     assert "ruff check ." in script
