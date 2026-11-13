@@ -20,7 +20,7 @@ def _claim(field: str, *, authoritative: bool = True) -> TechnicalClaim:
             if authoritative else "https://example.com/forum/thread"
         ),
         citation="source",
-        observed_at=date(2026, 11, 14),
+        observed_at=date.today(),
         applicable_angles=(Angle.DIAL,),
     )
 
