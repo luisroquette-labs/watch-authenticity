@@ -1,5 +1,5 @@
-"""Online-only research pilot; never a production authenticity verdict."""
+"""Online research pilot; never a production authenticity verdict."""
 
-from pilot.prototype import PilotArtifact, PilotPrediction, predict_embedding
+from pilot.online_assessor import OnlineAssessment, parse_assessment
 
-__all__ = ["PilotArtifact", "PilotPrediction", "predict_embedding"]
+__all__ = ["OnlineAssessment", "parse_assessment"]
