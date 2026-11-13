@@ -31,18 +31,51 @@ def test_official_126610ln_knowledge_is_versioned_and_cited() -> None:
     assert all(claim.citation and claim.observed_at <= date.today() for claim in claims)
 
 
-def test_matching_fact_is_consistent_but_never_authenticates() -> None:
+def test_all_visible_facts_must_match_to_be_consistent_but_never_authenticate() -> None:
     claims = load_knowledge(KNOWLEDGE, REFERENCE)
     result = assess_reference(
         REFERENCE,
         claims,
-        (VisualObservation("dial_color", " BLACK ", Angle.DIAL, True),),
+        (
+            VisualObservation("bezel_color", "black", Angle.DIAL, True),
+            VisualObservation("dial_color", " BLACK ", Angle.DIAL, True),
+            VisualObservation("date_magnifier", "Cyclops", Angle.CYCLOPS, True),
+        ),
         minimum_source_date=FRESH_AFTER,
     )
 
     assert result.status is AssessmentStatus.CONSISTENT
     assert not result.authenticates_watch
     assert next(check for check in result.checks if check.field == "dial_color").status is CheckStatus.MATCHED
+
+
+def test_one_match_with_an_unobserved_visible_fact_is_inconclusive() -> None:
+    claims = load_knowledge(KNOWLEDGE, REFERENCE)
+    result = assess_reference(
+        REFERENCE,
+        claims,
+        (VisualObservation("dial_color", "black", Angle.DIAL, True),),
+        minimum_source_date=FRESH_AFTER,
+    )
+
+    assert result.status is AssessmentStatus.INCONCLUSIVE
+
+
+def test_non_visual_fact_does_not_block_complete_visual_consistency() -> None:
+    claims = load_knowledge(KNOWLEDGE, REFERENCE)
+    result = assess_reference(
+        REFERENCE,
+        claims,
+        (
+            VisualObservation("bezel_color", "black", Angle.DIAL, True),
+            VisualObservation("dial_color", "black", Angle.DIAL, True),
+            VisualObservation("date_magnifier", "Cyclops", Angle.CYCLOPS, True),
+            VisualObservation("calibre", "3235", Angle.CASEBACK, True),
+        ),
+        minimum_source_date=FRESH_AFTER,
+    )
+
+    assert result.status is AssessmentStatus.CONSISTENT
 
 
 def test_visible_conflict_is_reported_with_source() -> None:

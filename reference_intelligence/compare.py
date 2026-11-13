@@ -83,11 +83,16 @@ def assess_reference(
             )
             checks.append(_check(claim, observation, check_status))
 
+    visual_checks = [
+        check for check in checks if selected[check.field].applicable_angles
+    ]
     if source_conflicts or stale_fields or not selected:
         status = AssessmentStatus.INCONCLUSIVE
     elif any(check.status is CheckStatus.CONFLICTING for check in checks):
         status = AssessmentStatus.CONFLICTING
-    elif not any(check.status is CheckStatus.MATCHED for check in checks):
+    elif not visual_checks or any(
+        check.status is CheckStatus.UNOBSERVABLE for check in visual_checks
+    ):
         status = AssessmentStatus.INCONCLUSIVE
     else:
         status = AssessmentStatus.CONSISTENT
@@ -115,7 +120,11 @@ def _check(
         source_url=claim.source_url,
         citation=claim.citation,
         source_observed_at=claim.observed_at,
-        angle=observation.angle if observation else None,
+        angle=(
+            observation.angle
+            if observation is not None
+            else (claim.applicable_angles[0] if claim.applicable_angles else None)
+        ),
     )
 
 

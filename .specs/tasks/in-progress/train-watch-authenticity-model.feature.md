@@ -60,7 +60,7 @@ This task builds the training pipeline and the trained artifact for a calibrated
 The people who benefit are: the future end user of the (separately-built) guided-capture app, who gets an honest, explainable signal instead of a confident guess; and the owner, who gets an open-source, differentiated asset whose credibility rests on the pipeline actually resisting its single biggest named risk — learning "which website this photo came from" instead of "is this watch fake." The mitigation is not only crop/augmentation: source reputation cannot create ground truth, every training row needs A/B evidence and rights, physical-watch/repost/seller/batch groups cannot cross splits, and cross-source/temporal/factory tests block release. Reddit remains excluded without written permissions; Watchuseek and Chrono24 may supply candidates but are not blanket genuine sources.
 
 **Scope**:
-- Included: rights-gated candidate acquisition, A/B/C/inconclusive evidence review, immutable receipts, physical-watch/repost/seller/batch grouping, a versioned manifest and a frozen ≥200-photo Tier-A gold set; perceptual-hash dedup and capture-style classification; a frozen DINOv2 ViT-B/14 backbone with per-angle linear-probe heads and a simple (non-learned) angle-aggregation rule; heavy lighting/blur/JPEG augmentation; IBM Cloud VPC L4 training with credit/balance/cost/TTL gates; IBM Cloud Object Storage, Container Registry, IAM and job observability; temperature-scaling calibration on held-out validation; a fixed confidence ceiling for grade-4-consistent output; confidence clipping to (0.1%, 99.9%); an out-of-distribution/low-quality rejection path with a pre-inference quality gate; Grad-CAM explainability on every prediction; standard, cross-source, held-out-factory, temporal and gold evaluation with release gates; and preparation of open weights (~400MB) + model card, excluding raw dataset/evidence documents.
+- Included: rights-gated candidate acquisition, A/B/C/inconclusive evidence review, immutable receipts, physical-watch/repost/seller/batch grouping, a versioned manifest and a frozen ≥200-photo Tier-A gold set; perceptual-hash dedup and capture-style classification; a frozen DINOv2 ViT-B/14 backbone with per-angle linear-probe heads and a simple (non-learned) angle-aggregation rule; heavy lighting/blur/JPEG augmentation; IBM Cloud VPC L4 training with credit/balance/cost/TTL gates; IBM Cloud Object Storage, Container Registry, IAM and job observability; temperature-scaling calibration on held-out validation; a fixed confidence ceiling for grade-4-consistent output; confidence clipping to [0.1%, 99.9%], never 0% or 100%; an out-of-distribution/low-quality rejection path with a pre-inference quality gate; Grad-CAM explainability on every prediction; standard, cross-source, held-out-factory, temporal and gold evaluation with release gates; and preparation of open weights (~400MB) + model card, excluding raw dataset/evidence documents.
 - Included também: pesquisa técnica por referência exata, hierarquia de fontes, fatos versionados com URL/data, confronto entre especificação e observação visual, citações no resultado e recusa explícita quando as fontes conflitam ou o detalhe não está visível.
 - Excluded: the Next.js/Vercel guided-capture app and its UI (a separate, later task); any watch model other than the Rolex Submariner; publishing the raw dataset photos themselves; hosted API / monetization; the owner's own actions (approving GPU/storage spend, deciding final scope/publication, manually sampling 20-30 labels per round for QA).
 
@@ -77,7 +77,7 @@ The people who benefit are: the future end user of the (separately-built) guided
 
 | ID | Question | Category | Importance |
 |----|----------|----------|------------|
-| CK-1 | Does every reported authenticity confidence value fall strictly within the open interval (0.1%, 99.9%), never exactly 0% or 100%? | hard_rule | essential |
+| CK-1 | Does every reported authenticity confidence value fall within [0.1%, 99.9%], never exactly 0% or 100%? | hard_rule | essential |
 | CK-2 | Does every fake-classified prediction report an associated grade (1, 2, 3, or 4) alongside its confidence? | hard_rule | essential |
 | CK-3 | Is reported genuine-confidence capped at the fixed ceiling (~60%) whenever the output is grade-4 (superclone) consistent, regardless of the model's raw score? | hard_rule | essential |
 | CK-4 | Does input that is out-of-distribution (wrong watch model, no watch, unusable) return a dedicated rejection output instead of a genuine/fake score? | hard_rule | essential |
@@ -146,7 +146,7 @@ Scale: 1-5 integers, anchor-relative — each criterion pins `score_2`/`score_4`
 
 ### Confidence Bound & Calibration Integrity
 
-Does every reported confidence value stay strictly within (0.1%, 99.9%), and is it the output of an actual calibration step (temperature scaling fit on held-out validation) rather than a raw, uncalibrated softmax?
+Does every reported confidence value stay within [0.1%, 99.9%], never 0% or 100%, and is it the output of an actual calibration step (temperature scaling fit on held-out validation) rather than a raw, uncalibrated softmax?
 
 Trace a sample prediction from raw logits to final reported confidence. Check whether a clamp to (0.001, 0.999) and a temperature-scaling step (with T fit on validation, not test) are both present, then place the artifact against the anchors below.
 
@@ -331,7 +331,7 @@ Gold-set regression check vs. v1 baseline: PASS
 
 **Test Cases to Cover**
 
-#### CK-1: Does every reported authenticity confidence value fall strictly within (0.1%, 99.9%)?
+#### CK-1: Does every reported authenticity confidence value fall within [0.1%, 99.9%], never 0% or 100%?
 - [unit] clip_confidence(0.0) returns 0.001 [BVA: below floor]
 - [unit] clip_confidence(1.0) returns 0.999 [BVA: above ceiling]
 - [unit] clip_confidence(0.5) returns 0.5 unchanged [EP: typical mid-range]
@@ -654,7 +654,7 @@ TrainingRecord
 **Prediction / Rejection output** (CK-1..6):
 ```
 Prediction
-├── confidence: float   # strictly in (0.001, 0.999)
+├── confidence: float   # clamped to [0.001, 0.999]
 ├── genuine: bool
 ├── grade: int|null     # 1-4 present when fake (CK-2)
 ├── ceiling_applied: bool
@@ -755,7 +755,7 @@ Phase 4: Inference path (depends on Phase 3)
   - Reuse: SKILL.md:174-175 sharpness_score; threshold tuned per angle
 - [ ] explainability/gradcam.py targeting blocks[-1].norm1
   - Reuse: SKILL.md:81-82; smoke-test on real checkpoint
-- [ ] inference/predict.py orchestration (quality→rejection→model→aggregate→calibrate→clamp→ceiling→gradcam)
+- [X] inference/predict.py orchestration (quality→rejection→model→aggregate→calibrate→clamp→ceiling→gradcam→reference intelligence)
   - Reuse: core.aggregate_angles, core.clip_confidence, core.apply_grade4_ceiling
 
 Phase 5: Evaluation + release (depends on Phase 4)
@@ -856,7 +856,7 @@ Phase 5
 | `07b-calibration` [DONE] | Phase 3 | sonnet | sdd:developer | `06-backbone-heads` | `07a-rejection` | `.specs/sub-tasks/train-watch-authenticity-model.feature/07b-calibration.md` |
 | `08a-quality-gate` [DONE] | Phase 4 | sonnet | sdd:developer | `03-core-rules` | `08b-gradcam` | `.specs/sub-tasks/train-watch-authenticity-model.feature/08a-quality-gate.md` |
 | `08b-gradcam` [DONE] | Phase 4 | sonnet | sdd:developer | `06-backbone-heads` | `08a-quality-gate` | `.specs/sub-tasks/train-watch-authenticity-model.feature/08b-gradcam.md` |
-| `09-inference-predict` | Phase 4 | sonnet | sdd:developer | `06-backbone-heads`, `07a-rejection`, `07b-calibration`, `08a-quality-gate`, `08b-gradcam` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/09-inference-predict.md` |
+| `09-inference-predict` [DONE] | Phase 4 | sonnet | sdd:developer | `06-backbone-heads`, `07a-rejection`, `07b-calibration`, `08a-quality-gate`, `08b-gradcam` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/09-inference-predict.md` |
 | `10-evaluate` | Phase 5 | sonnet | sdd:developer | `09-inference-predict` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/10-evaluate.md` |
 | `11-release-gate` | Phase 5 | sonnet | sdd:developer | `10-evaluate` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/11-release-gate.md` |
 | `12-publish-weights` | Phase 5 | sonnet | sdd:developer | `11-release-gate` | None | `.specs/sub-tasks/train-watch-authenticity-model.feature/12-publish-weights.md` |
@@ -876,7 +876,7 @@ Steps: `01-project-scaffolding`, `02-core-types`, `03-core-rules`
 Reviewer model: `opus`
 Acceptance Criteria that should be fulfiled:
 Checklist items:
-- `CK-1` — Does every reported confidence fall strictly within (0.1%, 99.9%)? (`clip_confidence` defined + tested)
+- `CK-1` — Does every reported confidence fall within [0.1%, 99.9%], never 0% or 100%? (`clip_confidence` defined + tested)
 - `CK-3` — Is genuine-confidence capped at ~60% for grade-4-consistent output? (`apply_grade4_ceiling` defined + tested)
 - `CK-8` — Is there a rule that blocks publish on cross-source degradation? (`publish_gate` predicate)
 - `CK-12` — Does the gold-set regression gate block publishing a regressed version? (`goldset_regression_gate` predicate)
@@ -935,7 +935,7 @@ Steps: `08a-quality-gate`, `08b-gradcam`, `09-inference-predict`
 Reviewer model: `opus`
 Acceptance Criteria that should be fulfiled:
 Checklist items:
-- `CK-1` — Does every reported confidence fall strictly within (0.1%, 99.9%) at runtime?
+- `CK-1` — Does every reported confidence fall within [0.1%, 99.9%], never 0% or 100%, at runtime?
 - `CK-2` — Does every fake-classified prediction report an associated grade (1-4)?
 - `CK-3` — Is genuine-confidence capped at the ceiling for grade-4-consistent output?
 - `CK-4` — Does OOD input (wrong watch / no watch) return a rejection, not a score?

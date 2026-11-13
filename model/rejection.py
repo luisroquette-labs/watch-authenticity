@@ -63,7 +63,13 @@ def classify(
     genuine/fake score.
     """
     predict_fn = predict if predict is not None else cast(AnglePredictor, build_model())
-    logits_per_angle = predict_fn(pixel_values_per_angle)
+    return classify_logits(predict_fn(pixel_values_per_angle))
+
+
+def classify_logits(logits_per_angle: dict[str, torch.Tensor]) -> Rejection | None:
+    """Apply the OOD decision to logits already produced by inference."""
+    if not logits_per_angle:
+        raise ValueError("classify_logits requires at least one angle")
 
     rejected_angles = [_predicted_class(logits) == REJECTION_CLASS_INDEX for logits in logits_per_angle.values()]
 
