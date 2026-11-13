@@ -143,6 +143,19 @@
     "evidence_sha256": "7aa423979b4daf83e0e7921e7c21e0fa04342d7e5709a34dcd6aa4fda198bb99"
   },
   {
+    "access_record_id": "access-vsfwatcheshub-sitemap-20261113",
+    "source": "vsfwatcheshub",
+    "acquisition_method": "public-sitemap-product-page",
+    "status": "active",
+    "evidence_url": "https://vsfwatcheshub.com/robots.txt",
+    "verified_at": "2026-11-13T12:00:00Z",
+    "expires_at": "2027-11-13T12:00:00Z",
+    "allowed_image_hosts": ["vsfwatcheshub.com"],
+    "requests_per_minute": 6,
+    "reason": "robots.txt allows public crawling and advertises the sitemap; the owner authorized private image archiving, while training remains blocked",
+    "evidence_sha256": "1cba144484ac683990691c1f5180fa75f6794fcb5b882ac9fa35a7785a6cdaa6"
+  },
+  {
     "access_record_id": "access-richfactoryus-sitemap-20261112",
     "source": "richfactoryus",
     "acquisition_method": "public-sitemap",
