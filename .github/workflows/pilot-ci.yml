@@ -10,6 +10,7 @@ on:
       - "reference_intelligence/**"
       - "tests/test_online_assessor.py"
       - "tests/test_pilot_server.py"
+      - "tests/test_predict.py"
       - "tests/test_reference_intelligence.py"
 
 permissions:
@@ -37,6 +38,6 @@ jobs:
           python -m pip install -r requirements.txt
       - name: Verify online pilot
         run: |
-          python -m ruff check pilot reference_intelligence tests/test_online_assessor.py tests/test_pilot_server.py tests/test_reference_intelligence.py
-          python -m mypy pilot reference_intelligence tests/test_online_assessor.py tests/test_pilot_server.py tests/test_reference_intelligence.py --config-file pyproject.toml
-          python -m pytest tests/test_online_assessor.py tests/test_pilot_server.py tests/test_reference_intelligence.py
+          python -m ruff check pilot reference_intelligence tests/test_online_assessor.py tests/test_pilot_server.py tests/test_predict.py tests/test_reference_intelligence.py
+          python -m mypy pilot reference_intelligence tests/test_online_assessor.py tests/test_pilot_server.py tests/test_predict.py tests/test_reference_intelligence.py --config-file pyproject.toml
+          python -m pytest tests/test_online_assessor.py tests/test_pilot_server.py tests/test_predict.py tests/test_reference_intelligence.py
