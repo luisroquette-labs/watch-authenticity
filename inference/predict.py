@@ -64,7 +64,7 @@ def predict(
     heatmap_fn: HeatmapFn | None = None,
 ) -> InferenceResult | Rejection:
     """Return a cited result or short-circuit before authenticity scoring."""
-    _validate_inputs(images_per_angle, pixel_values_per_angle, temperature)
+    _validate_inputs(images_per_angle, pixel_values_per_angle, observations, temperature)
     for angle, image in images_per_angle.items():
         quality = quality_gate(image, angle=angle)
         if isinstance(quality, Rejection):
@@ -117,12 +117,16 @@ def predict(
 def _validate_inputs(
     images_per_angle: Mapping[str, Any],
     pixel_values_per_angle: Mapping[str, torch.Tensor],
+    observations: tuple[VisualObservation, ...],
     temperature: float,
 ) -> None:
     if not images_per_angle or set(images_per_angle) != set(pixel_values_per_angle):
         raise ValueError("images and tensors must contain the same non-empty angles")
     if not set(images_per_angle).issubset(GUIDED_ANGLES):
         raise ValueError("input contains an unsupported guided angle")
+    submitted_angles = {Angle(angle) for angle in images_per_angle}
+    if any(observation.angle not in submitted_angles for observation in observations):
+        raise ValueError("visual observations must belong to a submitted image angle")
     if not isinstance(temperature, (int, float)) or not math.isfinite(temperature) or temperature <= 0:
         raise ValueError("temperature must be positive")
     for tensor in pixel_values_per_angle.values():
@@ -149,11 +153,11 @@ def _validate_logits(logits_per_angle: Mapping[str, torch.Tensor]) -> None:
 def _conclusion(
     prediction: Prediction, reference: ReferenceAssessment
 ) -> InferenceConclusion:
+    if not prediction.genuine:
+        return InferenceConclusion.FAKE_LIKELY
     if reference.status is not AssessmentStatus.CONSISTENT:
         return InferenceConclusion.INCONCLUSIVE
-    if prediction.genuine:
-        return InferenceConclusion.NO_VISIBLE_INCONSISTENCY
-    return InferenceConclusion.FAKE_LIKELY
+    return InferenceConclusion.NO_VISIBLE_INCONSISTENCY
 
 
 def _next_angle(reference: ReferenceAssessment) -> Angle | None:

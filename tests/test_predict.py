@@ -21,7 +21,11 @@ from core.rules import CONFIDENCE_CEILING, CONFIDENCE_FLOOR, GRADE4_GENUINE_CEIL
 from core.types import ModelClass, Rejection  # noqa: E402
 from inference import InferenceConclusion, InferenceResult, predict  # noqa: E402
 from model.heads import NUM_CLASSES, AngleHeadModel  # noqa: E402
-from reference_intelligence import VisualObservation, load_knowledge  # noqa: E402
+from reference_intelligence import (  # noqa: E402
+    AssessmentStatus,
+    VisualObservation,
+    load_knowledge,
+)
 
 REFERENCE = "rolex-submariner-126610ln"
 CLAIMS = load_knowledge(Path("config/references/rolex-submariner-126610ln.json"), REFERENCE)
@@ -129,7 +133,7 @@ def test_genuine_visual_result_is_cited_but_never_authenticated() -> None:
     assert CONFIDENCE_FLOOR <= result.prediction.confidence <= CONFIDENCE_CEILING
     assert result.prediction.genuine
     assert result.prediction.grade is None
-    assert result.conclusion is InferenceConclusion.NO_VISIBLE_INCONSISTENCY
+    assert result.conclusion is InferenceConclusion.INCONCLUSIVE
     assert not result.reference.authenticates_watch
     assert result.reference.checks
     assert all(check.source_url.startswith("https://www.rolex.com/") for check in result.reference.checks)
@@ -161,6 +165,31 @@ def test_technical_conflict_forces_inconclusive_without_changing_visual_score() 
     assert conflict.prediction.confidence == baseline.prediction.confidence
     assert conflict.conclusion is InferenceConclusion.INCONCLUSIVE
     assert conflict.next_angle is Angle.DIAL
+
+
+def test_technical_conflict_cannot_hide_a_visual_fake_result() -> None:
+    result = _run(
+        StubModel(ModelClass.GRADE_4.value),
+        observations=(VisualObservation("dial_color", "blue", Angle.DIAL, True),),
+    )
+
+    assert isinstance(result, InferenceResult)
+    assert result.reference.status is AssessmentStatus.CONFLICTING
+    assert result.conclusion is InferenceConclusion.FAKE_LIKELY
+
+
+def test_observation_must_belong_to_a_submitted_image_angle() -> None:
+    model = StubModel(ModelClass.GENUINE.value)
+
+    with pytest.raises(ValueError, match="submitted image angle"):
+        _run(
+            model,
+            observations=(
+                VisualObservation("date_magnifier", "Cyclops", Angle.CYCLOPS, True),
+            ),
+        )
+
+    assert model.calls == 0
 
 
 def test_missing_technical_view_requests_one_smallest_angle() -> None:

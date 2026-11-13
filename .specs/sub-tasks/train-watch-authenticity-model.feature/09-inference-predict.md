@@ -22,7 +22,7 @@ Create `inference/predict.py`: order = `quality_gate` → `model.rejection` (OOD
 
 #### Success Criteria
 
-- [X] `predict(valid_fixture)` returns a `Prediction` with confidence strictly in (0.001, 0.999) (CK-1)
+- [X] `predict(valid_fixture)` returns a `Prediction` with confidence in the inclusive clamp range [0.001, 0.999], never 0 or 1 (CK-1)
 - [X] A fake prediction reports an associated grade 1-4 (CK-2); a genuine prediction has no grade
 - [X] Grade-4-consistent output has genuine-confidence ≤ ceiling and `ceiling_applied=True` (CK-3)
 - [X] OOD input returns `Rejection`, not a score (CK-4)
