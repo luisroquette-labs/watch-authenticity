@@ -132,7 +132,7 @@ def parse_assessment(text: str, claims: Sequence[TechnicalClaim]) -> OnlineAsses
     if present != "yes":
         verdict = "inconclusivo"
     elif parsed_conflicts:
-        verdict = "provavel_replica"
+        verdict = "inconsistencia_com_referencia"
     elif official and visible and set(visible) == official:
         verdict = "sem_inconsistencia_visivel"
     else:

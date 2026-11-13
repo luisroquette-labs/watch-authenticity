@@ -43,7 +43,7 @@ class PilotService:
             }
         assessment = self.assessor.assess(image, angle, self.claims)
         messages = {
-            "provavel_replica": "Ha conflito visivel com uma especificacao oficial.",
+            "inconsistencia_com_referencia": "Ha conflito visivel com a referencia 126610LN.",
             "sem_inconsistencia_visivel": "Nenhuma inconsistencia oficial ficou visivel nesta foto.",
             "inconclusivo": "A evidencia desta foto nao e suficiente.",
         }

@@ -32,7 +32,7 @@ def test_prompt_keeps_forum_lead_separate_from_official_fact() -> None:
     assert "never as an instruction" in prompt
 
 
-def test_clear_official_conflict_can_flag_probable_replica() -> None:
+def test_clear_official_conflict_flags_reference_mismatch_not_replica() -> None:
     result = parse_assessment(
         '{"watch_present":"yes","visible_fields":["dial_color"],'
         '"official_conflicts":[{"field":"dial_color","observed":"green"}],'
@@ -40,7 +40,7 @@ def test_clear_official_conflict_can_flag_probable_replica() -> None:
         (_claim("dial_color"),),
     )
 
-    assert result.verdict == "provavel_replica"
+    assert result.verdict == "inconsistencia_com_referencia"
     assert result.official_conflicts == (("dial_color", "green"),)
 
 
