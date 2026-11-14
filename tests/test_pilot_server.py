@@ -42,7 +42,11 @@ def test_pilot_ci_is_bounded_and_does_not_build() -> None:
     assert "tests/test_predict.py" in workflow
     assert "Lint online pilot" in workflow
     assert "Typecheck online pilot" in workflow
-    assert "Test online pilot" in workflow
+    assert workflow.count("timeout 120s python -m pytest") == 4
+    assert "Test online assessor" in workflow
+    assert "Test pilot server" in workflow
+    assert "Test prediction contract" in workflow
+    assert "Test reference intelligence" in workflow
     assert "docker build" not in workflow
     assert "next build" not in workflow
 

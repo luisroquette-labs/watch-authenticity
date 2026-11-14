@@ -40,5 +40,11 @@ jobs:
         run: python -m ruff check pilot reference_intelligence tests/test_online_assessor.py tests/test_pilot_server.py tests/test_predict.py tests/test_reference_intelligence.py
       - name: Typecheck online pilot
         run: python -m mypy pilot reference_intelligence tests/test_online_assessor.py tests/test_pilot_server.py tests/test_predict.py tests/test_reference_intelligence.py --config-file pyproject.toml
-      - name: Test online pilot
-        run: python -m pytest tests/test_online_assessor.py tests/test_pilot_server.py tests/test_predict.py tests/test_reference_intelligence.py
+      - name: Test online assessor
+        run: timeout 120s python -m pytest tests/test_online_assessor.py
+      - name: Test pilot server
+        run: timeout 120s python -m pytest tests/test_pilot_server.py
+      - name: Test prediction contract
+        run: timeout 120s python -m pytest tests/test_predict.py
+      - name: Test reference intelligence
+        run: timeout 120s python -m pytest tests/test_reference_intelligence.py
