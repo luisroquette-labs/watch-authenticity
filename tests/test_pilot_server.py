@@ -53,6 +53,7 @@ def test_pilot_ci_is_bounded_and_does_not_build() -> None:
     assert '"pilot/**"' in workflow
     assert '"reference_intelligence/**"' in workflow
     assert "timeout-minutes: 10" in workflow
+    assert "group: pilot-bounded-${{ github.event.pull_request.number }}" in workflow
     assert "tests/test_online_assessor.py" in workflow
     assert "tests/test_predict.py" in workflow
     assert "Lint online pilot" in workflow
