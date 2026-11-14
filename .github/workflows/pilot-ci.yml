@@ -36,8 +36,9 @@ jobs:
         run: |
           python -m pip install torch==2.10.0 torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cpu
           python -m pip install -r requirements.txt
-      - name: Verify online pilot
-        run: |
-          python -m ruff check pilot reference_intelligence tests/test_online_assessor.py tests/test_pilot_server.py tests/test_predict.py tests/test_reference_intelligence.py
-          python -m mypy pilot reference_intelligence tests/test_online_assessor.py tests/test_pilot_server.py tests/test_predict.py tests/test_reference_intelligence.py --config-file pyproject.toml
-          python -m pytest tests/test_online_assessor.py tests/test_pilot_server.py tests/test_predict.py tests/test_reference_intelligence.py
+      - name: Lint online pilot
+        run: python -m ruff check pilot reference_intelligence tests/test_online_assessor.py tests/test_pilot_server.py tests/test_predict.py tests/test_reference_intelligence.py
+      - name: Typecheck online pilot
+        run: python -m mypy pilot reference_intelligence tests/test_online_assessor.py tests/test_pilot_server.py tests/test_predict.py tests/test_reference_intelligence.py --config-file pyproject.toml
+      - name: Test online pilot
+        run: python -m pytest tests/test_online_assessor.py tests/test_pilot_server.py tests/test_predict.py tests/test_reference_intelligence.py

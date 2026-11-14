@@ -40,6 +40,9 @@ def test_pilot_ci_is_bounded_and_does_not_build() -> None:
     assert "timeout-minutes: 10" in workflow
     assert "tests/test_online_assessor.py" in workflow
     assert "tests/test_predict.py" in workflow
+    assert "Lint online pilot" in workflow
+    assert "Typecheck online pilot" in workflow
+    assert "Test online pilot" in workflow
     assert "docker build" not in workflow
     assert "next build" not in workflow
 
