@@ -64,6 +64,33 @@
       "citation": "More Submariner technical details > Model case > Water resistance",
       "observed_at": "2026-11-12",
       "applicable_angles": []
+    },
+    {
+      "field": "rehaut_alignment_lead",
+      "value": "ROLEX letters align with the minute markers",
+      "source_class": "forum",
+      "source_url": "https://rolexforums.com/showthread.php?p=13966018",
+      "citation": "Forum authenticity discussion; lead only, not authoritative",
+      "observed_at": "2026-11-13",
+      "applicable_angles": ["rehaut"]
+    },
+    {
+      "field": "replica_serial_pattern_lead",
+      "value": "Replica factories may reuse identifiable serial and clasp-code patterns",
+      "source_class": "forum",
+      "source_url": "https://www.reddit.com/r/RepTime/comments/1klxluq/the_ultimate_rolex_serial_number_and_clasp_code/",
+      "citation": "Replica-community serial and clasp-code guide; lead only",
+      "observed_at": "2026-11-13",
+      "applicable_angles": ["rehaut", "clasp"]
+    },
+    {
+      "field": "replica_qc_scope_lead",
+      "value": "Replica QC checks dial printing, rehaut, bezel, SELs and clasp engraving",
+      "source_class": "forum",
+      "source_url": "https://www.reddit.com/r/RepTimeQC/comments/1w6na7z/vsf_rolex_submariner_date_126610ln_vs3235/",
+      "citation": "VSF 126610LN community QC example; lead only",
+      "observed_at": "2026-11-13",
+      "applicable_angles": ["dial", "rehaut", "clasp"]
     }
   ]
 }

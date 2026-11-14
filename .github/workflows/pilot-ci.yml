@@ -1,0 +1,50 @@
+name: Online Pilot CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/pilot-ci.yml"
+      - "config/references/**"
+      - "pilot/**"
+      - "reference_intelligence/**"
+      - "tests/test_online_assessor.py"
+      - "tests/test_pilot_server.py"
+      - "tests/test_predict.py"
+      - "tests/test_reference_intelligence.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pilot-bounded-v3-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verificacao:
+    name: verificacao
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install torch==2.10.0 torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt
+      - name: Lint online pilot
+        run: python -m ruff check pilot reference_intelligence tests/test_online_assessor.py tests/test_pilot_server.py tests/test_predict.py tests/test_reference_intelligence.py
+      - name: Typecheck online pilot
+        run: python -m mypy pilot reference_intelligence tests/test_online_assessor.py tests/test_pilot_server.py tests/test_predict.py tests/test_reference_intelligence.py --config-file pyproject.toml
+      - name: Test online assessor
+        run: timeout 120s python -m pytest tests/test_online_assessor.py
+      - name: Test pilot server
+        run: timeout 120s python -m pytest tests/test_pilot_server.py
+      - name: Test prediction contract
+        run: timeout 120s python -m pytest tests/test_predict.py
+      - name: Test reference intelligence
+        run: timeout 120s python -m pytest tests/test_reference_intelligence.py
