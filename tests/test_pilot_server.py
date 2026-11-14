@@ -54,7 +54,7 @@ def test_pilot_ci_is_bounded_and_does_not_build() -> None:
     assert '"pilot/**"' in workflow
     assert '"reference_intelligence/**"' in workflow
     assert "timeout-minutes: 10" in workflow
-    assert "group: pilot-bounded-v2-${{ github.event.pull_request.number }}" in workflow
+    assert "group: pilot-bounded-v3-${{ github.event.pull_request.number }}" in workflow
     assert "tests/test_online_assessor.py" in workflow
     assert "tests/test_predict.py" in workflow
     assert "Lint online pilot" in workflow
@@ -77,6 +77,7 @@ def test_pilot_ci_is_bounded_and_does_not_build() -> None:
         (_jpeg((100, 100)), "image/jpeg", "pequena"),
         (b"x" * (MAX_UPLOAD_BYTES + 1), "image/jpeg", "maior"),
     ],
+    ids=["empty", "invalid-bytes", "unsupported-type", "too-small", "oversized"],
 )
 def test_decode_image_rejects_unsafe_input(body: bytes, content_type: str, message: str) -> None:
     with pytest.raises(ValueError, match=message):
