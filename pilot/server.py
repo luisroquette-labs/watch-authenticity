@@ -12,7 +12,6 @@ from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image, UnidentifiedImageError
 
-from quality_gate.blur_light_check import Pass, quality_gate
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import TechnicalClaim
 
@@ -29,6 +28,8 @@ class PilotService:
         self.assessor = LocalVisionAssessor(checkpoint)
 
     def predict(self, body: bytes, content_type: str, angle: str) -> dict[str, object]:
+        from quality_gate.blur_light_check import Pass, quality_gate
+
         image = decode_image(body, content_type)
         if angle not in ANGLES:
             raise ValueError("angulo invalido")

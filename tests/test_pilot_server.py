@@ -28,7 +28,8 @@ def test_importing_server_does_not_load_the_vision_model() -> None:
             sys.executable,
             "-c",
             "import sys; import pilot.server; "
-            "assert 'pilot.online_assessor' not in sys.modules",
+            "assert 'pilot.online_assessor' not in sys.modules; "
+            "assert 'quality_gate.blur_light_check' not in sys.modules",
         ],
         check=True,
         timeout=10,
