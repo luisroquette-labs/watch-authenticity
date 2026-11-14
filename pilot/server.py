@@ -12,7 +12,6 @@ from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image, UnidentifiedImageError
 
-from pilot.online_assessor import LocalVisionAssessor
 from quality_gate.blur_light_check import Pass, quality_gate
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import TechnicalClaim
@@ -24,6 +23,8 @@ _HTML = """<!doctype html><html lang=\"pt-BR\"><meta charset=\"utf-8\"><meta nam
 
 class PilotService:
     def __init__(self, checkpoint: Path, knowledge_path: Path) -> None:
+        from pilot.online_assessor import LocalVisionAssessor
+
         self.claims = load_knowledge(knowledge_path, "rolex-submariner-126610ln")
         self.assessor = LocalVisionAssessor(checkpoint)
 

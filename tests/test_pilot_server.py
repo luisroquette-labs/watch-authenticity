@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,19 @@ def _jpeg(size: tuple[int, int] = (300, 300)) -> bytes:
 
 def test_decode_image_accepts_bounded_jpeg() -> None:
     assert decode_image(_jpeg(), "image/jpeg").size == (300, 300)
+
+
+def test_importing_server_does_not_load_the_vision_model() -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import pilot.server; "
+            "assert 'pilot.online_assessor' not in sys.modules",
+        ],
+        check=True,
+        timeout=10,
+    )
 
 
 def test_online_checks_keep_official_facts_and_forum_leads_distinct() -> None:
