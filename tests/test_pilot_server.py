@@ -46,6 +46,13 @@ def test_decode_image_rejects_mime_mismatch() -> None:
         decode_image(output.getvalue(), "image/jpeg")
 
 
+def test_decode_image_rejects_decompression_bomb(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1)
+
+    with pytest.raises(ValueError, match="dimensoes excessivas"):
+        decode_image(_jpeg(), "image/jpeg")
+
+
 def test_importing_server_does_not_load_the_vision_model() -> None:
     subprocess.run(
         [

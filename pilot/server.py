@@ -109,6 +109,8 @@ def decode_image(body: bytes, content_type: str) -> Image.Image:
             if opened.width < 224 or opened.height < 224 or opened.width * opened.height > 25_000_000:
                 raise ValueError("imagem pequena demais ou com dimensoes excessivas")
             return opened.convert("RGB")
+    except Image.DecompressionBombError as exc:
+        raise ValueError("imagem com dimensoes excessivas") from exc
     except (UnidentifiedImageError, OSError) as exc:
         raise ValueError("arquivo de imagem invalido") from exc
 
