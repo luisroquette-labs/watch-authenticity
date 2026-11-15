@@ -238,6 +238,8 @@ def test_individual_endpoint_remains_compatible() -> None:
 def test_html_supports_six_files_per_image_angles_and_recovers_after_error() -> None:
     html = _HTML.decode("utf-8")
 
+    assert "j.joint.message+'\\nÂngulos ausentes: '" in html
+    assert "j.joint.message+'\nÂngulos ausentes: '" not in html
     assert 'multiple' in html
     assert 'Máximo de 6 imagens' in html
     assert 'fetch("/predict/batch"' in html
