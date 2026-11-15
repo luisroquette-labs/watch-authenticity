@@ -80,26 +80,17 @@ def test_online_checks_keep_official_facts_and_forum_leads_distinct() -> None:
 
 
 def test_pilot_ci_is_bounded_and_does_not_build() -> None:
-    workflow = Path(".github/workflows/pilot-ci.yml").read_text(encoding="utf-8")
     preflight = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert '"pilot/**"' in preflight
-    assert '"tests/test_pilot_server.py"' in preflight
-
-    assert '"pilot/**"' in workflow
-    assert '"reference_intelligence/**"' in workflow
-    assert "timeout-minutes: 10" in workflow
-    assert "group: pilot-bounded-v3-${{ github.event.pull_request.number }}" in workflow
-    assert "tests/test_online_assessor.py" in workflow
-    assert "tests/test_predict.py" in workflow
-    assert "Lint online pilot" in workflow
-    assert "Typecheck online pilot" in workflow
-    assert workflow.count("timeout 120s python -m pytest") == 4
-    assert "Test online assessor" in workflow
-    assert "Test pilot server" in workflow
-    assert "Test prediction contract" in workflow
-    assert "Test reference intelligence" in workflow
-    assert "docker build" not in workflow
-    assert "next build" not in workflow
+    assert not Path(".github/workflows/pilot-ci.yml").exists()
+    for path in (
+        "pilot/**", "reference_intelligence/**", "config/references/**",
+        "tests/test_online_assessor.py", "tests/test_pilot_server.py",
+        "tests/test_predict.py", "tests/test_reference_intelligence.py",
+    ):
+        assert f'"{path}"' in preflight
+    assert "timeout-minutes: 10" in preflight
+    assert "bash scripts/preflight-ci.sh" in preflight
+    assert "next build" not in preflight
 
 
 @pytest.mark.parametrize(
