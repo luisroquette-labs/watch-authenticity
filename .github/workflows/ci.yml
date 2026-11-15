@@ -6,6 +6,13 @@ on:
     paths:
       - ".github/workflows/ci.yml"
       - "scripts/preflight-ci.sh"
+      - "pilot/**"
+      - "reference_intelligence/**"
+      - "config/references/**"
+      - "tests/test_pilot_server.py"
+      - "tests/test_online_assessor.py"
+      - "tests/test_predict.py"
+      - "tests/test_reference_intelligence.py"
       - "acquisition/**"
       - "scrapers/**"
       - "config/source_*.json"
