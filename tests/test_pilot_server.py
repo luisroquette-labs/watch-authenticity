@@ -81,6 +81,9 @@ def test_online_checks_keep_official_facts_and_forum_leads_distinct() -> None:
 
 def test_pilot_ci_is_bounded_and_does_not_build() -> None:
     workflow = Path(".github/workflows/pilot-ci.yml").read_text(encoding="utf-8")
+    preflight = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert '"pilot/**"' in preflight
+    assert '"tests/test_pilot_server.py"' in preflight
 
     assert '"pilot/**"' in workflow
     assert '"reference_intelligence/**"' in workflow
