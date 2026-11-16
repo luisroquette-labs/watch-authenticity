@@ -9,6 +9,7 @@ import math
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 import torch
@@ -427,16 +428,41 @@ def test_wave_runner_trains_only_when_entity_set_grows(training_fixture, monkeyp
     cos, spec, _manifest, _splits, _images = training_fixture
     bundle = load_training_data(cos, spec)
     train_ids = tuple(bundle.splits["train"])
+    original = next(record for record in bundle.records if record.asset_id in train_ids)
+    additions = tuple(
+        replace(original, asset_id=f"new-watch-{index}", subject_id=f"new-watch-{index}")
+        for index in (1, 2)
+    )
+    splits = dict(bundle.splits)
+    splits["train"] = train_ids + tuple(record.asset_id for record in additions)
+    bundle = replace(
+        bundle,
+        records=bundle.records + additions,
+        splits=MappingProxyType(splits),
+        split_by_asset=MappingProxyType({
+            **bundle.split_by_asset,
+            **{record.asset_id: "train" for record in additions},
+        }),
+    )
     monkeypatch.setattr(
         training_run,
         "entity_wave_asset_ids",
-        lambda _bundle: {0.25: train_ids[:1], 0.5: train_ids[:2]},
+        lambda _bundle: {
+            0.25: train_ids,
+            0.5: train_ids + (additions[0].asset_id,),
+            0.75: splits["train"],
+        },
     )
-    monkeypatch.setattr(training_run, "training_wave_bundle", lambda _bundle, _ids: bundle)
+    called: list[str] = []
+
+    def fake_run(_bundle, _spec, output_dir):
+        called.append(output_dir.name)
+        return RunResult(1, 1, {"wave-025": 0.4, "wave-050": 0.6}[output_dir.name], {})
+
     monkeypatch.setattr(
         training_run,
         "run_training",
-        lambda _bundle, _spec, output_dir: RunResult(1, 1, 0.4 if output_dir.name == "wave-025" else 0.6, {}),
+        fake_run,
     )
 
     results = run_training_waves(bundle, spec, tmp_path)
@@ -444,6 +470,7 @@ def test_wave_runner_trains_only_when_entity_set_grows(training_fixture, monkeyp
     assert len(results) == 2
     assert results[1].entity_count > results[0].entity_count
     assert results[1].result.best_validation_nll > results[0].result.best_validation_nll
+    assert called == ["wave-025", "wave-050"]
 
 
 @pytest.mark.parametrize("failure", ["placeholder", "single-source", "missing", "bad-metadata"])

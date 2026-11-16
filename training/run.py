@@ -624,4 +624,8 @@ def run_training_waves(
         )
         entity_count = len(entity_sets[fraction])
         results.append(WaveRunResult(fraction, entity_count, result))
+        if len(results) > 1 and result.best_validation_nll >= min(
+            prior.result.best_validation_nll for prior in results[:-1]
+        ):
+            break
     return tuple(results)

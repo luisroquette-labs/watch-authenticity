@@ -41,8 +41,8 @@ def load_training_data(cos: Any, spec: RunSpec) -> Any:
     return implementation(cos, spec)
 
 
-def run_training(bundle: Any, spec: RunSpec, output_dir: Path) -> Any:
-    from training.run import run_training as implementation
+def run_training_waves(bundle: Any, spec: RunSpec, output_dir: Path) -> Any:
+    from training.run import run_training_waves as implementation
 
     return implementation(bundle, spec, output_dir)
 
@@ -132,9 +132,12 @@ def execute_worker(cos: Any | None = None) -> None:
         bundle = load_training_data(cos, spec)
         with tempfile.TemporaryDirectory(prefix="watch-auth-training-") as directory:
             output_dir = Path(directory)
-            result = run_training(bundle, spec, output_dir)
-            artifacts = dict(result.artifacts)
-            result_path = output_dir / "run-result.json"
+            waves = run_training_waves(bundle, spec, output_dir)
+            if not waves:
+                raise RuntimeError("training produced no independent entity wave")
+            selected = min(waves, key=lambda wave: wave.result.best_validation_nll)
+            artifacts = dict(selected.result.artifacts)
+            result_path = output_dir / f"wave-{round(selected.fraction * 100):03d}" / "run-result.json"
             artifacts[result_path] = hashlib.sha256(result_path.read_bytes()).hexdigest()
             published: list[dict[str, object]] = []
             for path, digest in sorted(artifacts.items(), key=lambda item: item[0].name):

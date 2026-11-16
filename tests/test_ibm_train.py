@@ -39,6 +39,7 @@ from infra.ibm_types import (
 from tests.conftest import NOW, valid_run_spec
 from tests.test_ibm_canary import INSTANCE_ID, canary_clients, observation_bytes
 from tests.test_ibm_cos import FakeCOS
+from training.run import RunResult, WaveRunResult
 
 
 def _spec():
@@ -784,7 +785,7 @@ def test_worker_persists_failure_receipt_when_training_fails(monkeypatch):
     monkeypatch.setattr(worker, "load_training_data", lambda *args: object())
     monkeypatch.setattr(
         worker,
-        "run_training",
+        "run_training_waves",
         lambda *args: (_ for _ in ()).throw(RuntimeError("training failed")),
     )
     monkeypatch.setattr(
@@ -800,6 +801,46 @@ def test_worker_persists_failure_receipt_when_training_fails(monkeypatch):
     assert b'"status":"failed"' in receipts[0]
     assert b'"error_type":"RuntimeError"' in receipts[0]
     assert b"training failed" not in receipts[0]
+
+
+def test_worker_publishes_best_wave_candidate_only(monkeypatch):
+    spec = _spec()
+    uploads: list[tuple[str, str]] = []
+    receipts: list[bytes] = []
+    monkeypatch.setattr(worker, "_environment", lambda: {})
+    monkeypatch.setattr(worker, "_load_spec", lambda *_args: spec)
+    monkeypatch.setattr(worker, "verify_cos_configuration", lambda *_args: None)
+    monkeypatch.setattr(worker, "_require_gpu", lambda: None)
+    monkeypatch.setattr(worker, "load_training_data", lambda *_args: object())
+
+    def fake_waves(_bundle, _spec, output_dir):
+        results = []
+        for fraction, loss in ((0.25, 0.4), (0.5, 0.6)):
+            directory = output_dir / f"wave-{round(fraction * 100):03d}"
+            directory.mkdir()
+            artifacts = {}
+            for name in ("checkpoint.pt", "class-map.json", "metrics.json"):
+                path = directory / name
+                path.write_bytes(f"{fraction}:{name}".encode())
+                artifacts[path] = hashlib.sha256(path.read_bytes()).hexdigest()
+            (directory / "run-result.json").write_bytes(f"{fraction}:result".encode())
+            results.append(WaveRunResult(fraction, round(fraction * 100), RunResult(1, 1, loss, artifacts)))
+        return tuple(results)
+
+    def fake_upload(_cos, path, _bucket, key, digest):
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+        uploads.append((path.parent.name, path.name))
+        return SimpleNamespace(key=key, length=path.stat().st_size, sha256=digest)
+
+    monkeypatch.setattr(worker, "run_training_waves", fake_waves)
+    monkeypatch.setattr(worker, "upload_verified", fake_upload)
+    monkeypatch.setattr(worker, "_put_immutable", lambda _cos, _spec, _key, body: receipts.append(body))
+
+    worker.execute_worker(cos=object())
+
+    assert len(uploads) == 4
+    assert {directory for directory, _name in uploads} == {"wave-025"}
+    assert json.loads(receipts[0])["status"] == "succeeded"
 
 
 @pytest.mark.parametrize("failure", ["missing-context", "receipt-write"])
