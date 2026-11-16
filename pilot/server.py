@@ -8,6 +8,7 @@ import binascii
 import hashlib
 import io
 import json
+from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -44,6 +45,13 @@ class PredictService(Protocol):
     def predict(self, body: bytes, content_type: str, angle: str) -> dict[str, object]: ...
 
 
+@dataclass(frozen=True)
+class _VisualInspection:
+    status: str
+    dial_color: str = "uncertain"
+    bezel_color: str = "uncertain"
+
+
 class PilotService:
     def __init__(self, checkpoint: Path, knowledge_path: Path) -> None:
         from pilot.online_assessor import LocalVisionAssessor
@@ -57,9 +65,25 @@ class PilotService:
         image = decode_image(body, content_type)
         if angle not in ANGLES:
             raise ValueError("angulo invalido")
-        checks = checks_for_angle(self.claims, angle)
+        return self.render(self.inspect(image), angle)
+
+    def inspect(self, image: Image.Image) -> _VisualInspection:
         region = self.locator.locate(image)
         if region is None or region.face is None:
+            return _VisualInspection("no_face")
+        from quality_gate.blur_light_check import Pass, quality_gate
+
+        if not isinstance(quality_gate(region.face, angle="dial"), Pass):
+            return _VisualInspection("blurry")
+        return _VisualInspection(
+            "inspected", self.assessor.dial_color(region.face), bezel_color_hint(region.face)
+        )
+
+    def render(self, visual: _VisualInspection, angle: str) -> dict[str, object]:
+        if angle not in ANGLES:
+            raise ValueError("angulo invalido")
+        checks = checks_for_angle(self.claims, angle)
+        if visual.status == "no_face":
             return {
                 "verdict": "inconclusivo",
                 "replica_probability": None,
@@ -68,9 +92,7 @@ class PilotService:
                 "model_invoked": False,
                 "online_checks": checks,
             }
-        from quality_gate.blur_light_check import Pass, quality_gate
-
-        if not isinstance(quality_gate(region.face, angle="dial"), Pass):
+        if visual.status == "blurry":
             return {
                 "verdict": "foto_invalida",
                 "replica_probability": None,
@@ -79,8 +101,8 @@ class PilotService:
                 "model_invoked": False,
                 "online_checks": checks,
             }
-        color = self.assessor.dial_color(region.face)
-        bezel_color = bezel_color_hint(region.face)
+        color = visual.dial_color
+        bezel_color = visual.bezel_color
         official_dial = next(
             (claim for claim in self.claims if claim.field == "dial_color" and claim.source_class.authoritative),
             None,
@@ -178,7 +200,7 @@ def analyze_batch(
     if encoded_total > MAX_BATCH_ENCODED_BYTES:
         raise ValueError("lote codificado excede o limite")
 
-    validated: list[tuple[str, str, bytes, str]] = []
+    encoded_images: list[tuple[str, str, bytes]] = []
     decoded_total = 0
     for item in images:
         angle = item.get("angle")
@@ -199,24 +221,44 @@ def analyze_batch(
         decoded_total += len(body)
         if decoded_total > MAX_BATCH_DECODED_BYTES:
             raise ValueError("lote decodificado excede o limite")
-        validated.append((angle, content_type, body, hashlib.sha256(body).hexdigest()))
+        encoded_images.append((angle, content_type, body))
+
+    validated: list[tuple[str, str, bytes, Image.Image, str]] = []
+    for angle, content_type, body in encoded_images:
+        image = decode_image(body, content_type)
+        digest = hashlib.sha256(
+            f"{image.width}x{image.height}:".encode() + image.tobytes()
+        ).hexdigest()
+        validated.append((angle, content_type, body, image, digest))
 
     results: list[dict[str, Any]] = []
     observed_angles: set[str] = set()
     model_checked_images = 0
     reused_results = 0
     cache: dict[tuple[str, str, str], dict[str, object]] = {}
+    visual_cache: dict[str, _VisualInspection] = {}
     unique_evidence: dict[str, dict[str, Any]] = {}
-    for angle, content_type, body, digest in validated:
-        key = (digest, content_type, angle)
-        if key in cache:
-            result = cache[key]
-            reused_results += 1
+    for angle, content_type, body, image, digest in validated:
+        if isinstance(service, PilotService):
+            if digest in visual_cache:
+                visual = visual_cache[digest]
+                reused_results += 1
+            else:
+                visual = service.inspect(image)
+                visual_cache[digest] = visual
+                if visual.status == "inspected":
+                    model_checked_images += 1
+            result = service.render(visual, angle)
         else:
-            result = service.predict(body, content_type, angle)
-            cache[key] = result
-            if result.get("model_invoked") is True:
-                model_checked_images += 1
+            key = (digest, content_type, angle)
+            if key in cache:
+                result = cache[key]
+                reused_results += 1
+            else:
+                result = service.predict(body, content_type, angle)
+                cache[key] = result
+                if result.get("model_invoked") is True:
+                    model_checked_images += 1
         results.append({"angle": angle, **result})
         if digest not in unique_evidence or (
             not unique_evidence[digest].get("model_invoked") and result.get("model_invoked")

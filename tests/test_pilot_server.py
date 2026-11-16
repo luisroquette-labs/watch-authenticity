@@ -23,6 +23,7 @@ from pilot.server import (
     MAX_BATCH_IMAGES,
     MAX_UPLOAD_BYTES,
     PilotService,
+    _VisualInspection,
     analyze_batch,
     checks_for_angle,
     decode_image,
@@ -37,6 +38,12 @@ from reference_intelligence.knowledge import load_knowledge
 def _jpeg(size: tuple[int, int] = (300, 300)) -> bytes:
     output = io.BytesIO()
     Image.new("RGB", size, "white").save(output, format="JPEG")
+    return output.getvalue()
+
+
+def _jpeg_variant(index: int) -> bytes:
+    output = io.BytesIO()
+    Image.new("RGB", (300, 300), (index, index * 3, index * 5)).save(output, format="JPEG")
     return output.getvalue()
 
 
@@ -274,13 +281,14 @@ def _batch_item(angle: str = "dial", body: bytes | None = None) -> dict[str, str
 
 def test_batch_processes_each_image_sequentially_and_preserves_sources() -> None:
     service = _StubService(["inconclusivo", "sem_inconsistencia_visivel"])
+    first, second = _jpeg_variant(1), _jpeg_variant(2)
 
     result = analyze_batch(
         service,
-        {"images": [_batch_item("dial", b"first"), _batch_item("crown", b"second")]},
+        {"images": [_batch_item("dial", first), _batch_item("crown", second)]},
     )
 
-    assert [call[0] for call in service.calls] == [b"first", b"second"]
+    assert [call[0] for call in service.calls] == [first, second]
     assert [item["angle"] for item in result["results"]] == ["dial", "crown"]
     assert result["results"][0]["online_checks"][0]["url"].endswith("/dial")
     assert result["joint"]["verdict"] == "inconclusivo"
@@ -311,6 +319,31 @@ def test_batch_reuses_identical_photo_and_counts_evidence_once() -> None:
     assert batch["joint"]["reused_results"] == 5
     assert batch["joint"]["model_checked_images"] == 1
     assert batch["joint"]["visible_evidence"]["dial_color"]["supporting_photos"] == 1
+
+
+def test_batch_reuses_visual_inspection_across_angles_and_encodings() -> None:
+    service = PilotService.__new__(PilotService)
+    service.claims = load_knowledge(Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln")
+    calls = []
+
+    def inspect(_image: Image.Image) -> _VisualInspection:
+        calls.append(True)
+        return _VisualInspection("inspected", "green", "green")
+
+    service.inspect = cast(Any, inspect)
+    png = io.BytesIO()
+    Image.new("RGB", (300, 300), "white").save(png, format="PNG")
+    result = analyze_batch(service, {"images": [
+        _batch_item("dial", _jpeg()),
+        {**_batch_item("clasp", png.getvalue()), "content_type": "image/png"},
+    ]})
+    assert len(calls) == 1
+    assert result["joint"]["unique_visual_contents"] == 1
+    assert result["joint"]["reused_results"] == 1
+    assert result["joint"]["model_checked_images"] == 1
+    assert result["results"][1]["angle_mismatch"] is True
+    assert result["results"][1]["detected_angle"] == "dial"
+    assert result["results"][1]["online_checks"] == result["results"][0]["online_checks"]
 
 
 def test_selected_clasp_does_not_claim_clasp_when_only_dial_is_located() -> None:
@@ -352,7 +385,7 @@ def test_batch_reports_one_tentative_reference_from_multiple_photos() -> None:
                 "observed_bezel_color": "green" if self.calls < 3 else "uncertain",
             }
 
-    result = analyze_batch(GreenWatch(), {"images": [_batch_item(body=f"photo-{i}".encode()) for i in range(3)]})
+    result = analyze_batch(GreenWatch(), {"images": [_batch_item(body=_jpeg_variant(i + 1)) for i in range(3)]})
     joint = result["joint"]
     assert joint["verdict"] == "inconclusivo"
     assert joint["reference_candidate"]["reference"] == "116610LV"
@@ -374,7 +407,7 @@ def test_conflicting_dial_colors_block_reference_candidate() -> None:
                 "observed_bezel_color": "green",
             }
 
-    joint = analyze_batch(ConflictingPhotos(), {"images": [_batch_item("crown", b"first"), _batch_item("crown", b"second")]})["joint"]
+    joint = analyze_batch(ConflictingPhotos(), {"images": [_batch_item("crown", _jpeg_variant(1)), _batch_item("crown", _jpeg_variant(2))]})["joint"]
     assert joint["reference_candidate"] is None
     assert joint["visible_evidence"]["dial_color"]["value"] == "uncertain"
     assert "crown" in joint["missing_angles"]
@@ -403,7 +436,7 @@ def test_submitted_but_unchecked_photos_are_reported_separately() -> None:
 def test_batch_joint_verdict_fails_closed(verdicts: list[str], expected: str) -> None:
     result = analyze_batch(
         _StubService(verdicts),
-        {"images": [_batch_item("dial", b"first"), _batch_item("rehaut", b"second")]},
+        {"images": [_batch_item("dial", _jpeg_variant(1)), _batch_item("rehaut", _jpeg_variant(2))]},
     )
 
     assert result["joint"]["verdict"] == expected
