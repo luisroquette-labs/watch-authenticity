@@ -576,3 +576,30 @@ def test_build_training_record_rejects_unlinked_image(
             reviews=[review],
             reviewer_registry=reviewer_registry,
         )
+
+
+@pytest.mark.parametrize(
+    ("evidence_type", "label", "grade"),
+    [("seller_text", Label.FAKE, 4), ("owner_claim", Label.GENUINE, None)],
+)
+def test_seller_superclone_and_unsupported_original_remain_candidate_only(
+    candidate,
+    reviewer,
+    evidence_type,
+    label,
+    grade,
+):
+    authority = replace(reviewer, allowed_evidence_types=(evidence_type,))
+    review = submit_review(
+        candidate,
+        authority,
+        proposed_label=label,
+        proposed_grade=grade,
+        proposed_tier=EvidenceTier.C,
+        evidence_type=evidence_type,
+        supporting_artifact_hashes=("a" * 64,),
+        reviewed_at=candidate.collected_at,
+    )
+    evidence = adjudicate(candidate, [review], {authority.reviewer_id: authority})
+    assert evidence.tier is EvidenceTier.C
+    assert not evidence.tier.training_eligible
