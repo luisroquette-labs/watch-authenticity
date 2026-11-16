@@ -230,8 +230,7 @@ def test_pilot_ci_is_bounded_and_does_not_build() -> None:
     assert not Path(".github/workflows/pilot-ci.yml").exists()
     for path in (
         "pilot/**", "reference_intelligence/**", "config/references/**",
-        "tests/test_online_assessor.py", "tests/test_pilot_server.py",
-        "tests/test_predict.py", "tests/test_reference_intelligence.py",
+        "tests/**",
     ):
         assert f'"{path}"' in preflight
     assert "timeout-minutes: 10" in preflight
