@@ -77,10 +77,11 @@ class PilotService:
             (claim for claim in self.claims if claim.field == "dial_color" and claim.source_class.authoritative),
             None,
         )
-        mismatch = official_dial is not None and color in {"black", "green", "blue"} and color != official_dial.value
+        expected_color = official_dial.value if official_dial is not None else ""
+        mismatch = bool(expected_color) and color in {"black", "green", "blue"} and color != expected_color
         labels = {"black": "preto", "green": "verde", "blue": "azul"}
         message = (
-            f"O modelo sugere mostrador {labels[color]}; a referencia 126610LN tem mostrador {labels.get(official_dial.value, official_dial.value)}. "
+            f"O modelo sugere mostrador {labels[color]}; a referencia 126610LN tem mostrador {labels.get(expected_color, expected_color)}. "
             "Pode ser outra referencia. Isso nao prova falsificacao."
             if mismatch else
             "Mostrador localizado, mas a cor nao permite concluir autenticidade."
