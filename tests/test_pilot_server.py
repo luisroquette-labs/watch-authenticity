@@ -345,4 +345,7 @@ def test_html_supports_six_files_per_image_angles_and_recovers_after_error() -> 
     assert 'fetch("/predict/batch"' in html
     assert 'finally' in html
     assert 'b.disabled=false' in html
+    assert 'let files=[...f.files]' in html
+    assert "files[i].name+': '+item.message" in html
+    assert 'f.disabled=true' in html and 'f.disabled=false' in html
     assert 'Selecione o ângulo' in html

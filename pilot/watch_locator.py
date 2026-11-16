@@ -26,10 +26,10 @@ class WatchRegion:
 class LocalWatchLocator:
     def __init__(self) -> None:
         self.processor = Owlv2Processor.from_pretrained(
-            MODEL_ID, revision=MODEL_REVISION, cache_dir=CACHE_DIR, local_files_only=True
+            MODEL_ID, revision=MODEL_REVISION, cache_dir=CACHE_DIR
         )
         self.model = Owlv2ForObjectDetection.from_pretrained(
-            MODEL_ID, revision=MODEL_REVISION, cache_dir=CACHE_DIR, local_files_only=True
+            MODEL_ID, revision=MODEL_REVISION, cache_dir=CACHE_DIR
         ).eval()
 
     def locate(self, image: Image.Image) -> WatchRegion | None:
