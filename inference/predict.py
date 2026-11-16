@@ -153,10 +153,10 @@ def _validate_logits(logits_per_angle: Mapping[str, torch.Tensor]) -> None:
 def _conclusion(
     prediction: Prediction, reference: ReferenceAssessment
 ) -> InferenceConclusion:
-    if not prediction.genuine:
-        return InferenceConclusion.FAKE_LIKELY
     if reference.status is not AssessmentStatus.CONSISTENT:
         return InferenceConclusion.INCONCLUSIVE
+    if not prediction.genuine:
+        return InferenceConclusion.FAKE_LIKELY
     return InferenceConclusion.NO_VISIBLE_INCONSISTENCY
 
 

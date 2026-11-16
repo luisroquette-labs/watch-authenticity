@@ -149,7 +149,35 @@ def test_grade4_result_keeps_the_genuine_confidence_ceiling() -> None:
     assert not result.prediction.genuine
     assert result.prediction.ceiling_applied
     assert result.prediction.confidence <= GRADE4_GENUINE_CEILING
+    assert result.conclusion is InferenceConclusion.INCONCLUSIVE
+    assert result.next_angle is Angle.CYCLOPS
+
+
+def test_fake_class_requires_complete_reference_view_before_verdict() -> None:
+    result = predict(
+        {"dial": _sharp_image(), "cyclops": _sharp_image()},
+        {"dial": _tensor(), "cyclops": _tensor()},
+        model=StubModel(ModelClass.GRADE_4.value),
+        temperature=1.0,
+        reference_id=REFERENCE,
+        claims=CLAIMS,
+        observations=(
+            VisualObservation("bezel_color", "black", Angle.DIAL, True),
+            VisualObservation("dial_color", "black", Angle.DIAL, True),
+            VisualObservation("date_magnifier", "Cyclops", Angle.CYCLOPS, True),
+        ),
+        minimum_source_date=FRESH_AFTER,
+        heatmap_fn=_heatmap,
+    )
+    assert isinstance(result, InferenceResult)
     assert result.conclusion is InferenceConclusion.FAKE_LIKELY
+
+
+def test_missing_reference_evidence_refuses_fake_verdict_and_requests_photo() -> None:
+    result = _run(StubModel(ModelClass.GRADE_4.value), observations=())
+    assert isinstance(result, InferenceResult)
+    assert result.conclusion is InferenceConclusion.INCONCLUSIVE
+    assert result.next_angle is Angle.CYCLOPS
 
 
 def test_technical_conflict_forces_inconclusive_without_changing_visual_score() -> None:
@@ -167,7 +195,7 @@ def test_technical_conflict_forces_inconclusive_without_changing_visual_score() 
     assert conflict.next_angle is Angle.DIAL
 
 
-def test_technical_conflict_cannot_hide_a_visual_fake_result() -> None:
+def test_reference_conflict_refuses_exact_reference_fake_verdict() -> None:
     result = _run(
         StubModel(ModelClass.GRADE_4.value),
         observations=(VisualObservation("dial_color", "blue", Angle.DIAL, True),),
@@ -175,7 +203,42 @@ def test_technical_conflict_cannot_hide_a_visual_fake_result() -> None:
 
     assert isinstance(result, InferenceResult)
     assert result.reference.status is AssessmentStatus.CONFLICTING
-    assert result.conclusion is InferenceConclusion.FAKE_LIKELY
+    assert result.conclusion is InferenceConclusion.INCONCLUSIVE
+    assert result.next_angle is Angle.DIAL
+
+
+def test_green_dial_and_uncertain_bezel_do_not_become_fake_evidence() -> None:
+    green = _run(
+        StubModel(ModelClass.GRADE_4.value),
+        observations=(
+            VisualObservation("dial_color", "green", Angle.DIAL, True),
+            VisualObservation("bezel_color", None, Angle.DIAL, False),
+        ),
+    )
+    assert isinstance(green, InferenceResult)
+    assert green.reference.status is AssessmentStatus.CONFLICTING
+    assert green.conclusion is InferenceConclusion.INCONCLUSIVE
+    assert green.next_angle is Angle.DIAL
+
+
+def test_conflicting_official_reference_facts_refuse_fake_verdict() -> None:
+    from dataclasses import replace
+
+    official_dial = next(claim for claim in CLAIMS if claim.field == "dial_color")
+    result = predict(
+        {"dial": _sharp_image()},
+        {"dial": _tensor()},
+        model=StubModel(ModelClass.GRADE_4.value),
+        temperature=1.0,
+        reference_id=REFERENCE,
+        claims=CLAIMS + (replace(official_dial, value="green"),),
+        observations=(VisualObservation("dial_color", "black", Angle.DIAL, True),),
+        minimum_source_date=FRESH_AFTER,
+        heatmap_fn=_heatmap,
+    )
+    assert isinstance(result, InferenceResult)
+    assert result.reference.source_conflicts == ("dial_color",)
+    assert result.conclusion is InferenceConclusion.INCONCLUSIVE
 
 
 def test_observation_must_belong_to_a_submitted_image_angle() -> None:
