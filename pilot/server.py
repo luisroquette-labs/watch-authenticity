@@ -45,14 +45,20 @@ class PilotService:
         self.assessor = LocalVisionAssessor(checkpoint)
 
     def predict(self, body: bytes, content_type: str, angle: str) -> dict[str, object]:
-        from quality_gate.blur_light_check import Pass, quality_gate
-
         image = decode_image(body, content_type)
         if angle not in ANGLES:
             raise ValueError("angulo invalido")
         checks = checks_for_angle(self.claims, angle)
-        quality = quality_gate(image, angle=angle)
-        if not isinstance(quality, Pass):
+        photo_quality = pilot_photo_quality(image, angle)
+        if photo_quality == "uncertain":
+            return {
+                "verdict": "inconclusivo",
+                "replica_probability": None,
+                "message": "A foto foi recebida, mas nao consigo confirmar a nitidez do relogio.",
+                "next_photo": "Envie um recorte mais proximo do relogio.",
+                "online_checks": checks,
+            }
+        if photo_quality == "reject":
             return {
                 "verdict": "foto_invalida",
                 "replica_probability": None,
@@ -77,6 +83,16 @@ class PilotService:
             ],
             "online_checks": checks,
         }
+
+
+def pilot_photo_quality(image: Image.Image, angle: str) -> str:
+    from quality_gate.blur_light_check import Pass, quality_gate
+
+    if isinstance(quality_gate(image, angle=angle), Pass):
+        return "pass"
+    width, height = image.size
+    subject = image.crop((width // 4, height // 4, width - width // 4, height - height // 4))
+    return "uncertain" if isinstance(quality_gate(subject, angle=angle), Pass) else "reject"
 
 
 def checks_for_angle(

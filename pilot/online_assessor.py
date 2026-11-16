@@ -32,6 +32,7 @@ class OnlineAssessment:
 class LocalVisionAssessor:
     def __init__(self, checkpoint: str | Path = MODEL_ID) -> None:
         revision = MODEL_REVISION if str(checkpoint) == MODEL_ID else None
+        self.device = "mps" if torch.backends.mps.is_available() else "cpu"
         self.processor = AutoProcessor.from_pretrained(
             checkpoint, revision=revision, local_files_only=True
         )
@@ -41,7 +42,7 @@ class LocalVisionAssessor:
             local_files_only=True,
             dtype=torch.float32,
             _attn_implementation="eager",
-        ).to("cpu")
+        ).to(self.device)
         self.model.eval()
 
     def assess(
@@ -67,7 +68,6 @@ class LocalVisionAssessor:
 
         visible: list[str] = []
         conflicts: list[tuple[str, str]] = []
-        judged = 0
         for claim in official:
             is_visible, raw = self._ask_choice(
                 image,
@@ -84,27 +84,21 @@ class LocalVisionAssessor:
                 f"'{claim.field}' is '{claim.value}'. Does the visible watch detail match it?",
             )
             raw_answers.append(raw)
-            if matches in {"yes", "no"}:
-                judged += 1
             if matches == "no":
                 conflicts.append((claim.field, f"not {claim.value}"))
 
         if conflicts:
             verdict = "inconsistencia_com_referencia"
-        elif official and judged == len(official):
-            verdict = "sem_inconsistencia_visivel"
         else:
             verdict = "inconclusivo"
-        missing = (
-            "Envie outra vista para confirmar o detalhe."
-            if verdict != "sem_inconsistencia_visivel"
-            else "Envie o proximo angulo do relogio."
-        )
+        missing = "Envie outra vista para confirmar o detalhe."
         return OnlineAssessment(
             verdict, tuple(visible), tuple(conflicts), missing, "\n".join(raw_answers)
         )
 
     def _ask_choice(self, image: Image.Image, question: str) -> tuple[str | None, str]:
+        image = image.copy()
+        image.thumbnail((384, 384), Image.Resampling.LANCZOS)
         messages = [{
             "role": "user",
             "content": [
@@ -120,7 +114,7 @@ class LocalVisionAssessor:
             ],
         }]
         rendered = self.processor.apply_chat_template(messages, add_generation_prompt=True)
-        inputs = self.processor(text=rendered, images=[image], return_tensors="pt").to("cpu")
+        inputs = self.processor(text=rendered, images=[image], return_tensors="pt").to(self.device)
         with torch.no_grad():
             generated = self.model.generate(**inputs, max_new_tokens=4, do_sample=False)
         prompt_tokens = inputs["input_ids"].shape[1]
@@ -216,8 +210,6 @@ def parse_assessment(text: str, claims: Sequence[TechnicalClaim]) -> OnlineAsses
         verdict = "inconclusivo"
     elif parsed_conflicts:
         verdict = "inconsistencia_com_referencia"
-    elif official and visible and set(visible) == official:
-        verdict = "sem_inconsistencia_visivel"
     else:
         verdict = "inconclusivo"
     return OnlineAssessment(
