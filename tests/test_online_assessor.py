@@ -41,6 +41,12 @@ def test_short_model_choice_accepts_only_exact_allowed_answer() -> None:
     assert parse_choice('{"answer":"yes"}') is None
 
 
+def test_dial_color_rejects_unexpected_model_text() -> None:
+    assessor = LocalVisionAssessor.__new__(LocalVisionAssessor)
+    assessor._ask_options = lambda *_args: ("green dial", "green dial")  # type: ignore[method-assign]
+    assert assessor.dial_color(Image.new("RGB", (224, 224))) == "uncertain"
+
+
 def test_uncertain_fact_match_cannot_report_no_visible_inconsistency() -> None:
     assessor = LocalVisionAssessor.__new__(LocalVisionAssessor)
     answers = iter((("yes", "Yes."), ("yes", "Yes."), ("uncertain", "Uncertain.")))
