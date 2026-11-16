@@ -28,6 +28,7 @@ from pilot.server import (
     handler,
     pilot_photo_quality,
 )
+from pilot.visual_evidence import bezel_color_hint, consensus, reference_candidate
 from pilot.watch_locator import WatchRegion, choose_region
 from reference_intelligence.knowledge import load_knowledge
 
@@ -98,6 +99,29 @@ def test_locator_ignores_face_outside_watch() -> None:
 
 def test_locator_rejects_image_without_watch_or_face() -> None:
     assert choose_region(Image.new("RGB", (500, 500)), []) is None
+
+
+@pytest.mark.parametrize(
+    ("ring_color", "expected"),
+    [("#137746", "green"), ("#111111", "black"), ("#153f9d", "blue")],
+)
+def test_bezel_color_reads_ring_and_ignores_dial(ring_color: str, expected: str) -> None:
+    face = Image.new("RGB", (300, 300), "white")
+    draw = ImageDraw.Draw(face)
+    draw.ellipse((5, 5, 295, 295), fill=ring_color)
+    draw.ellipse((48, 48, 252, 252), fill="#137746")
+    assert bezel_color_hint(face) == expected
+    assert bezel_color_hint(face.resize((140, 140))) == "uncertain"
+
+
+def test_reference_routing_requires_consistent_separate_dial_and_bezel_clues() -> None:
+    assert consensus(["green", "green", "uncertain"]) == ("green", 2)
+    assert consensus(["green"]) == ("green", 1)
+    assert consensus(["green", "black", "green"]) == ("uncertain", 0)
+    candidate = reference_candidate("green", "green")
+    assert candidate is not None and candidate["reference"] == "116610LV"
+    assert candidate["source_type"] == "fonte especializada"
+    assert reference_candidate("green", "uncertain") is None
 
 
 @pytest.mark.parametrize("color,mismatch", [("green", True), ("black", False)])
@@ -214,6 +238,7 @@ class _StubService:
             "message": verdict,
             "next_photo": angle,
             "model_invoked": verdict != "foto_invalida",
+            "detected_angle": angle if verdict != "foto_invalida" else None,
             "online_checks": [{"field": angle, "url": f"https://example.test/{angle}"}],
         }
 
@@ -242,6 +267,48 @@ def test_batch_processes_each_image_sequentially_and_preserves_sources() -> None
     assert result["joint"]["model_checked_images"] == 2
 
 
+def test_batch_reports_one_tentative_reference_from_multiple_photos() -> None:
+    class GreenWatch:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def predict(self, *_args: object) -> dict[str, object]:
+            self.calls += 1
+            return {
+                "verdict": "inconclusivo",
+                "model_invoked": True,
+                "observed_dial_color": "green",
+                "observed_bezel_color": "green" if self.calls < 3 else "uncertain",
+            }
+
+    result = analyze_batch(GreenWatch(), {"images": [_batch_item() for _ in range(3)]})
+    joint = result["joint"]
+    assert joint["verdict"] == "inconclusivo"
+    assert joint["reference_candidate"]["reference"] == "116610LV"
+    assert joint["visible_evidence"]["dial_color"]["supporting_photos"] == 3
+    assert joint["visible_evidence"]["bezel_color"]["supporting_photos"] == 2
+    assert "não permitem autenticar" in joint["message"]
+
+
+def test_conflicting_dial_colors_block_reference_candidate() -> None:
+    colors = iter(("green", "black"))
+
+    class ConflictingPhotos:
+        def predict(self, *_args: object) -> dict[str, object]:
+            return {
+                "verdict": "inconclusivo",
+                "model_invoked": True,
+                "detected_angle": "dial",
+                "observed_dial_color": next(colors),
+                "observed_bezel_color": "green",
+            }
+
+    joint = analyze_batch(ConflictingPhotos(), {"images": [_batch_item("crown"), _batch_item("crown")]})["joint"]
+    assert joint["reference_candidate"] is None
+    assert joint["visible_evidence"]["dial_color"]["value"] == "uncertain"
+    assert "crown" in joint["missing_angles"]
+
+
 def test_submitted_but_unchecked_photos_are_reported_separately() -> None:
     class Unassessed:
         def predict(self, *_args: object) -> dict[str, object]:
@@ -249,7 +316,7 @@ def test_submitted_but_unchecked_photos_are_reported_separately() -> None:
 
     result = analyze_batch(Unassessed(), {"images": [_batch_item(angle) for angle in ANGLES]})
 
-    assert result["joint"]["missing_angles"] == []
+    assert result["joint"]["missing_angles"] == sorted(ANGLES)
     assert result["joint"]["model_checked_images"] == 0
     assert "nenhuma foi enviada ao modelo" in result["joint"]["message"]
 
@@ -348,4 +415,4 @@ def test_html_supports_six_files_per_image_angles_and_recovers_after_error() -> 
     assert 'let files=[...f.files]' in html
     assert "files[i].name+': '+item.message" in html
     assert 'f.disabled=true' in html and 'f.disabled=false' in html
-    assert 'Selecione o ângulo' in html
+    assert 'Vista informada' in html
