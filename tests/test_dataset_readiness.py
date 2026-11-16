@@ -114,7 +114,68 @@ def test_augmented_or_repeated_original_does_not_increase_cell_count(monkeypatch
     report = evaluate_readiness(records, original.reference_id, splits=splits)
 
     dial = next(cell for cell in report.cell_counts if cell[0] == "genuine/dial")
-    assert dial == ("genuine/dial", 1, 2)
+    assert dial == ("genuine/dial", 1, 1)
+
+
+def test_ambiguous_content_links_do_not_inflate_independent_watch_count():
+    first = _record(1)
+    second = replace(_record(2), watch_entity_id=first.watch_entity_id)
+    third = replace(_record(3), content_cluster_id=second.content_cluster_id)
+    records = [first, second, third]
+    splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
+
+    report = evaluate_readiness(records, first.reference_id, splits=splits)
+
+    assert next(cell for cell in report.cell_counts if cell[0] == "genuine/dial") == (
+        "genuine/dial", 2, 1
+    )
+
+
+def test_cross_angle_content_link_reduces_dial_entity_count():
+    first = _record(1)
+    bridge = replace(_record(2, angle=Angle.CROWN), watch_entity_id=first.watch_entity_id)
+    other_view = replace(_record(3, angle=Angle.CROWN), content_cluster_id=bridge.content_cluster_id)
+    second_dial = replace(_record(4), watch_entity_id=other_view.watch_entity_id)
+    records = [first, bridge, other_view, second_dial]
+    splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
+
+    report = evaluate_readiness(records, first.reference_id, splits=splits)
+
+    assert next(cell for cell in report.cell_counts if cell[0] == "genuine/dial") == (
+        "genuine/dial", 2, 1
+    )
+
+
+def test_rejection_subject_count_uses_content_components(monkeypatch):
+    monkeypatch.setattr(readiness, "MIN_REJECTION_SUBJECTS", 2)
+    first = _record(1, label=Label.REJECTION, angle=None, subtype="no-watch")
+    repeated = replace(
+        _record(2, label=Label.REJECTION, angle=None, subtype="no-watch"),
+        content_cluster_id=first.content_cluster_id,
+    )
+    splits = DatasetSplits(((first.asset_id, TRAIN), (repeated.asset_id, TRAIN)), NOW, 42)
+
+    report = evaluate_readiness([first, repeated], first.reference_id, splits=splits)
+
+    assert "rejection: requires 250 distinct subjects" in report.reasons
+
+
+def test_ambiguous_aliases_cannot_hide_source_or_seller_dominance():
+    records = [
+        _record(1, source="dominant.example.co.za"),
+        _record(2, source="dominant.example.co.za"),
+        _record(3, source="other.example.co.za"),
+    ]
+    records.extend(
+        replace(_record(index, source="other.example.co.za"), content_cluster_id=records[2].content_cluster_id)
+        for index in range(4, 15)
+    )
+    splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
+
+    report = evaluate_readiness(records, records[0].reference_id, splits=splits)
+
+    assert any("dominant.example.co.za exceeds 40%" in reason for reason in report.reasons)
+    assert any("seller seller-1 exceeds 10%" in reason for reason in report.reasons)
 
 
 def test_source_share_above_forty_percent_is_reported(monkeypatch):
