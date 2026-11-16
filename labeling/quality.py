@@ -26,11 +26,13 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Mapping
+from typing import Mapping, Sequence
 
-from acquisition.types import EvidenceRecord
+from acquisition.types import CandidateRecord, EvidenceRecord
 from core.types import Label
+from dataset.entities import GroupingDecision
 from labeling.adjudicate import _digest, verify_evidence_record
+from labeling.review import candidate_digest
 
 RUBRIC_VERSION = "fake-quality-v1"
 RUBRIC_SHA256 = _digest(__doc__)
@@ -115,6 +117,67 @@ class FakeQualityInspection:
         return _digest({**asdict(self), "reviewed_at": self.reviewed_at.isoformat()})
 
 
+def quality_reviewer_digest(reviewer: QualityReviewerRecord) -> str:
+    return _digest(
+        {
+            **asdict(reviewer),
+            "effective_at": reviewer.effective_at.isoformat(),
+            "expires_at": reviewer.expires_at.isoformat(),
+        }
+    )
+
+
+@dataclass(frozen=True)
+class QualityReviewDecision:
+    reviewer_id: str
+    reviewer_registry_sha256: str
+    inspection_evidence_sha256: str
+    rubric_version: str
+    rubric_sha256: str
+    reviewed_at: datetime
+    score_0_1000: int
+    decision_sha256: str
+
+
+def _decision_payload(decision: QualityReviewDecision) -> dict:
+    payload = asdict(decision)
+    payload.pop("decision_sha256")
+    payload["reviewed_at"] = decision.reviewed_at.isoformat()
+    return payload
+
+
+def submit_quality_review(
+    inspection: FakeQualityInspection,
+    reviewer: QualityReviewerRecord,
+    score_0_1000: int,
+    *,
+    reviewed_at: datetime,
+) -> QualityReviewDecision:
+    """Record one draft judgment bound to this exact inspection and rubric."""
+    if (
+        not isinstance(reviewer, QualityReviewerRecord)
+        or not isinstance(score_0_1000, int)
+        or isinstance(score_0_1000, bool)
+        or not 0 <= score_0_1000 <= 1000
+        or reviewed_at.tzinfo is None
+        or reviewed_at < inspection.reviewed_at
+        or not reviewer.effective_at <= reviewed_at < reviewer.expires_at
+    ):
+        raise ValueError("qualified active reviewer, review time and integer score required")
+    payload = dict(
+        reviewer_id=reviewer.reviewer_id,
+        reviewer_registry_sha256=quality_reviewer_digest(reviewer),
+        inspection_evidence_sha256=inspection.sha256,
+        rubric_version=RUBRIC_VERSION,
+        rubric_sha256=RUBRIC_SHA256,
+        reviewed_at=reviewed_at.isoformat(),
+        score_0_1000=score_0_1000,
+    )
+    return QualityReviewDecision(
+        **{**payload, "reviewed_at": reviewed_at}, decision_sha256=_digest(payload)
+    )
+
+
 @dataclass(frozen=True)
 class FakeQualityAssessment:
     watch_entity_id: str
@@ -124,7 +187,8 @@ class FakeQualityAssessment:
     rubric_sha256: str
     score_0_1000: int
     reviewer_scores: tuple[tuple[str, int], ...]
-    reviewer_registry_sha256s: tuple[tuple[str, str], ...]
+    review_decision_sha256s: tuple[str, ...]
+    grouping_sha256: str
     adjudicator_score: tuple[str, int] | None
     assessment_sha256: str
 
@@ -139,79 +203,99 @@ def verify_fake_quality(assessment: FakeQualityAssessment) -> None:
 def assess_fake_quality(
     evidence: EvidenceRecord,
     watch_entity_id: str,
-    reviewer_scores: Mapping[str, int],
+    quality_decisions: Sequence[QualityReviewDecision],
     quality_reviewers: Mapping[str, QualityReviewerRecord],
     rubric_version: str,
     inspection_evidence_sha256: str,
     *,
+    candidate: CandidateRecord | None = None,
+    grouping: GroupingDecision | None = None,
     inspection: FakeQualityInspection | None = None,
-    adjudicator_score: tuple[str, int] | None = None,
+    adjudicator_decision: QualityReviewDecision | None = None,
 ) -> FakeQualityAssessment | None:
+    """Aggregate immutable decisions using the same authoritative grouping as admission.
+
+    candidate and grouping come from the acquisition/entity owners, as they do
+    for build_training_record; an inspection cannot declare its own watch identity.
+    """
     verify_evidence_record(evidence)
     if (
-        evidence.accepted_label is not Label.FAKE
+        candidate is None
+        or grouping is None
+        or inspection is None
+        or evidence.candidate_id != candidate.candidate_id
+        or evidence.candidate_sha256 != candidate_digest(candidate)
+        or grouping.candidate_id != candidate.candidate_id
+        or grouping.quarantined
+        or grouping.watch_entity_id != watch_entity_id
+        or evidence.accepted_label is not Label.FAKE
         or not evidence.tier.training_eligible
         or rubric_version != RUBRIC_VERSION
-        or inspection is None
         or inspection.sha256 != inspection_evidence_sha256
         or inspection.watch_entity_id != watch_entity_id
         or inspection.evidence_record_id != evidence.evidence_record_id
         or set(dict(inspection.attribute_artifacts)) != _ATTRIBUTES
         or inspection.reviewed_at < max(evidence.review_timestamps)
-        or len(reviewer_scores) != 2
+        or len(quality_decisions) != 2
     ):
         return None
-    scores = tuple(sorted(reviewer_scores.items()))
-    adjudicate = (
-        abs(scores[0][1] - scores[1][1]) > 100
-        if all(isinstance(score, int) and not isinstance(score, bool) for _, score in scores)
-        else False
+    mandatory_groups = {
+        candidate.source_policy_id,
+        candidate.acquisition_batch_id,
+        grouping.seller_group_id,
+    }
+    if not mandatory_groups.issubset(inspection.contributor_groups):
+        return None
+    conflicts = mandatory_groups | set(inspection.contributor_groups)
+    votes = tuple(quality_decisions) + (
+        (adjudicator_decision,) if adjudicator_decision is not None else ()
     )
-    if adjudicate and adjudicator_score is None:
-        return None
-    if not adjudicate and adjudicator_score is not None:
-        return None
-    votes = scores + ((adjudicator_score,) if adjudicator_score is not None else ())
-    if len({key for key, _ in votes}) != len(votes):
-        return None
-    reviewers = []
-    for reviewer_id, score in votes:
-        reviewer = quality_reviewers.get(reviewer_id)
+    reviewers: list[QualityReviewerRecord] = []
+    for decision in votes:
+        if not isinstance(decision, QualityReviewDecision):
+            return None
+        reviewer = quality_reviewers.get(decision.reviewer_id)
         if (
-            not isinstance(score, int)
-            or isinstance(score, bool)
-            or not 0 <= score <= 1000
-            or not isinstance(reviewer, QualityReviewerRecord)
-            or reviewer.reviewer_id != reviewer_id
-            or not reviewer.effective_at <= inspection.reviewed_at < reviewer.expires_at
-            or set(inspection.contributor_groups)
-            & set(reviewer.contributor_groups + reviewer.prohibited_contributor_groups)
+            not isinstance(reviewer, QualityReviewerRecord)
+            or reviewer.reviewer_id != decision.reviewer_id
+            or decision.reviewer_registry_sha256 != quality_reviewer_digest(reviewer)
+            or decision.decision_sha256 != _digest(_decision_payload(decision))
+            or decision.inspection_evidence_sha256 != inspection.sha256
+            or decision.rubric_version != rubric_version
+            or decision.rubric_sha256 != RUBRIC_SHA256
+            or decision.reviewed_at.tzinfo is None
+            or decision.reviewed_at < inspection.reviewed_at
+            or not reviewer.effective_at <= decision.reviewed_at < reviewer.expires_at
+            or not isinstance(decision.score_0_1000, int)
+            or isinstance(decision.score_0_1000, bool)
+            or not 0 <= decision.score_0_1000 <= 1000
+            or conflicts & set(reviewer.contributor_groups + reviewer.prohibited_contributor_groups)
         ):
             return None
         if any(
-            set(reviewer.contributor_groups)
+            previous.reviewer_id == reviewer.reviewer_id
+            or set(reviewer.contributor_groups)
             & set(previous.contributor_groups + previous.prohibited_contributor_groups)
             or set(previous.contributor_groups) & set(reviewer.prohibited_contributor_groups)
             for previous in reviewers
         ):
             return None
         reviewers.append(reviewer)
-    if adjudicator_score is not None and not reviewers[-1].adjudicator:
+    scores = tuple(sorted((d.reviewer_id, d.score_0_1000) for d in quality_decisions))
+    needs_adjudicator = abs(scores[0][1] - scores[1][1]) > 100
+    if needs_adjudicator != (adjudicator_decision is not None):
         return None
-    score = adjudicator_score[1] if adjudicator_score else (sum(v for _, v in scores) + 1) // 2
-    bindings = tuple(
-        (
-            reviewer.reviewer_id,
-            _digest(
-                {
-                    **asdict(reviewer),
-                    "effective_at": reviewer.effective_at.isoformat(),
-                    "expires_at": reviewer.expires_at.isoformat(),
-                }
-            ),
-        )
-        for reviewer in reviewers
+    if adjudicator_decision is not None and (
+        not reviewers[-1].adjudicator
+        or adjudicator_decision.reviewed_at < max(d.reviewed_at for d in quality_decisions)
+    ):
+        return None
+    adjudicator_score = (
+        None
+        if adjudicator_decision is None
+        else (adjudicator_decision.reviewer_id, adjudicator_decision.score_0_1000)
     )
+    score = adjudicator_score[1] if adjudicator_score else (sum(v for _, v in scores) + 1) // 2
     payload = dict(
         watch_entity_id=watch_entity_id,
         evidence_record_id=evidence.evidence_record_id,
@@ -220,7 +304,8 @@ def assess_fake_quality(
         rubric_sha256=RUBRIC_SHA256,
         score_0_1000=score,
         reviewer_scores=scores,
-        reviewer_registry_sha256s=bindings,
+        review_decision_sha256s=tuple(sorted(d.decision_sha256 for d in votes)),
+        grouping_sha256=_digest(asdict(grouping)),
         adjudicator_score=adjudicator_score,
     )
     return FakeQualityAssessment(**payload, assessment_sha256=_digest(payload))
