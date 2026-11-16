@@ -123,3 +123,63 @@ def _review_digest(review: AngleReview) -> str:
             }
         )
     ).hexdigest()
+
+
+@dataclass(frozen=True)
+class AngleUsabilityReview:
+    candidate_id: str
+    image_sha256: str
+    angle: Angle
+    detail_visible: bool
+    usable: bool
+    reviewer_id: str
+    reviewed_at: datetime
+    review_sha256: str
+
+
+def record_usability_review(
+    candidate_id: str,
+    image_sha256: str,
+    angle: Angle,
+    detail_visible: bool,
+    usable: bool,
+    reviewer_id: str,
+    reviewed_at: datetime,
+) -> AngleUsabilityReview:
+    record_angle_review(candidate_id, image_sha256, angle, reviewer_id, reviewed_at)
+    if not isinstance(angle, Angle):
+        raise ValueError("usability review requires a known angle")
+    if not isinstance(detail_visible, bool) or not isinstance(usable, bool):
+        raise ValueError("visibility and usability must be bool")
+    if usable and not detail_visible:
+        raise ValueError("usable detail must be visible")
+    payload = {
+        "candidate_id": candidate_id,
+        "image_sha256": image_sha256,
+        "angle": angle.value,
+        "detail_visible": detail_visible,
+        "usable": usable,
+        "reviewer_id": reviewer_id,
+        "reviewed_at": reviewed_at.isoformat(),
+    }
+    return AngleUsabilityReview(
+        candidate_id, image_sha256, angle, detail_visible, usable, reviewer_id,
+        reviewed_at, hashlib.sha256(_canonical(payload)).hexdigest(),
+    )
+
+
+def verify_usability_review(
+    review: AngleUsabilityReview, candidate_id: str, image_sha256: str, angle: Angle
+) -> None:
+    if not isinstance(review, AngleUsabilityReview):
+        raise ValueError("immutable usability review is required")
+    expected = record_usability_review(
+        review.candidate_id, review.image_sha256, review.angle,
+        review.detail_visible, review.usable, review.reviewer_id, review.reviewed_at,
+    )
+    if expected != review:
+        raise ValueError("usability review hash differs from content")
+    if (review.candidate_id, review.image_sha256, review.angle) != (candidate_id, image_sha256, angle):
+        raise ValueError("usability review candidate, image or angle differs")
+    if not review.detail_visible or not review.usable:
+        raise ValueError("angle requires visible usable detail")

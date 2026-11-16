@@ -59,3 +59,31 @@ def test_duplicate_review_does_not_inflate_bootstrap_count():
     repeated = tuple(review for review in one_per_angle for _ in range(100))
 
     assert suggest_angle("f" * 64, _scores(), repeated).angle is None
+
+
+def test_usability_review_binds_content_and_rejects_tampering():
+    from dataclasses import replace
+    import pytest
+    from dataset.angle_review import record_usability_review, verify_usability_review
+
+    review = record_usability_review("candidate-1", "a" * 64, Angle.CLASP, True, True, "r1", NOW)
+    verify_usability_review(review, "candidate-1", "a" * 64, Angle.CLASP)
+    for candidate, digest, angle in (("candidate-2", "a" * 64, Angle.CLASP), ("candidate-1", "b" * 64, Angle.CLASP), ("candidate-1", "a" * 64, Angle.DIAL)):
+        with pytest.raises(ValueError):
+            verify_usability_review(review, candidate, digest, angle)
+    with pytest.raises(ValueError):
+        verify_usability_review(replace(review, usable=False), "candidate-1", "a" * 64, Angle.CLASP)
+
+
+def test_hidden_or_blurred_detail_cannot_be_admitted():
+    import pytest
+    from dataset.angle_review import record_usability_review, verify_usability_review
+
+    for visible, usable in ((False, False), (True, False)):
+        review = record_usability_review("candidate-1", "a" * 64, Angle.CLASP, visible, usable, "r1", NOW)
+        with pytest.raises(ValueError, match="visible usable"):
+            verify_usability_review(review, "candidate-1", "a" * 64, Angle.CLASP)
+    with pytest.raises(ValueError):
+        record_usability_review("candidate-1", "a" * 64, Angle.CLASP, False, True, "r1", NOW)
+    with pytest.raises(ValueError):
+        record_usability_review("candidate-1", "a" * 64, None, True, True, "r1", NOW)
