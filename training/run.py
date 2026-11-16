@@ -9,8 +9,11 @@ import os
 import random
 import shutil
 import tempfile
+import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import torch
@@ -23,6 +26,7 @@ from dataset.augment import augment_pipeline
 from dataset.crop import ANGLE_CROP_FRACTIONS, crop_angle
 from dataset.splits import TRAIN, VAL
 from infra.ibm_cos import IntegrityError, download_verified
+from infra.ibm_train import _hard_deadline
 from infra.ibm_types import RunSpec
 from model.heads import AngleHeadModel, build_trainable_model, trainable_head_parameters
 from training.data import (
@@ -503,7 +507,9 @@ def _epoch_loss(
     return total_loss / total_examples
 
 
-def run_training(bundle: TrainingBundle, spec: RunSpec, output_dir: Path) -> RunResult:
+def run_training(
+    bundle: TrainingBundle, spec: RunSpec, output_dir: Path, *, deadline: float | None = None
+) -> RunResult:
     """Train six-class per-angle heads and atomically publish verified artifacts."""
     output_dir.mkdir(parents=True, exist_ok=True)
     class_map_path = output_dir / "class-map.json"
@@ -526,6 +532,14 @@ def run_training(bundle: TrainingBundle, spec: RunSpec, output_dir: Path) -> Run
     )
     start_epoch = 1 if resumable is None else resumable.epochs_completed + 1
 
+    if deadline is not None and time.monotonic() >= deadline:
+        if resumable is None:
+            raise TrainingRefused("training deadline expired before a resumable checkpoint")
+        return _publish_result(
+            output_dir, lineage=lineage, epochs_completed=len(history),
+            best_epoch=best_epoch, best_validation_nll=best_validation_nll,
+        )
+
     if start_epoch > MAX_EPOCHS or epochs_without_improvement >= EARLY_STOPPING_PATIENCE:
         return _publish_result(
             output_dir,
@@ -543,12 +557,13 @@ def run_training(bundle: TrainingBundle, spec: RunSpec, output_dir: Path) -> Run
     cache_dir = Path(tempfile.mkdtemp(prefix="watch-auth-training-inputs-"))
     try:
         for epoch in range(1, MAX_EPOCHS + 1):
-            train_nll = _epoch_loss(
-                model, bundle, TRAIN, cache_dir, criteria, device, epoch=epoch, optimizer=optimizer
-            )
-            validation_nll = _epoch_loss(
-                model, bundle, VAL, cache_dir, criteria, device, epoch=epoch, optimizer=None
-            )
+            with _hard_deadline(deadline) if deadline is not None else nullcontext():
+                train_nll = _epoch_loss(
+                    model, bundle, TRAIN, cache_dir, criteria, device, epoch=epoch, optimizer=optimizer
+                )
+                validation_nll = _epoch_loss(
+                    model, bundle, VAL, cache_dir, criteria, device, epoch=epoch, optimizer=None
+                )
             epoch_metrics = {
                 "epoch": epoch,
                 "train_nll": train_nll,
@@ -581,6 +596,11 @@ def run_training(bundle: TrainingBundle, spec: RunSpec, output_dir: Path) -> Run
             )
             if epochs_without_improvement >= EARLY_STOPPING_PATIENCE:
                 break
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+    except TimeoutError:
+        if deadline is None or time.monotonic() < deadline or not history:
+            raise
     finally:
         shutil.rmtree(cache_dir, ignore_errors=True)
 
@@ -598,7 +618,9 @@ def run_training(bundle: TrainingBundle, spec: RunSpec, output_dir: Path) -> Run
 
 
 def run_training_waves(
-    bundle: TrainingBundle, spec: RunSpec, output_dir: Path
+    bundle: TrainingBundle, spec: RunSpec, output_dir: Path, *,
+    deadline: float | None = None,
+    on_wave_complete: Callable[[WaveRunResult], None] | None = None,
 ) -> tuple[WaveRunResult, ...]:
     """Train the same seeded probe on nested 25/50/75/100% entity waves."""
     results: list[WaveRunResult] = []
@@ -616,14 +638,20 @@ def run_training_waves(
             raise TrainingRefused("training entity waves are not nested")
         previous_entities = entities
     for fraction, asset_ids in waves.items():
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         wave_bundle = training_wave_bundle(bundle, asset_ids)
         result = run_training(
             wave_bundle,
             spec,
             output_dir / f"wave-{round(fraction * 100):03d}",
+            deadline=deadline,
         )
         entity_count = len(entity_sets[fraction])
-        results.append(WaveRunResult(fraction, entity_count, result))
+        wave = WaveRunResult(fraction, entity_count, result)
+        results.append(wave)
+        if on_wave_complete is not None:
+            on_wave_complete(wave)
         if len(results) > 1 and result.best_validation_nll >= min(
             prior.result.best_validation_nll for prior in results[:-1]
         ):

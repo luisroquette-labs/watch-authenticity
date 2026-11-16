@@ -786,7 +786,7 @@ def test_worker_persists_failure_receipt_when_training_fails(monkeypatch):
     monkeypatch.setattr(
         worker,
         "run_training_waves",
-        lambda *args: (_ for _ in ()).throw(RuntimeError("training failed")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("training failed")),
     )
     monkeypatch.setattr(
         worker,
@@ -813,7 +813,8 @@ def test_worker_publishes_best_wave_candidate_only(monkeypatch):
     monkeypatch.setattr(worker, "_require_gpu", lambda: None)
     monkeypatch.setattr(worker, "load_training_data", lambda *_args: object())
 
-    def fake_waves(_bundle, _spec, output_dir):
+    def fake_waves(_bundle, _spec, output_dir, *, deadline, on_wave_complete):
+        assert deadline > time.monotonic()
         results = []
         for fraction, loss in ((0.25, 0.4), (0.5, 0.6)):
             directory = output_dir / f"wave-{round(fraction * 100):03d}"
@@ -824,7 +825,9 @@ def test_worker_publishes_best_wave_candidate_only(monkeypatch):
                 path.write_bytes(f"{fraction}:{name}".encode())
                 artifacts[path] = hashlib.sha256(path.read_bytes()).hexdigest()
             (directory / "run-result.json").write_bytes(f"{fraction}:result".encode())
-            results.append(WaveRunResult(fraction, round(fraction * 100), RunResult(1, 1, loss, artifacts)))
+            wave = WaveRunResult(fraction, round(fraction * 100), RunResult(1, 1, loss, artifacts))
+            on_wave_complete(wave)
+            results.append(wave)
         return tuple(results)
 
     def fake_upload(_cos, path, _bucket, key, digest):
@@ -838,9 +841,48 @@ def test_worker_publishes_best_wave_candidate_only(monkeypatch):
 
     worker.execute_worker(cos=object())
 
-    assert len(uploads) == 4
-    assert {directory for directory, _name in uploads} == {"wave-025"}
-    assert json.loads(receipts[0])["status"] == "succeeded"
+    assert len(uploads) == 8
+    assert {directory for directory, _name in uploads} == {"wave-025", "wave-050"}
+    receipt = json.loads(receipts[0])
+    assert receipt["status"] == "succeeded"
+    assert all("wave-025" in item["key"] for item in receipt["artifacts"])
+
+
+def test_worker_keeps_completed_wave_artifacts_when_later_wave_fails(monkeypatch):
+    spec = _spec()
+    uploads: list[str] = []
+    receipts: list[bytes] = []
+    monkeypatch.setattr(worker, "_environment", lambda: {})
+    monkeypatch.setattr(worker, "_load_spec", lambda *_args: spec)
+    monkeypatch.setattr(worker, "verify_cos_configuration", lambda *_args: None)
+    monkeypatch.setattr(worker, "_require_gpu", lambda: None)
+    monkeypatch.setattr(worker, "load_training_data", lambda *_args: object())
+
+    def fail_after_first(_bundle, _spec, output_dir, *, deadline, on_wave_complete):
+        directory = output_dir / "wave-025"
+        directory.mkdir()
+        artifacts = {}
+        for name in ("checkpoint.pt", "class-map.json", "metrics.json"):
+            path = directory / name
+            path.write_bytes(name.encode())
+            artifacts[path] = hashlib.sha256(path.read_bytes()).hexdigest()
+        (directory / "run-result.json").write_bytes(b"candidate")
+        on_wave_complete(WaveRunResult(0.25, 25, RunResult(1, 1, 0.4, artifacts)))
+        raise RuntimeError("second wave failed")
+
+    def fake_upload(_cos, path, _bucket, key, digest):
+        uploads.append(path.name)
+        return SimpleNamespace(key=key, length=path.stat().st_size, sha256=digest)
+
+    monkeypatch.setattr(worker, "run_training_waves", fail_after_first)
+    monkeypatch.setattr(worker, "upload_verified", fake_upload)
+    monkeypatch.setattr(worker, "_put_immutable", lambda _cos, _spec, _key, body: receipts.append(body))
+
+    with pytest.raises(RuntimeError, match="second wave failed"):
+        worker.execute_worker(cos=object())
+
+    assert set(uploads) == {"checkpoint.pt", "class-map.json", "metrics.json", "run-result.json"}
+    assert json.loads(receipts[0])["status"] == "failed"
 
 
 @pytest.mark.parametrize("failure", ["missing-context", "receipt-write"])

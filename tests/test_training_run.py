@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import math
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -413,7 +414,7 @@ def test_wave_runner_refuses_duplicate_only_entity_waves(training_fixture, monke
     bundle = load_training_data(cos, spec)
     called: list[Path] = []
 
-    def fake_run(_bundle, _spec, output_dir):
+    def fake_run(_bundle, _spec, output_dir, **_kwargs):
         called.append(output_dir)
         return RunResult(1, 1, 0.5, {})
 
@@ -455,8 +456,15 @@ def test_wave_runner_trains_only_when_entity_set_grows(training_fixture, monkeyp
     )
     called: list[str] = []
 
-    def fake_run(_bundle, _spec, output_dir):
+    def fake_run(_bundle, _spec, output_dir, **_kwargs):
         called.append(output_dir.name)
+        assert len({
+            record.subject_id
+            for record in _bundle.records
+            if _bundle.split_by_asset[record.asset_id] == "train"
+        }) == len({
+            record.subject_id for record in bundle.records if record.asset_id in train_ids
+        }) + len(called) - 1
         return RunResult(1, 1, {"wave-025": 0.4, "wave-050": 0.6}[output_dir.name], {})
 
     monkeypatch.setattr(
@@ -644,6 +652,34 @@ def test_two_epoch_cpu_training_writes_verified_head_only_artifacts(
         lambda _counts: pytest.fail("valid completed run must resume without retraining"),
     )
     assert run_training(bundle, spec, tmp_path) == result
+
+
+def test_deadline_publishes_last_complete_epoch_checkpoint(
+    training_fixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    cos, spec, _manifest, _splits, _images = training_fixture
+    bundle = load_training_data(cos, spec)
+    monkeypatch.setattr(training_run, "MAX_EPOCHS", 3)
+    monkeypatch.setattr(training_run, "_hard_deadline", lambda _deadline: nullcontext())
+    monkeypatch.setattr(
+        training_run, "build_trainable_model",
+        lambda counts: build_trainable_model(counts, backbone=_StubBackbone()),
+    )
+    clock = iter((0.0, 0.0, 2.0))
+    monkeypatch.setattr(training_run.time, "monotonic", lambda: next(clock, 2.0))
+
+    def fake_epoch_loss(_model, _bundle, split, _cache_dir, _criteria, _device, *, epoch, optimizer):
+        if epoch == 2:
+            raise TimeoutError("training deadline expired")
+        return 0.5 if split == "train" else 0.4
+
+    monkeypatch.setattr(training_run, "_epoch_loss", fake_epoch_loss)
+
+    result = run_training(bundle, spec, tmp_path, deadline=1.0)
+
+    assert result.epochs_completed == 1
+    assert (tmp_path / "checkpoint.pt").is_file()
+    assert (tmp_path / "run-result.json").is_file()
 
 
 def test_resume_refuses_mismatched_lineage(training_fixture, tmp_path: Path):
