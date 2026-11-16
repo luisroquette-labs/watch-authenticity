@@ -17,7 +17,12 @@ from dataset.splits import (
     TRAIN,
     VAL,
 )
-from evaluation.evaluate import EntitySafetyReport, SourceProbeReport, evaluate_entity_safety
+from evaluation.evaluate import (
+    EntityCohort,
+    EntitySafetyReport,
+    SourceProbeReport,
+    evaluate_entity_safety,
+)
 from training.data import TrainingBundle
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -89,6 +94,7 @@ class EvaluationReport:
 class ReleaseDecision:
     allowed: bool
     reasons: tuple[str, ...]
+    provisional_entity_cohorts: tuple[EntityCohort, ...] = ()
 
 
 def build_slice_census(bundle: TrainingBundle) -> SliceCensus:
@@ -135,6 +141,7 @@ def release_gate(
     maximum_cross_source_delta: float = 0.10,
 ) -> ReleaseDecision:
     reasons: list[str] = []
+    entity_cohorts: tuple[EntityCohort, ...] = ()
     if source_probe.blocked:
         reasons.append("source-domain shortcut")
     if report is None or bundle is None:
@@ -161,6 +168,9 @@ def release_gate(
         except ValueError as exc:
             reasons.append(f"invalid entity-level safety evidence: {exc}")
         else:
+            # The current evaluator has no persisted prediction/quality proof producer.
+            # Caller-supplied conclusions and self-hashed scores are diagnostics only.
+            reasons.append("authoritative persisted prediction and qualified-quality evidence is missing")
             for cohort in entity_cohorts[:2]:
                 if cohort.total == 0 or cohort.answered / cohort.total < 0.20:
                     reasons.append(f"insufficient non-inconclusive coverage: {cohort.name}")
@@ -205,4 +215,4 @@ def release_gate(
         gold.balanced_accuracy, report.gold_baseline_accuracy
     ):
         reasons.append("gold-set regression")
-    return ReleaseDecision(not reasons, tuple(reasons))
+    return ReleaseDecision(not reasons, tuple(reasons), entity_cohorts)

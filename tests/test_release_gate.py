@@ -233,6 +233,12 @@ def test_high_average_cannot_hide_false_reassurance_on_confirmed_quality_fake(re
 
     assert not decision.allowed
     assert any("high-quality fake false-reassurance" in reason for reason in decision.reasons)
+    assert decision.provisional_entity_cohorts[-1].conclusion_counts == (
+        ("fake_likely", 0),
+        ("inconclusive", 0),
+        ("no_visible_inconsistency", 1),
+        ("rejection", 0),
+    )
 
 
 def test_all_inconclusive_fails_coverage_for_each_class(release_bundle):
@@ -287,3 +293,28 @@ def test_quality_digest_alone_does_not_make_a_fake_high_quality(release_bundle):
 
     with pytest.raises(ValueError, match="not bound"):
         evaluate_entity_safety(release_bundle, tampered)
+
+
+def test_self_reported_clean_counts_never_authorize_release(release_bundle, monkeypatch):
+    from evaluation.evaluate import EntityCohort
+
+    safety = _safety(
+        release_bundle, fake_answer="fake_likely", genuine_answer="no_visible_inconsistency"
+    )
+    clean = (
+        EntityCohort("genuine", 100, 100, 0, None, ()),
+        EntityCohort("fake", 100, 100, 0, 0.03, ()),
+        *(EntityCohort(f"fake-{grade}", 25, 25, 0, 0.04, ()) for grade in range(1, 5)),
+        EntityCohort("high-quality-fake", 100, 100, 0, 0.03, ()),
+    )
+    monkeypatch.setattr("evaluation.release_gate.evaluate_entity_safety", lambda *_: clean)
+    report = EvaluationReport(
+        release_bundle.freeze_sha256, MODEL_SHA, 0.03, 0.8,
+        _required_slices(release_bundle), safety,
+    )
+
+    decision = release_gate(_probe(release_bundle.freeze_sha256), report, release_bundle)
+
+    assert not decision.allowed
+    assert "authoritative persisted prediction and qualified-quality evidence is missing" in decision.reasons
+    assert decision.provisional_entity_cohorts == clean

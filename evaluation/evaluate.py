@@ -60,6 +60,7 @@ class EntityCohort:
     total: int
     false_reassurance: int
     false_reassurance_upper95: float | None
+    conclusion_counts: tuple[tuple[str, int], ...]
 
     @property
     def abstention_rate(self) -> float:
@@ -94,7 +95,7 @@ def false_reassurance_upper95(errors: int, total: int) -> float:
 
 
 def evaluate_entity_safety(bundle: TrainingBundle, report: EntitySafetyReport) -> tuple[EntityCohort, ...]:
-    """Reconcile one result per frozen holdout watch with confirmed quality evidence."""
+    """Compute provisional counts; caller-supplied claims are not release evidence."""
     from dataset.splits import TRAIN, VAL
 
     if report.freeze_sha256 != bundle.freeze_sha256:
@@ -141,6 +142,7 @@ def evaluate_entity_safety(bundle: TrainingBundle, report: EntitySafetyReport) -
         return EntityCohort(
             name, answered, len(values), errors,
             false_reassurance_upper95(errors, len(values)) if fake and values else None,
+            tuple((conclusion, values.count(conclusion)) for conclusion in sorted(_ENTITY_CONCLUSIONS)),
         )
 
     genuine_entities = {entity for entity, records in holdout.items() if records[0].label is Label.GENUINE}
