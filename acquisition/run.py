@@ -479,13 +479,16 @@ def run_planned_public_collection_once(
     image_client: Any,
     known_entity_ids: frozenset[str],
     review: Callable[
-        [AcquisitionTarget, tuple[str, ...]],
+        [AcquisitionTarget, tuple[str, ...], str],
         tuple[Mapping[str, str], Sequence[TrainingRecord]],
     ],
 ) -> dict[str, object]:
     """Collect one authorized planned wave; measure only manifest-admitted new entities.
 
-    The review owner returns candidate-to-entity bindings and admitted manifest rows;
+    review(target, candidate_ids, batch_id) must persist/reuse its admission decision
+    idempotently by batch_id before returning candidate bindings and admitted rows.
+    It may instead read already persisted decisions without admission side effects.
+    A failed result write retries the same operation key and pre-admission baseline;
     discovery metadata and private-download receipts never establish eligibility.
     """
     target = next(
@@ -535,7 +538,7 @@ def run_planned_public_collection_once(
             if reviewed_status.get("context") != context:
                 raise RuntimeError("immutable collection review context mismatch")
             return
-        bindings, admitted = review(target, candidate_ids)
+        bindings, admitted = review(target, candidate_ids, batch_id)
         if set(bindings) != set(candidate_ids) or any(not entity for entity in bindings.values()):
             raise ValueError("review must bind every collected candidate to a watch entity")
         new_entities: set[str] = set()

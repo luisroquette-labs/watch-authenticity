@@ -760,7 +760,7 @@ def test_planned_wave_selects_viable_source_and_persists_reviewed_yield(
         now=NOW,
         image_client=object(),
         known_entity_ids=frozenset({"watch-1"} if known else ()),
-        review=lambda target, ids: ({"candidate": "watch-1"}, (row,) if admit else ()),
+        review=lambda target, ids, batch_id: ({"candidate": "watch-1"}, (row,) if admit else ()),
     )
     assert calls == ["partner"]
     assert status["eligible_yield"] == [1, expected]
@@ -794,7 +794,7 @@ def test_planned_wave_skips_unavailable_sources_without_collection(cos, monkeypa
         now=NOW,
         image_client=object(),
         known_entity_ids=frozenset(),
-        review=lambda target, ids: pytest.fail("unexpected review"),
+        review=lambda target, ids, batch_id: pytest.fail("unexpected review"),
     )
     assert result == {"state": "no_viable_target"}
 
@@ -897,7 +897,7 @@ def test_planned_wave_denied_first_source_falls_through_without_discovery(cos, m
         discoveries={"denied": lambda p: pytest.fail("unauthorized discovery"),
                      "partner": lambda p: SimpleNamespace(records=())},
         now=NOW, image_client=object(), known_entity_ids=frozenset(),
-        review=lambda target, ids: ({}, ()))
+        review=lambda target, ids, batch_id: ({}, ()))
     assert calls == ["partner"]
 
 
@@ -927,7 +927,7 @@ def test_review_result_reused_after_cursor_write_failure(cos, monkeypatch):
                      image_urls=tuple(f"https://upload.wikimedia.org/{i}.jpg" for i in range(20)))
     page = replace(_result().page, source="partner", records=(record,))
     reviews = []
-    def review(target, ids):
+    def review(target, ids, batch_id):
         reviews.append(ids)
         return {"candidate": "watch-1"}, (row,)
     kwargs = dict(policies={"partner": policy}, accesses={"partner": access},
@@ -942,3 +942,55 @@ def test_review_result_reused_after_cursor_write_failure(cos, monkeypatch):
     assert status["eligible_yield"] == [1, 1]
     assert status["baseline_entity_ids"] == []
     assert status["candidate_consumption"] == 20
+
+
+def test_admission_is_idempotent_when_review_result_write_fails(cos, monkeypatch):
+    from dataclasses import replace
+
+    from acquisition.planner import AcquisitionTarget
+    from acquisition.run import run_planned_public_collection_once
+    from tests.test_dataset_readiness import _record
+
+    policy, access, authorization = _planned_source()
+    target = AcquisitionTarget("genuine", "dial", 500, 100, "partner", "seller", 0, True, 20, 11, None)
+    row = replace(_record(1), candidate_id="candidate", source_domain="partner", seller_group_id="seller")
+    admissions = []
+    saved_decisions = {}
+
+    def review(target, ids, batch_id=None):
+        # The admission owner persists its decision under the supplied operation key.
+        if batch_id is None or batch_id not in saved_decisions:
+            admissions.append("watch-1")
+            result = ({"candidate": "watch-1"}, (row,))
+            if batch_id is not None:
+                saved_decisions[batch_id] = result
+            return result
+        return saved_decisions[batch_id]
+
+    def collect(*args, **kwargs):
+        kwargs["on_collected"](("candidate",), "2026-11-10", "stable-batch", 20)
+        return {"state": "complete"}
+
+    original_put = cos.put_object_if_absent
+    failures = []
+
+    def put(**kwargs):
+        if kwargs["Key"].endswith("/review.json") and not failures:
+            failures.append(kwargs["Key"])
+            raise RuntimeError("review result COS unavailable")
+        return original_put(**kwargs)
+
+    monkeypatch.setattr(cos, "put_object_if_absent", put)
+    monkeypatch.setattr("acquisition.run.run_public_image_collection_once", collect)
+    kwargs = dict(policies={"partner": policy}, accesses={"partner": access},
+                  authorizations={"partner": authorization}, discoveries={"partner": lambda p: None},
+                  now=NOW, image_client=object(), review=review)
+    with pytest.raises(RuntimeError, match="review result COS unavailable"):
+        run_planned_public_collection_once(cos, "private", "datasets", (target,),
+                                           known_entity_ids=frozenset(), **kwargs)
+    status = run_planned_public_collection_once(cos, "private", "datasets", (target,),
+                                               known_entity_ids=frozenset({"watch-1"}), **kwargs)
+    assert admissions == ["watch-1"]
+    assert list(saved_decisions) == ["stable-batch"]
+    assert status["eligible_yield"] == [1, 1]
+    assert status["baseline_entity_ids"] == []
