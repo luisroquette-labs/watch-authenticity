@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from math import ceil
 
 from dataset.readiness import MIN_CELL_ENTITIES, MIN_CELL_IMAGES, ReadinessReport
 from evaluation.evaluate import CollectionWave, collection_decision
@@ -22,6 +23,7 @@ class AcquisitionTarget:
     candidate_limit: int
     eligible_source_capacity: int
     eligible_yield: tuple[int, int] | None
+    observed_candidates: int | None = None
 
 
 def plan_acquisition(
@@ -31,16 +33,20 @@ def plan_acquisition(
     source_entity_counts: Mapping[str, int],
     seller_entity_counts: Mapping[str, int],
     eligible_yield_by_source: Mapping[str, tuple[int, int]],
+    candidate_consumption_by_source: Mapping[str, int],
 ) -> tuple[AcquisitionTarget, ...]:
     """Rank cell deficits while selecting one non-dominant source and seller."""
     if report.ready or collection_decision(tuple(waves)).stop_same_distribution:
         return ()
-    for reviewed, admitted in eligible_yield_by_source.values():
+    for source_name, (reviewed, admitted) in eligible_yield_by_source.items():
+        consumed = candidate_consumption_by_source.get(source_name)
         if (
             any(
                 isinstance(n, bool) or not isinstance(n, int) or n < 0 for n in (reviewed, admitted)
             )
             or admitted > reviewed
+            or isinstance(consumed, bool) or not isinstance(consumed, int)
+            or consumed < reviewed
         ):
             raise ValueError("yield must count reviewed and admitted independent entities")
     _least_used_eligible(source_entity_counts, 40)  # Validate before ranking.
@@ -59,7 +65,7 @@ def plan_acquisition(
         reviewed, admitted = eligible_yield_by_source.get(name, (0, 0))
         expected_gain = (
             min(
-                20 * admitted / reviewed,
+                20 * admitted / candidate_consumption_by_source[name],
                 _additional_capacity(source_entity_counts, name, 40),
                 seller_capacity,
             )
@@ -96,7 +102,8 @@ def plan_acquisition(
     observed = eligible_yield_by_source.get(source)
     exploratory = observed is None
     candidate_limit = 20
-    expected = 0 if observed is None else int(candidate_limit * observed[1] / observed[0])
+    observed_candidates = candidate_consumption_by_source[source] if observed is not None else None
+    expected = 0 if observed is None or observed_candidates is None else ceil(candidate_limit * observed[1] / observed_candidates)
     for output, angle, missing_images, missing_entities in ordered:
         if remaining_capacity <= 0:
             break
@@ -115,6 +122,7 @@ def plan_acquisition(
                 candidate_limit,
                 min(source_capacity, seller_capacity),
                 None if exploratory else observed,
+                observed_candidates,
             )
         )
         if exploratory:

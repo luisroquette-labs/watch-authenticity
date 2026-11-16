@@ -7,7 +7,7 @@ def _report(*cells):
     return ReadinessReport("rolex-submariner-126610ln", False, (), tuple(cells))
 
 
-def _plan(report, waves=(), yields=None):
+def _plan(report, waves=(), yields=None, consumption=None):
     return plan_acquisition(
         report,
         waves,
@@ -17,6 +17,7 @@ def _plan(report, waves=(), yields=None):
             "partner-c.example": 30,
         },
         eligible_yield_by_source=yields or {},
+        candidate_consumption_by_source=consumption if consumption is not None else {name: counts[0] for name, counts in (yields or {}).items()},
         seller_entity_counts={**{f"seller-{index}": 10 for index in range(10)}, "seller-new": 0},
     )
 
@@ -111,3 +112,17 @@ def test_empty_exploration_is_not_repeated():
         )
         == ()
     )
+
+
+def test_twenty_reposts_of_one_watch_lose_to_twenty_distinct_watches():
+    targets = _plan(_report(("genuine/dial", 0, 0)),
+                    yields={"partner-b.example": (1, 1), "partner-c.example": (20, 20)},
+                    consumption={"partner-b.example": 20, "partner-c.example": 20})
+    assert targets[0].source == "partner-c.example"
+
+
+def test_low_nonzero_yield_still_plans_positive_entity_gain():
+    targets = _plan(_report(("genuine/dial", 0, 0)),
+                    yields={"partner-b.example": (100, 1), "partner-c.example": (20, 0)},
+                    consumption={"partner-b.example": 200, "partner-c.example": 20})
+    assert targets[0].planned_new_entities == 1

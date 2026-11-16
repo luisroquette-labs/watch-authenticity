@@ -25,6 +25,8 @@ from acquisition.discovery import DiscoveryCommit, DiscoveryPage, append_discove
 from acquisition.http import PinnedRequestsClient
 from acquisition.planner import AcquisitionTarget
 from acquisition.source_policy import (
+    authorize_candidate,
+    authorize_discovery,
     get_source_policy,
     load_source_access_registry,
     load_source_policies,
@@ -32,7 +34,6 @@ from acquisition.source_policy import (
 from acquisition.types import (
     CollectionAuthorizationRecord,
     SourceAccessRecord,
-    SourceAccessStatus,
     SourcePolicy,
     TrainingRecord,
 )
@@ -385,7 +386,7 @@ def run_public_image_collection_once(
     image_client: Any,
     discover: Callable[[DiscoveryCommit | None], Any],
     candidate_limit: int | None = None,
-    on_collected: Callable[[tuple[str, ...], str, str], None] | None = None,
+    on_collected: Callable[[tuple[str, ...], str, str, int], None] | None = None,
 ) -> dict[str, object]:
     """Discover, privately archive every image, then commit the source cursor."""
     collection_prefix = f"{prefix.strip('/')}/public-downloads"
@@ -442,7 +443,7 @@ def run_public_image_collection_once(
         now=now,
     )
     if on_collected is not None:
-        on_collected(tuple(receipt.accepted_candidate_ids), cycle, batch_id)
+        on_collected(tuple(receipt.accepted_candidate_ids), cycle, batch_id, len(candidates))
     commit = append_discovery_page(
         cos_client,
         bucket,
@@ -495,8 +496,8 @@ def run_planned_public_collection_once(
             and item.source in accesses
             and item.source in authorizations
             and item.source in discoveries
-            and accesses[item.source].status is SourceAccessStatus.ACTIVE
-            and accesses[item.source].verified_at <= now < accesses[item.source].expires_at
+            and authorize_discovery(policies[item.source], accesses[item.source], now=now).allowed
+            and authorize_candidate(policies[item.source], authorizations[item.source], now=now).may_download
         ),
         None,
     )
@@ -512,8 +513,28 @@ def run_planned_public_collection_once(
 
     reviewed_status: dict[str, object] = {}
 
-    def on_collected(candidate_ids: tuple[str, ...], cycle: str, batch_id: str) -> None:
+    def on_collected(candidate_ids: tuple[str, ...], cycle: str, batch_id: str, consumed: int) -> None:
         nonlocal reviewed_status
+        root = f"{prefix.strip('/')}/eligible-yields/batches/{batch_id}"
+        context = {"source": source, "output": target.output, "angle": target.angle,
+                   "seller_group_id": target.seller_group_id,
+                   "candidate_ids": sorted(candidate_ids), "collection_batch_id": batch_id,
+                   "candidate_consumption": consumed}
+        baseline = _immutable_review_document(
+            cos_client, bucket, root + "/baseline.json",
+            {"context": context, "baseline_entity_ids": sorted(known_entity_ids)},
+        )
+        if baseline.get("context") != context:
+            raise RuntimeError("collection batch review context conflicts with immutable baseline")
+        baseline_ids = baseline.get("baseline_entity_ids")
+        if not isinstance(baseline_ids, list) or not all(isinstance(item, str) for item in baseline_ids):
+            raise RuntimeError("collection review baseline entity IDs invalid")
+        previous = _read_if_present(cos_client, bucket, root + "/review.json")
+        if previous is not None:
+            reviewed_status = _canonical_document(previous)
+            if reviewed_status.get("context") != context:
+                raise RuntimeError("immutable collection review context mismatch")
+            return
         bindings, admitted = review(target, candidate_ids)
         if set(bindings) != set(candidate_ids) or any(not entity for entity in bindings.values()):
             raise ValueError("review must bind every collected candidate to a watch entity")
@@ -533,12 +554,14 @@ def run_planned_public_collection_once(
                 or row.is_augmented
             ):
                 raise ValueError("admitted row does not match reviewed planned cell")
-            if row.watch_entity_id not in known_entity_ids:
+            if row.watch_entity_id not in baseline_ids:
                 new_entities.add(row.watch_entity_id)
         if len(new_entities) > target.eligible_source_capacity:
             raise ValueError("admitted yield exceeds source/seller capacity")
         reviewed_status = {
             "cycle": cycle,
+            "context": context,
+            "baseline_entity_ids": baseline_ids,
             "source": source,
             "state": "review_complete",
             "collection_batch_id": batch_id,
@@ -551,10 +574,13 @@ def run_planned_public_collection_once(
             "missing_entities": target.missing_entities,
             "eligible_source_capacity": target.eligible_source_capacity,
             "eligible_yield": [len(set(bindings.values())), len(new_entities)],
+            "candidate_consumption": consumed,
             "reviewed_at": now.isoformat(),
             "evidence_record_ids": sorted({row.evidence_record_id for row in admitted}),
         }
-        _persist_status(cos_client, bucket, f"{prefix.strip('/')}/eligible-yields", reviewed_status)
+        reviewed_status = _immutable_review_document(
+            cos_client, bucket, root + "/review.json", reviewed_status,
+        )
 
     status = run_public_image_collection_once(
         cos_client, bucket, prefix, policies[source], accesses[source], authorizations[source],
@@ -562,6 +588,20 @@ def run_planned_public_collection_once(
         candidate_limit=target.candidate_limit, on_collected=on_collected,
     )
     return {**reviewed_status, **status}
+
+
+def _immutable_review_document(
+    cos_client: Any, bucket: str, key: str, document: dict[str, object],
+) -> dict[str, object]:
+    body = _canonical(document)
+    cos_client.put_object_if_absent(
+        Bucket=bucket, Key=key, Body=body, ContentType="application/json",
+        Metadata={"sha256": hashlib.sha256(body).hexdigest(), "length": str(len(body))},
+    )
+    persisted = _read_if_present(cos_client, bucket, key)
+    if persisted is None:
+        raise RuntimeError("immutable collection review readback failed")
+    return _canonical_document(persisted)
 
 
 def run_public_image_collection_resilient(
