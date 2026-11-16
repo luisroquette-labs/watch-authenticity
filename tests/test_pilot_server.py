@@ -12,6 +12,7 @@ from http.server import HTTPServer
 from pathlib import Path
 from typing import Any, cast
 
+import cv2
 import pytest
 from PIL import Image, ImageDraw, ImageFilter
 
@@ -109,9 +110,29 @@ def test_bezel_color_reads_ring_and_ignores_dial(ring_color: str, expected: str)
     face = Image.new("RGB", (300, 300), "white")
     draw = ImageDraw.Draw(face)
     draw.ellipse((5, 5, 295, 295), fill=ring_color)
-    draw.ellipse((48, 48, 252, 252), fill="#137746")
+    draw.ellipse((48, 48, 252, 252), fill="white")
     assert bezel_color_hint(face) == expected
     assert bezel_color_hint(face.resize((140, 140))) == "uncertain"
+
+
+def test_dial_without_visible_bezel_cannot_supply_bezel_color() -> None:
+    face = Image.new("RGB", (300, 300), "white")
+    ImageDraw.Draw(face).ellipse((5, 5, 295, 295), fill="#137746")
+    assert bezel_color_hint(face) == "uncertain"
+    assert reference_candidate("green", bezel_color_hint(face)) is None
+
+
+def test_bezel_analysis_downsamples_large_photo(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = cv2.cvtColor
+    shapes = []
+
+    def checked(image, conversion):
+        shapes.append(image.shape)
+        return original(image, conversion)
+
+    monkeypatch.setattr(cv2, "cvtColor", checked)
+    assert bezel_color_hint(Image.new("RGB", (5000, 5000), "green")) == "uncertain"
+    assert shapes and all(max(shape[:2]) <= 512 for shape in shapes)
 
 
 def test_reference_routing_requires_consistent_separate_dial_and_bezel_clues() -> None:

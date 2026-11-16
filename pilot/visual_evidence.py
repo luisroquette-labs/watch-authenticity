@@ -20,17 +20,44 @@ REFERENCE_PATTERNS = {
 
 
 def bezel_color_hint(face: Image.Image) -> str:
-    """Read the outer ring only when color spans most of a large dial crop."""
+    """Read the bezel only when distinct concentric dial and bezel edges are visible."""
     if min(face.size) < 160:
         return "uncertain"
-    hsv = cv2.cvtColor(np.asarray(face.convert("RGB")), cv2.COLOR_RGB2HSV)
-    height, width = hsv.shape[:2]
+    face = face.convert("RGB")
+    face.thumbnail((512, 512))
+    rgb = np.asarray(face)
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 45, 110)
+    height, width = gray.shape
+    size = min(height, width)
+    circles = []
+    for contour in cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[0]:
+        if len(contour) < 40:
+            continue
+        perimeter = cv2.arcLength(contour, True)
+        area = cv2.contourArea(contour)
+        if perimeter == 0 or 4 * np.pi * area / perimeter**2 < 0.65:
+            continue
+        (cx, cy), r = cv2.minEnclosingCircle(contour)
+        if 0.25 * size < r < 0.51 * size:
+            circles.append((cx, cy, r))
+    pair = next(
+        ((outer, inner) for outer in sorted(circles, key=lambda c: -c[2])
+         for inner in circles
+         if 0.08 * size < outer[2] - inner[2] < 0.24 * size
+         and np.hypot(outer[0] - inner[0], outer[1] - inner[1]) < 0.04 * size),
+        None,
+    )
+    if pair is None:
+        return "uncertain"
+    outer, inner = pair
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
     y, x = np.mgrid[:height, :width]
-    dx = (x - width / 2) / (width / 2)
-    dy = (y - height / 2) / (height / 2)
+    dx = (x - outer[0]) / outer[2]
+    dy = (y - outer[1]) / outer[2]
     radius = np.hypot(dx, dy)
     sector = ((np.arctan2(dy, dx) + np.pi) / (np.pi / 4)).astype(int) % 8
-    ring = (radius > 0.72) & (radius < 0.91)
+    ring = (radius > (inner[2] / outer[2] + 0.03)) & (radius < 0.96)
     hue, saturation, lightness = cv2.split(hsv)
     masks = {
         "green": (hue >= 35) & (hue < 90) & (saturation > 45) & (lightness > 30),
