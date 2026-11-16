@@ -18,6 +18,10 @@ class AcquisitionTarget:
     source: str
     seller_group_id: str
     planned_new_entities: int
+    exploratory: bool
+    candidate_limit: int
+    eligible_source_capacity: int
+    eligible_yield: tuple[int, int] | None
 
 
 def plan_acquisition(
@@ -26,16 +30,48 @@ def plan_acquisition(
     *,
     source_entity_counts: Mapping[str, int],
     seller_entity_counts: Mapping[str, int],
+    eligible_yield_by_source: Mapping[str, tuple[int, int]],
 ) -> tuple[AcquisitionTarget, ...]:
     """Rank cell deficits while selecting one non-dominant source and seller."""
     if report.ready or collection_decision(tuple(waves)).stop_same_distribution:
         return ()
-    source = _least_used_eligible(source_entity_counts, 40)
+    for reviewed, admitted in eligible_yield_by_source.values():
+        if (
+            any(
+                isinstance(n, bool) or not isinstance(n, int) or n < 0 for n in (reviewed, admitted)
+            )
+            or admitted > reviewed
+        ):
+            raise ValueError("yield must count reviewed and admitted independent entities")
+    _least_used_eligible(source_entity_counts, 40)  # Validate before ranking.
     seller = _least_used_eligible(seller_entity_counts, 10)
-    if source is None or seller is None:
+    if seller is None:
+        return ()
+    seller_capacity = _additional_capacity(seller_entity_counts, seller, 10)
+    viable = [
+        name
+        for name in source_entity_counts
+        if _additional_capacity(source_entity_counts, name, 40) > 0
+        and (name not in eligible_yield_by_source or eligible_yield_by_source[name][1] > 0)
+    ]
+
+    def source_rank(name: str) -> tuple[float, int, str]:
+        reviewed, admitted = eligible_yield_by_source.get(name, (0, 0))
+        expected_gain = (
+            min(
+                20 * admitted / reviewed,
+                _additional_capacity(source_entity_counts, name, 40),
+                seller_capacity,
+            )
+            if reviewed
+            else 0
+        )
+        return (-expected_gain, source_entity_counts[name], name)
+
+    source = min(viable, key=source_rank) if viable else None
+    if source is None:
         return ()
     source_capacity = _additional_capacity(source_entity_counts, source, 40)
-    seller_capacity = _additional_capacity(seller_entity_counts, seller, 10)
     pending: list[tuple[str, str, int, int]] = []
     for cell, images, entities in report.cell_counts:
         missing_images = max(0, MIN_CELL_IMAGES - images)
@@ -57,8 +93,14 @@ def plan_acquisition(
     )
     targets: list[AcquisitionTarget] = []
     remaining_capacity = min(source_capacity, seller_capacity)
+    observed = eligible_yield_by_source.get(source)
+    exploratory = observed is None
+    candidate_limit = 20
+    expected = 0 if observed is None else int(candidate_limit * observed[1] / observed[0])
     for output, angle, missing_images, missing_entities in ordered:
-        planned = min(missing_entities, remaining_capacity)
+        if remaining_capacity <= 0:
+            break
+        planned = min(missing_entities, remaining_capacity, expected)
         remaining_capacity -= planned
         targets.append(
             AcquisitionTarget(
@@ -69,8 +111,14 @@ def plan_acquisition(
                 source,
                 seller,
                 planned,
+                exploratory,
+                candidate_limit,
+                min(source_capacity, seller_capacity),
+                None if exploratory else observed,
             )
         )
+        if exploratory:
+            break
     return tuple(targets)
 
 

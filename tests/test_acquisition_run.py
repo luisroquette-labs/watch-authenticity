@@ -717,3 +717,139 @@ def test_github_fallback_runs_preflight_without_building_images():
     assert "mypy . --config-file pyproject.toml" in script
     assert "pytest tests/" in script
     assert "--ignore=tests/test_training_image_runtime.py" in script
+
+
+@pytest.mark.parametrize(
+    "admit,known,expected", [(False, False, 0), (True, False, 1), (True, True, 0)]
+)
+def test_planned_wave_selects_viable_source_and_persists_reviewed_yield(
+    cos, monkeypatch, admit, known, expected
+):
+    from acquisition.planner import AcquisitionTarget
+    from acquisition.run import run_planned_public_collection_once
+    from acquisition.types import SourceAccessStatus
+
+    target = AcquisitionTarget(
+        "genuine", "dial", 500, 100, "partner", "seller", 0, True, 20, 11, None
+    )
+    from dataclasses import replace
+
+    from tests.test_dataset_readiness import _record
+
+    row = replace(
+        _record(1), candidate_id="candidate", source_domain="partner", seller_group_id="seller"
+    )
+    calls = []
+    def collect(*args, **kwargs):
+        calls.append(args[3].source)
+        kwargs["on_collected"](("candidate",), "2026-11-10", "public-batch")
+        return {
+            "cycle": "2026-11-10", "source": "partner", "state": "complete",
+            "commit_sha256": "a" * 64, "accepted_candidate_ids": ["candidate"],
+        }
+
+    monkeypatch.setattr("acquisition.run.run_public_image_collection_once", collect)
+    status = run_planned_public_collection_once(
+        cos,
+        "private",
+        "datasets",
+        (target,),
+        policies={"partner": SimpleNamespace(source="partner")},
+        accesses={
+            "partner": SimpleNamespace(
+                source="partner",
+                status=SourceAccessStatus.ACTIVE,
+                verified_at=NOW,
+                expires_at=NOW.replace(year=2027),
+            )
+        },
+        authorizations={"partner": SimpleNamespace(source="partner")},
+        discoveries={"partner": lambda previous: None},
+        now=NOW,
+        image_client=object(),
+        known_entity_ids=frozenset({"watch-1"} if known else ()),
+        review=lambda target, ids: ({"candidate": "watch-1"}, (row,) if admit else ()),
+    )
+    assert calls == ["partner"]
+    assert status["eligible_yield"] == [1, expected]
+    assert status["output"] == "genuine"
+    assert status["angle"] == "dial"
+    assert status["exploratory"] is True
+    assert any("acquisition-status" in key for key in cos.bodies)
+
+
+def test_planned_wave_skips_unavailable_sources_without_collection(cos, monkeypatch):
+    from acquisition.planner import AcquisitionTarget
+    from acquisition.run import run_planned_public_collection_once
+    from acquisition.types import SourceAccessStatus
+
+    target = AcquisitionTarget(
+        "genuine", "dial", 500, 100, "partner", "seller", 0, True, 20, 11, None
+    )
+    monkeypatch.setattr(
+        "acquisition.run.run_public_image_collection_once",
+        lambda *args, **kwargs: pytest.fail("unavailable source collected"),
+    )
+    result = run_planned_public_collection_once(
+        cos,
+        "private",
+        "datasets",
+        (target,),
+        policies={"partner": SimpleNamespace()},
+        accesses={"partner": SimpleNamespace(status=SourceAccessStatus.UNAVAILABLE)},
+        authorizations={"partner": SimpleNamespace()},
+        discoveries={"partner": lambda p: None},
+        now=NOW,
+        image_client=object(),
+        known_entity_ids=frozenset(),
+        review=lambda target, ids: pytest.fail("unexpected review"),
+    )
+    assert result == {"state": "no_viable_target"}
+
+
+def test_bounded_public_wave_counts_images_and_preserves_unconsumed_cursor(cos, monkeypatch):
+    from dataclasses import replace
+
+    page = _result().page
+    record = replace(
+        page.records[0],
+        image_ids=("one", "two"),
+        image_urls=("https://upload.wikimedia.org/one.jpg", "https://upload.wikimedia.org/two.jpg"),
+    )
+    page = replace(page, records=(record,))
+    monkeypatch.setattr(
+        "acquisition.run.collect_batch", lambda *args, **kwargs: pytest.fail("over-limit download")
+    )
+    with pytest.raises(ValueError, match="bounded candidate wave"):
+        run_public_image_collection_once(
+            cos,
+            "private",
+            "datasets",
+            SimpleNamespace(source="wikimedia"),
+            SimpleNamespace(),
+            SimpleNamespace(),
+            now=NOW,
+            image_client=object(),
+            discover=lambda previous: page,
+            candidate_limit=1,
+        )
+    assert not cos.bodies
+
+
+def test_failed_evidence_review_does_not_advance_collection_cursor(cos, monkeypatch):
+    monkeypatch.setattr(
+        "acquisition.run.collect_batch",
+        lambda *args, **kwargs: SimpleNamespace(accepted_candidate_ids=("candidate",)),
+    )
+
+    def review(*args):
+        raise RuntimeError("evidence review unavailable")
+
+    with pytest.raises(RuntimeError, match="evidence review unavailable"):
+        run_public_image_collection_once(
+            cos, "private", "datasets", SimpleNamespace(source="wikimedia"),
+            SimpleNamespace(), SimpleNamespace(), now=NOW, image_client=object(),
+            discover=lambda previous: _result().page, candidate_limit=20,
+            on_collected=review,
+        )
+    assert not any("/discovery/" in key for key in cos.bodies)

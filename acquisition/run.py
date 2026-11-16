@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -22,6 +23,7 @@ from acquisition.collect import (
 from acquisition.cos import AtomicCOSClient
 from acquisition.discovery import DiscoveryCommit, DiscoveryPage, append_discovery_page
 from acquisition.http import PinnedRequestsClient
+from acquisition.planner import AcquisitionTarget
 from acquisition.source_policy import (
     get_source_policy,
     load_source_access_registry,
@@ -30,7 +32,9 @@ from acquisition.source_policy import (
 from acquisition.types import (
     CollectionAuthorizationRecord,
     SourceAccessRecord,
+    SourceAccessStatus,
     SourcePolicy,
+    TrainingRecord,
 )
 from infra.ibm_cos import (
     IntegrityError,
@@ -380,6 +384,8 @@ def run_public_image_collection_once(
     now: datetime,
     image_client: Any,
     discover: Callable[[DiscoveryCommit | None], Any],
+    candidate_limit: int | None = None,
+    on_collected: Callable[[tuple[str, ...], str, str], None] | None = None,
 ) -> dict[str, object]:
     """Discover, privately archive every image, then commit the source cursor."""
     collection_prefix = f"{prefix.strip('/')}/public-downloads"
@@ -393,6 +399,13 @@ def run_public_image_collection_once(
     page = discover(previous)
     if not isinstance(page, DiscoveryPage) or page.source != source:
         raise RuntimeError("public image discovery returned the wrong source")
+    if candidate_limit is not None and (
+        isinstance(candidate_limit, bool)
+        or not isinstance(candidate_limit, int)
+        or candidate_limit < 1
+        or sum(len(record.image_urls) for record in page.records) > candidate_limit
+    ):
+        raise ValueError("discovery page exceeds bounded candidate wave; cursor not advanced")
     candidates: list[CandidateMetadata] = []
     for record in page.records:
         metadata = dict(record.metadata)
@@ -405,9 +418,7 @@ def run_public_image_collection_once(
             candidates.append(
                 CandidateMetadata(
                     source=source,
-                    source_record_id=(
-                        f"{record.source_record_id}#image-{index}-{image_id[:12]}"
-                    ),
+                    source_record_id=(f"{record.source_record_id}#image-{index}-{image_id[:12]}"),
                     source_url=record.source_url,
                     image_url=image_url,
                     declared_reference=record.declared_reference,
@@ -415,9 +426,10 @@ def run_public_image_collection_once(
                     factory=metadata.get("factory_claim"),
                 )
             )
-    batch_id = "public-" + hashlib.sha256(
-        f"{source}\0{cycle}\0{page.cursor or 'root'}".encode()
-    ).hexdigest()[:24]
+    batch_id = (
+        "public-"
+        + hashlib.sha256(f"{source}\0{cycle}\0{page.cursor or 'root'}".encode()).hexdigest()[:24]
+    )
     receipt = collect_batch(
         candidates,
         policy,
@@ -429,6 +441,8 @@ def run_public_image_collection_once(
         batch_id=batch_id,
         now=now,
     )
+    if on_collected is not None:
+        on_collected(tuple(receipt.accepted_candidate_ids), cycle, batch_id)
     commit = append_discovery_page(
         cos_client,
         bucket,
@@ -448,6 +462,106 @@ def run_public_image_collection_once(
     _persist_status(cos_client, bucket, collection_prefix, status)
     _LOG.info("acquisition_terminal %s", _canonical(status).decode())
     return status
+
+
+def run_planned_public_collection_once(
+    cos_client: Any,
+    bucket: str,
+    prefix: str,
+    targets: Sequence[AcquisitionTarget],
+    *,
+    policies: Mapping[str, SourcePolicy],
+    accesses: Mapping[str, SourceAccessRecord],
+    authorizations: Mapping[str, CollectionAuthorizationRecord],
+    discoveries: Mapping[str, Callable[[DiscoveryCommit | None], DiscoveryPage]],
+    now: datetime,
+    image_client: Any,
+    known_entity_ids: frozenset[str],
+    review: Callable[
+        [AcquisitionTarget, tuple[str, ...]],
+        tuple[Mapping[str, str], Sequence[TrainingRecord]],
+    ],
+) -> dict[str, object]:
+    """Collect one authorized planned wave; measure only manifest-admitted new entities.
+
+    The review owner returns candidate-to-entity bindings and admitted manifest rows;
+    discovery metadata and private-download receipts never establish eligibility.
+    """
+    target = next(
+        (
+            item
+            for item in targets
+            if item.source in policies
+            and item.source in accesses
+            and item.source in authorizations
+            and item.source in discoveries
+            and accesses[item.source].status is SourceAccessStatus.ACTIVE
+            and accesses[item.source].verified_at <= now < accesses[item.source].expires_at
+        ),
+        None,
+    )
+    if target is None:
+        return {"state": "no_viable_target"}
+    source = target.source
+
+    def bounded_discover(previous: DiscoveryCommit | None) -> DiscoveryPage:
+        page = discoveries[source](previous)
+        if any(record.seller_group_id != target.seller_group_id for record in page.records):
+            raise ValueError("planned wave contains an unplanned seller")
+        return page
+
+    reviewed_status: dict[str, object] = {}
+
+    def on_collected(candidate_ids: tuple[str, ...], cycle: str, batch_id: str) -> None:
+        nonlocal reviewed_status
+        bindings, admitted = review(target, candidate_ids)
+        if set(bindings) != set(candidate_ids) or any(not entity for entity in bindings.values()):
+            raise ValueError("review must bind every collected candidate to a watch entity")
+        new_entities: set[str] = set()
+        for row in admitted:
+            output = "genuine" if row.label.value == "genuine" else f"fake-{row.grade}"
+            if (
+                row.candidate_id not in bindings
+                or row.watch_entity_id != bindings[row.candidate_id]
+                or row.reference_id != "rolex-submariner-126610ln"
+                or row.source_domain != source
+                or row.seller_group_id != target.seller_group_id
+                or row.angle is None
+                or row.angle.value != target.angle
+                or output != target.output
+                or not row.evidence_tier.training_eligible
+                or row.is_augmented
+            ):
+                raise ValueError("admitted row does not match reviewed planned cell")
+            if row.watch_entity_id not in known_entity_ids:
+                new_entities.add(row.watch_entity_id)
+        if len(new_entities) > target.eligible_source_capacity:
+            raise ValueError("admitted yield exceeds source/seller capacity")
+        reviewed_status = {
+            "cycle": cycle,
+            "source": source,
+            "state": "review_complete",
+            "collection_batch_id": batch_id,
+            "output": target.output,
+            "angle": target.angle,
+            "seller_group_id": target.seller_group_id,
+            "exploratory": target.exploratory,
+            "candidate_limit": target.candidate_limit,
+            "missing_images": target.missing_images,
+            "missing_entities": target.missing_entities,
+            "eligible_source_capacity": target.eligible_source_capacity,
+            "eligible_yield": [len(set(bindings.values())), len(new_entities)],
+            "reviewed_at": now.isoformat(),
+            "evidence_record_ids": sorted({row.evidence_record_id for row in admitted}),
+        }
+        _persist_status(cos_client, bucket, f"{prefix.strip('/')}/eligible-yields", reviewed_status)
+
+    status = run_public_image_collection_once(
+        cos_client, bucket, prefix, policies[source], accesses[source], authorizations[source],
+        now=now, image_client=image_client, discover=bounded_discover,
+        candidate_limit=target.candidate_limit, on_collected=on_collected,
+    )
+    return {**reviewed_status, **status}
 
 
 def run_public_image_collection_resilient(
