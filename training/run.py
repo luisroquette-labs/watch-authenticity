@@ -603,13 +603,25 @@ def run_training_waves(
     """Train the same seeded probe on nested 25/50/75/100% entity waves."""
     results: list[WaveRunResult] = []
     records_by_id = {record.asset_id: record for record in bundle.records}
-    for fraction, asset_ids in entity_wave_asset_ids(bundle).items():
+    waves = entity_wave_asset_ids(bundle)
+    entity_sets = {
+        fraction: {records_by_id[asset_id].subject_id for asset_id in asset_ids}
+        for fraction, asset_ids in waves.items()
+    }
+    previous_entities: set[str] = set()
+    for entities in entity_sets.values():
+        if not entities - previous_entities:
+            raise TrainingRefused("training wave has no new independent watch entities")
+        if not previous_entities <= entities:
+            raise TrainingRefused("training entity waves are not nested")
+        previous_entities = entities
+    for fraction, asset_ids in waves.items():
         wave_bundle = training_wave_bundle(bundle, asset_ids)
         result = run_training(
             wave_bundle,
             spec,
             output_dir / f"wave-{round(fraction * 100):03d}",
         )
-        entity_count = len({records_by_id[asset_id].subject_id for asset_id in asset_ids})
+        entity_count = len(entity_sets[fraction])
         results.append(WaveRunResult(fraction, entity_count, result))
     return tuple(results)

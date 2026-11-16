@@ -407,7 +407,7 @@ def test_loader_refuses_projection_changed_from_canonical_source(training_fixtur
         load_training_data(cos, spec)
 
 
-def test_wave_runner_uses_four_nested_entity_waves(training_fixture, monkeypatch, tmp_path):
+def test_wave_runner_refuses_duplicate_only_entity_waves(training_fixture, monkeypatch, tmp_path):
     cos, spec, _manifest, _splits, _images = training_fixture
     bundle = load_training_data(cos, spec)
     called: list[Path] = []
@@ -418,10 +418,32 @@ def test_wave_runner_uses_four_nested_entity_waves(training_fixture, monkeypatch
 
     monkeypatch.setattr(training_run, "run_training", fake_run)
 
+    with pytest.raises(TrainingRefused, match="no new independent watch entities"):
+        run_training_waves(bundle, spec, tmp_path)
+    assert called == []
+
+
+def test_wave_runner_trains_only_when_entity_set_grows(training_fixture, monkeypatch, tmp_path):
+    cos, spec, _manifest, _splits, _images = training_fixture
+    bundle = load_training_data(cos, spec)
+    train_ids = tuple(bundle.splits["train"])
+    monkeypatch.setattr(
+        training_run,
+        "entity_wave_asset_ids",
+        lambda _bundle: {0.25: train_ids[:1], 0.5: train_ids[:2]},
+    )
+    monkeypatch.setattr(training_run, "training_wave_bundle", lambda _bundle, _ids: bundle)
+    monkeypatch.setattr(
+        training_run,
+        "run_training",
+        lambda _bundle, _spec, output_dir: RunResult(1, 1, 0.4 if output_dir.name == "wave-025" else 0.6, {}),
+    )
+
     results = run_training_waves(bundle, spec, tmp_path)
 
-    assert tuple(item.fraction for item in results) == (0.25, 0.5, 0.75, 1.0)
-    assert [path.name for path in called] == ["wave-025", "wave-050", "wave-075", "wave-100"]
+    assert len(results) == 2
+    assert results[1].entity_count > results[0].entity_count
+    assert results[1].result.best_validation_nll > results[0].result.best_validation_nll
 
 
 @pytest.mark.parametrize("failure", ["placeholder", "single-source", "missing", "bad-metadata"])
