@@ -3,8 +3,10 @@ from __future__ import annotations
 import io
 import json
 import stat
+from typing import cast
 
 import pytest
+import requests
 from PIL import Image
 
 from acquisition import supercloneluxury_archive as archive
@@ -161,10 +163,10 @@ def test_discovery_resumes_at_failed_page(tmp_path) -> None:
 
     session = PageSession()
     with pytest.raises(archive.CatalogError, match="page 2"):
-        archive.discover_catalog(session, tmp_path, refresh=True)
+        archive.discover_catalog(cast(requests.Session, session), tmp_path, refresh=True)
     assert (tmp_path / "discovery-pages/001.json").exists()
     session.fail_second = False
-    assert len(archive.discover_catalog(session, tmp_path, refresh=True)) == 2
+    assert len(archive.discover_catalog(cast(requests.Session, session), tmp_path, refresh=True)) == 2
     assert session.calls == ["1", "2", "2"]
 
 
@@ -191,8 +193,8 @@ def test_invalid_200_page_is_not_checkpointed(tmp_path) -> None:
 
     session = FlakySession()
     with pytest.raises(archive.CatalogError, match="name"):
-        archive.discover_catalog(session, tmp_path, refresh=True)
+        archive.discover_catalog(cast(requests.Session, session), tmp_path, refresh=True)
     assert (tmp_path / "discovery-pages/001.json").exists()
     assert not (tmp_path / "discovery-pages/002.json").exists()
-    assert len(archive.discover_catalog(session, tmp_path, refresh=True)) == 2
+    assert len(archive.discover_catalog(cast(requests.Session, session), tmp_path, refresh=True)) == 2
     assert session.calls == ["1", "2", "2"]
