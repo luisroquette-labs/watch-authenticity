@@ -223,14 +223,6 @@ def analyze_batch(
             raise ValueError("lote decodificado excede o limite")
         encoded_images.append((angle, content_type, body))
 
-    validated: list[tuple[str, str, bytes, Image.Image, str]] = []
-    for angle, content_type, body in encoded_images:
-        image = decode_image(body, content_type)
-        digest = hashlib.sha256(
-            f"{image.width}x{image.height}:".encode() + image.tobytes()
-        ).hexdigest()
-        validated.append((angle, content_type, body, image, digest))
-
     results: list[dict[str, Any]] = []
     observed_angles: set[str] = set()
     model_checked_images = 0
@@ -238,7 +230,11 @@ def analyze_batch(
     cache: dict[tuple[str, str, str], dict[str, object]] = {}
     visual_cache: dict[str, _VisualInspection] = {}
     unique_evidence: dict[str, dict[str, Any]] = {}
-    for angle, content_type, body, image, digest in validated:
+    for angle, content_type, body in encoded_images:
+        image = decode_image(body, content_type)
+        digest = hashlib.sha256(
+            f"{image.width}x{image.height}:".encode() + image.tobytes()
+        ).hexdigest()
         if isinstance(service, PilotService):
             if digest in visual_cache:
                 visual = visual_cache[digest]
@@ -268,6 +264,8 @@ def analyze_batch(
             detected = result.get("detected_angle")
             if isinstance(detected, str) and detected in ANGLES:
                 observed_angles.add(detected)
+        image.close()
+        del image
 
     verdicts = {str(result.get("verdict")) for result in results}
     if any(result.get("possible_reference_mismatch") is True for result in results):

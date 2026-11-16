@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import gc
 import http.client
 import io
 import json
@@ -8,6 +9,7 @@ import math
 import subprocess
 import sys
 import threading
+import weakref
 from http.server import HTTPServer
 from pathlib import Path
 from typing import Any, cast
@@ -344,6 +346,26 @@ def test_batch_reuses_visual_inspection_across_angles_and_encodings() -> None:
     assert result["results"][1]["angle_mismatch"] is True
     assert result["results"][1]["detected_angle"] == "dial"
     assert result["results"][1]["online_checks"] == result["results"][0]["online_checks"]
+
+
+def test_batch_releases_each_decoded_image_before_inspecting_next() -> None:
+    service = PilotService.__new__(PilotService)
+    service.claims = load_knowledge(Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln")
+    prior_images: list[weakref.ReferenceType[Image.Image]] = []
+
+    def inspect(image: Image.Image) -> _VisualInspection:
+        gc.collect()
+        assert all(prior() is None for prior in prior_images)
+        prior_images.append(weakref.ref(image))
+        return _VisualInspection("inspected", "green", "green")
+
+    service.inspect = cast(Any, inspect)
+    result = analyze_batch(service, {"images": [
+        _batch_item(body=_jpeg_variant(1)),
+        _batch_item(body=_jpeg_variant(2)),
+    ]})
+    assert result["joint"]["unique_visual_contents"] == 2
+    assert len(prior_images) == 2
 
 
 def test_selected_clasp_does_not_claim_clasp_when_only_dial_is_located() -> None:
