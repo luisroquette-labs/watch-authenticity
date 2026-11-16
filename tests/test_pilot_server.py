@@ -4,6 +4,7 @@ import base64
 import http.client
 import io
 import json
+import math
 import subprocess
 import sys
 import threading
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
 
 from pilot.server import (
     _HTML,
@@ -20,10 +21,12 @@ from pilot.server import (
     MAX_BATCH_DECODED_BYTES,
     MAX_BATCH_IMAGES,
     MAX_UPLOAD_BYTES,
+    PilotService,
     analyze_batch,
     checks_for_angle,
     decode_image,
     handler,
+    pilot_photo_quality,
 )
 from reference_intelligence.knowledge import load_knowledge
 
@@ -36,6 +39,44 @@ def _jpeg(size: tuple[int, int] = (300, 300)) -> bytes:
 
 def test_decode_image_accepts_bounded_jpeg() -> None:
     assert decode_image(_jpeg(), "image/jpeg").size == (300, 300)
+
+
+def test_pilot_marks_small_sharp_watch_as_uncertain_without_accepting_blurry_watch() -> None:
+    image = Image.new("RGB", (1200, 1600), "#d2c8b8")
+    draw = ImageDraw.Draw(image)
+    draw.ellipse((450, 650, 750, 950), fill="#17442f", outline="white", width=4)
+    for index in range(12):
+        angle = index * 2 * math.pi / 12
+        x, y = 600 + 112 * math.cos(angle), 800 + 112 * math.sin(angle)
+        draw.ellipse((x - 3, y - 3, x + 3, y + 3), fill="white")
+
+    assert pilot_photo_quality(image, "dial") == "uncertain"
+    assert pilot_photo_quality(image.filter(ImageFilter.GaussianBlur(radius=8)), "dial") == "reject"
+
+
+def test_uncertain_subject_focus_never_calls_the_assessor() -> None:
+    image = Image.new("RGB", (1200, 1600), "#d2c8b8")
+    draw = ImageDraw.Draw(image)
+    draw.ellipse((450, 650, 750, 950), fill="#17442f", outline="white", width=4)
+    image = image.filter(ImageFilter.GaussianBlur(radius=8))
+    draw = ImageDraw.Draw(image)
+    for y in range(410, 460, 5):
+        for x in range(310, 360, 5):
+            draw.rectangle((x, y, x + 4, y + 4), fill="black" if (x + y) // 5 % 2 else "white")
+
+    class FailAssessor:
+        def assess(self, *_args: object) -> None:
+            raise AssertionError("blurry watch must not reach model")
+
+    service = PilotService.__new__(PilotService)
+    service.claims = load_knowledge(
+        Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln"
+    )
+    service.assessor = cast(Any, FailAssessor())
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+
+    assert service.predict(output.getvalue(), "image/png", "dial")["verdict"] == "inconclusivo"
 
 
 def test_decode_image_rejects_mime_mismatch() -> None:

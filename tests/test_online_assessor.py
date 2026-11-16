@@ -73,6 +73,25 @@ def test_forum_lead_alone_cannot_report_no_visible_inconsistency() -> None:
     assert result.verdict == "inconclusivo"
 
 
+def test_all_yes_answers_cannot_clear_a_visible_reference_mismatch() -> None:
+    assessor = LocalVisionAssessor.__new__(LocalVisionAssessor)
+    answers = iter((("yes", "Yes."),) * 5)
+
+    def answer(image: Image.Image, question: str) -> tuple[str | None, str]:
+        del image, question
+        return next(answers)
+
+    assessor._ask_choice = answer  # type: ignore[method-assign]
+    result = assessor.assess(
+        Image.new("RGB", (224, 224)),
+        "dial",
+        (_claim("bezel_color"), _claim("dial_color")),
+    )
+
+    assert result.verdict == "inconclusivo"
+    assert result.official_conflicts == ()
+
+
 def test_clear_official_conflict_flags_reference_mismatch_not_replica() -> None:
     result = parse_assessment(
         '{"watch_present":"yes","visible_fields":["dial_color"],'
@@ -85,14 +104,14 @@ def test_clear_official_conflict_flags_reference_mismatch_not_replica() -> None:
     assert result.official_conflicts == (("dial_color", "green"),)
 
 
-def test_all_official_fields_visible_without_conflict_is_not_authentication() -> None:
+def test_all_official_fields_visible_without_conflict_is_inconclusive() -> None:
     result = parse_assessment(
         '{"watch_present":"yes","visible_fields":["dial_color"],'
         '"official_conflicts":[],"missing_detail":"send rehaut"}',
         (_claim("dial_color"),),
     )
 
-    assert result.verdict == "sem_inconsistencia_visivel"
+    assert result.verdict == "inconclusivo"
 
 
 def test_model_cannot_invent_conflict_when_observed_value_matches_official() -> None:
@@ -103,7 +122,7 @@ def test_model_cannot_invent_conflict_when_observed_value_matches_official() -> 
         (_claim("dial_color"),),
     )
 
-    assert result.verdict == "sem_inconsistencia_visivel"
+    assert result.verdict == "inconclusivo"
     assert result.official_conflicts == ()
 
 
