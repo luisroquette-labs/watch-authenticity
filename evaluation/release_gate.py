@@ -168,8 +168,7 @@ def release_gate(
         except ValueError as exc:
             reasons.append(f"invalid entity-level safety evidence: {exc}")
         else:
-            # The current evaluator has no persisted prediction/quality proof producer.
-            # Caller-supplied conclusions and self-hashed scores are diagnostics only.
+            # shortcut: no persisted prediction/qualified-quality producer exists; verify those artifacts before enabling release.
             reasons.append("authoritative persisted prediction and qualified-quality evidence is missing")
             for cohort in entity_cohorts[:2]:
                 if cohort.total == 0 or cohort.answered / cohort.total < 0.20:
