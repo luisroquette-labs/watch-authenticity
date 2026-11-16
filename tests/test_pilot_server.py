@@ -288,6 +288,56 @@ def test_batch_processes_each_image_sequentially_and_preserves_sources() -> None
     assert result["joint"]["model_checked_images"] == 2
 
 
+def test_batch_reuses_identical_photo_and_counts_evidence_once() -> None:
+    class CountingService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def predict(self, *_args: object) -> dict[str, object]:
+            self.calls += 1
+            return {
+                "verdict": "inconclusivo",
+                "model_invoked": True,
+                "detected_angle": "dial",
+                "observed_dial_color": "green",
+                "observed_bezel_color": "green",
+            }
+
+    service = CountingService()
+    batch = analyze_batch(service, {"images": [_batch_item() for _ in range(6)]})
+    assert service.calls == 1
+    assert batch["joint"]["submitted_photos"] == 6
+    assert batch["joint"]["unique_visual_contents"] == 1
+    assert batch["joint"]["reused_results"] == 5
+    assert batch["joint"]["model_checked_images"] == 1
+    assert batch["joint"]["visible_evidence"]["dial_color"]["supporting_photos"] == 1
+
+
+def test_selected_clasp_does_not_claim_clasp_when_only_dial_is_located() -> None:
+    image = Image.new("RGB", (300, 300), "#164d30")
+    for x in range(0, 300, 10):
+        ImageDraw.Draw(image).line((x, 0, x, 300), fill="white", width=1)
+
+    class Locator:
+        def locate(self, photo: Image.Image) -> WatchRegion:
+            return WatchRegion(photo, photo, .9, .8)
+
+    class Assessor:
+        def dial_color(self, _photo: Image.Image) -> str:
+            return "green"
+
+    service = PilotService.__new__(PilotService)
+    service.claims = load_knowledge(Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln")
+    service.locator = cast(Any, Locator())
+    service.assessor = cast(Any, Assessor())
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    result = service.predict(output.getvalue(), "image/png", "clasp")
+    assert result["detected_angle"] == "dial"
+    assert result["angle_mismatch"] is True
+    assert all(item["field"] != "clasp" for item in result["online_checks"])
+
+
 def test_batch_reports_one_tentative_reference_from_multiple_photos() -> None:
     class GreenWatch:
         def __init__(self) -> None:
@@ -302,7 +352,7 @@ def test_batch_reports_one_tentative_reference_from_multiple_photos() -> None:
                 "observed_bezel_color": "green" if self.calls < 3 else "uncertain",
             }
 
-    result = analyze_batch(GreenWatch(), {"images": [_batch_item() for _ in range(3)]})
+    result = analyze_batch(GreenWatch(), {"images": [_batch_item(body=f"photo-{i}".encode()) for i in range(3)]})
     joint = result["joint"]
     assert joint["verdict"] == "inconclusivo"
     assert joint["reference_candidate"]["reference"] == "116610LV"
@@ -324,7 +374,7 @@ def test_conflicting_dial_colors_block_reference_candidate() -> None:
                 "observed_bezel_color": "green",
             }
 
-    joint = analyze_batch(ConflictingPhotos(), {"images": [_batch_item("crown"), _batch_item("crown")]})["joint"]
+    joint = analyze_batch(ConflictingPhotos(), {"images": [_batch_item("crown", b"first"), _batch_item("crown", b"second")]})["joint"]
     assert joint["reference_candidate"] is None
     assert joint["visible_evidence"]["dial_color"]["value"] == "uncertain"
     assert "crown" in joint["missing_angles"]
@@ -353,7 +403,7 @@ def test_submitted_but_unchecked_photos_are_reported_separately() -> None:
 def test_batch_joint_verdict_fails_closed(verdicts: list[str], expected: str) -> None:
     result = analyze_batch(
         _StubService(verdicts),
-        {"images": [_batch_item("dial"), _batch_item("rehaut")]},
+        {"images": [_batch_item("dial", b"first"), _batch_item("rehaut", b"second")]},
     )
 
     assert result["joint"]["verdict"] == expected
@@ -426,8 +476,10 @@ def test_individual_endpoint_remains_compatible() -> None:
 def test_html_supports_six_files_per_image_angles_and_recovers_after_error() -> None:
     html = _HTML.decode("utf-8")
 
-    assert "j.joint.message+'\\nFotos examinadas pelo modelo: '" in html
-    assert "j.joint.message+'\nFotos examinadas pelo modelo: '" not in html
+    assert "j.joint.message+'\\nFotos enviadas: '" in html
+    assert "j.joint.message+'\nFotos enviadas: '" not in html
+    assert "Conteúdos visuais distintos:" in html
+    assert "Resultados reaproveitados:" in html
     assert 'multiple' in html
     assert 'Máximo de 6 imagens' in html
     assert 'fetch("/predict/batch"' in html

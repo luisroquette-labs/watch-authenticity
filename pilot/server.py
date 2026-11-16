@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import hashlib
 import io
 import json
 from http import HTTPStatus
@@ -35,7 +36,7 @@ _HTML = r"""<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="
 const labels={dial:'Mostrador',cyclops:'Data/lupa',rehaut:'Aro interno',crown:'Coroa/lateral',clasp:'Fecho',caseback:'Traseira'};
 f.onchange=()=>{angles.replaceChildren();if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}[...f.files].forEach((file,i)=>{let row=document.createElement('div');row.className='item';let text=document.createElement('span');text.textContent=file.name+' — Vista informada (o piloto verifica mostrador e aro): ';let select=document.createElement('select');select.dataset.index=i;Object.entries(labels).forEach(([value,label])=>select.add(new Option(label,value)));row.append(text,select);angles.append(row)})};
 const encode=file=>new Promise((resolve,reject)=>{let reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(new Error('Não foi possível ler a imagem.'));reader.readAsDataURL(file)});
-b.onclick=async()=>{if(!f.files.length){r.textContent='Selecione de 1 a 6 imagens.';return}if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}b.disabled=true;f.disabled=true;let files=[...f.files];let selectedAngles=[...angles.querySelectorAll('select')].map(x=>x.value);let start=Date.now();let timer=setInterval(()=>r.textContent='Analisando '+files.length+' foto(s)... '+Math.floor((Date.now()-start)/1000)+' s. O tempo aumenta com o número de fotos.',1000);r.textContent='Analisando '+files.length+' foto(s)...';try{let images=[];for(let i=0;i<files.length;i++){images.push({angle:selectedAngles[i],content_type:files[i].type,data:await encode(files[i])})}let x=await fetch("/predict/batch",{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images})});let j=await x.json();if(!x.ok)throw new Error(j.error||'Falha ao analisar as imagens.');let lines=j.results.map((item,i)=>(i+1)+'. '+files[i].name+': '+item.message);let ev=j.joint.visible_evidence;let colors={green:'verde',black:'preto',blue:'azul',uncertain:'não verificada'};let count=n=>n+' '+(n===1?'foto':'fotos');let findings='Mostrador: '+(colors[ev.dial_color.value]||ev.dial_color.value)+' ('+count(ev.dial_color.supporting_photos)+'). Aro: '+(colors[ev.bezel_color.value]||ev.bezel_color.value)+' ('+count(ev.bezel_color.supporting_photos)+').';r.textContent=j.joint.message+'\nFotos examinadas pelo modelo: '+j.joint.model_checked_images+' de '+j.results.length+'\nAs fotos são tratadas como um relógio; não são provas independentes.\n\nObservado: '+findings+'\n\nAinda não verificado: '+j.joint.unverified.join('; ')+'.\n\nPor foto:\n'+lines.join('\n')+'\n\nFonte da configuração sugerida: '+(j.joint.reference_candidate?j.joint.reference_candidate.source_url:'não disponível')+'\nProcesso de inspeção: '+j.joint.inspection_source_url+'\nReferência inicialmente comparada: https://www.rolex.com/en-us/watches/submariner/m126610ln-0001'}catch(error){r.textContent='Erro: '+error.message}finally{clearInterval(timer);f.disabled=false;b.disabled=false}};
+b.onclick=async()=>{if(!f.files.length){r.textContent='Selecione de 1 a 6 imagens.';return}if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}b.disabled=true;f.disabled=true;let files=[...f.files];let selectedAngles=[...angles.querySelectorAll('select')].map(x=>x.value);let start=Date.now();let timer=setInterval(()=>r.textContent='Analisando '+files.length+' foto(s)... '+Math.floor((Date.now()-start)/1000)+' s. O tempo aumenta com o número de fotos.',1000);r.textContent='Analisando '+files.length+' foto(s)...';try{let images=[];for(let i=0;i<files.length;i++){images.push({angle:selectedAngles[i],content_type:files[i].type,data:await encode(files[i])})}let x=await fetch("/predict/batch",{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images})});let j=await x.json();if(!x.ok)throw new Error(j.error||'Falha ao analisar as imagens.');let lines=j.results.map((item,i)=>(i+1)+'. '+files[i].name+': '+item.message);let ev=j.joint.visible_evidence;let colors={green:'verde',black:'preto',blue:'azul',uncertain:'não verificada'};let count=n=>n+' '+(n===1?'foto':'fotos');let findings='Mostrador: '+(colors[ev.dial_color.value]||ev.dial_color.value)+' ('+count(ev.dial_color.supporting_photos)+'). Aro: '+(colors[ev.bezel_color.value]||ev.bezel_color.value)+' ('+count(ev.bezel_color.supporting_photos)+').';r.textContent=j.joint.message+'\nFotos enviadas: '+j.joint.submitted_photos+'. Conteúdos visuais distintos: '+j.joint.unique_visual_contents+'. Análises executadas: '+j.joint.model_checked_images+'. Resultados reaproveitados: '+j.joint.reused_results+'.\nAs fotos são tratadas como um relógio; não são provas independentes.\n\nObservado: '+findings+'\n\nAinda não verificado: '+j.joint.unverified.join('; ')+'.\n\nPor foto:\n'+lines.join('\n')+'\n\nFonte da configuração sugerida: '+(j.joint.reference_candidate?j.joint.reference_candidate.source_url:'não disponível')+'\nProcesso de inspeção: '+j.joint.inspection_source_url+'\nReferência inicialmente comparada: https://www.rolex.com/en-us/watches/submariner/m126610ln-0001'}catch(error){r.textContent='Erro: '+error.message}finally{clearInterval(timer);f.disabled=false;b.disabled=false}};
 </script></html>""".encode("utf-8")
 
 
@@ -90,13 +91,22 @@ class PilotService:
         dial_label = labels.get(color, "cor indefinida")
         bezel_label = labels.get(bezel_color, "cor não verificável")
         message = f"Mostrador: {dial_label}. Aro: {bezel_label}. Esta foto não comprova autenticidade."
+        angle_mismatch = angle != "dial"
+        if angle_mismatch:
+            message += " Só localizei o mostrador; a vista informada não foi verificada."
         return {
             "verdict": "inconclusivo",
             "replica_probability": None,
             "message": message,
-            "next_photo": "Foto do aro e mostrador de frente para confirmar a referencia." if mismatch else "Outra vista para mais detalhes.",
+            "next_photo": (
+                "Foto do aro e mostrador de frente para confirmar a referencia."
+                if mismatch else
+                f"Envie uma foto nítida de {angle}." if angle_mismatch else
+                "Outra vista para mais detalhes."
+            ),
             "model_invoked": True,
             "detected_angle": "dial",
+            "angle_mismatch": angle_mismatch,
             "observed_dial_color": color,
             "observed_bezel_color": bezel_color,
             "possible_reference_mismatch": mismatch,
@@ -168,7 +178,7 @@ def analyze_batch(
     if encoded_total > MAX_BATCH_ENCODED_BYTES:
         raise ValueError("lote codificado excede o limite")
 
-    validated: list[tuple[str, str, str]] = []
+    validated: list[tuple[str, str, bytes, str]] = []
     decoded_total = 0
     for item in images:
         angle = item.get("angle")
@@ -189,17 +199,30 @@ def analyze_batch(
         decoded_total += len(body)
         if decoded_total > MAX_BATCH_DECODED_BYTES:
             raise ValueError("lote decodificado excede o limite")
-        validated.append((angle, content_type, data))
+        validated.append((angle, content_type, body, hashlib.sha256(body).hexdigest()))
 
     results: list[dict[str, Any]] = []
     observed_angles: set[str] = set()
     model_checked_images = 0
-    for angle, content_type, data in validated:
-        body = base64.b64decode(data, validate=True)
-        result = service.predict(body, content_type, angle)
+    reused_results = 0
+    cache: dict[tuple[str, str, str], dict[str, object]] = {}
+    unique_evidence: dict[str, dict[str, Any]] = {}
+    for angle, content_type, body, digest in validated:
+        key = (digest, content_type, angle)
+        if key in cache:
+            result = cache[key]
+            reused_results += 1
+        else:
+            result = service.predict(body, content_type, angle)
+            cache[key] = result
+            if result.get("model_invoked") is True:
+                model_checked_images += 1
         results.append({"angle": angle, **result})
+        if digest not in unique_evidence or (
+            not unique_evidence[digest].get("model_invoked") and result.get("model_invoked")
+        ):
+            unique_evidence[digest] = result
         if result.get("model_invoked") is True:
-            model_checked_images += 1
             detected = result.get("detected_angle")
             if isinstance(detected, str) and detected in ANGLES:
                 observed_angles.add(detected)
@@ -221,8 +244,8 @@ def analyze_batch(
             if model_checked_images == 0
             else "O conjunto não autentica o relógio; a análise permanece inconclusiva."
         )
-    dial, dial_count = consensus([str(result.get("observed_dial_color", "uncertain")) for result in results])
-    bezel, bezel_count = consensus([str(result.get("observed_bezel_color", "uncertain")) for result in results])
+    dial, dial_count = consensus([str(result.get("observed_dial_color", "uncertain")) for result in unique_evidence.values()])
+    bezel, bezel_count = consensus([str(result.get("observed_bezel_color", "uncertain")) for result in unique_evidence.values()])
     candidate = reference_candidate(dial, bezel)
     if candidate:
         verdict = "inconclusivo"
@@ -237,6 +260,9 @@ def analyze_batch(
             "verdict": verdict,
             "message": message,
             "missing_angles": sorted(ANGLES - observed_angles),
+            "submitted_photos": len(results),
+            "unique_visual_contents": len(unique_evidence),
+            "reused_results": reused_results,
             "model_checked_images": model_checked_images,
             "reference_candidate": candidate,
             "visible_evidence": {
