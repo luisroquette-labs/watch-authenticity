@@ -29,7 +29,7 @@ _HTML = r"""<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="
 const labels={dial:'Mostrador',cyclops:'Data/lupa',rehaut:'Aro interno',crown:'Coroa/lateral',clasp:'Fecho',caseback:'Traseira'};
 f.onchange=()=>{angles.replaceChildren();if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}[...f.files].forEach((file,i)=>{let row=document.createElement('div');row.className='item';let text=document.createElement('span');text.textContent=file.name+' — Selecione o ângulo: ';let select=document.createElement('select');select.dataset.index=i;Object.entries(labels).forEach(([value,label])=>select.add(new Option(label,value)));row.append(text,select);angles.append(row)})};
 const encode=file=>new Promise((resolve,reject)=>{let reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(new Error('Não foi possível ler a imagem.'));reader.readAsDataURL(file)});
-b.onclick=async()=>{if(!f.files.length){r.textContent='Selecione de 1 a 6 imagens.';return}if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}b.disabled=true;r.textContent='Analisando...';try{let selects=[...angles.querySelectorAll('select')];let images=[];for(let i=0;i<f.files.length;i++){images.push({angle:selects[i].value,content_type:f.files[i].type,data:await encode(f.files[i])})}let x=await fetch("/predict/batch",{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images})});let j=await x.json();if(!x.ok)throw new Error(j.error||'Falha ao analisar as imagens.');r.textContent=j.joint.message+'\nÂngulos ausentes: '+(j.joint.missing_angles.join(', ')||'nenhum')+'\n\nResultados e fontes:\n'+JSON.stringify(j.results,null,2)}catch(error){r.textContent='Erro: '+error.message}finally{b.disabled=false}};
+b.onclick=async()=>{if(!f.files.length){r.textContent='Selecione de 1 a 6 imagens.';return}if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}b.disabled=true;r.textContent='Verificando fotos...';try{let selects=[...angles.querySelectorAll('select')];let images=[];for(let i=0;i<f.files.length;i++){images.push({angle:selects[i].value,content_type:f.files[i].type,data:await encode(f.files[i])})}let x=await fetch("/predict/batch",{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images})});let j=await x.json();if(!x.ok)throw new Error(j.error||'Falha ao analisar as imagens.');r.textContent=j.joint.message+'\nFotos enviadas ao modelo: '+j.joint.model_checked_images+' de '+j.results.length+'\n\nResultados e fontes:\n'+JSON.stringify(j.results,null,2)}catch(error){r.textContent='Erro: '+error.message}finally{b.disabled=false}};
 </script></html>""".encode("utf-8")
 
 
@@ -56,6 +56,7 @@ class PilotService:
                 "replica_probability": None,
                 "message": "A foto foi recebida, mas nao consigo confirmar a nitidez do relogio.",
                 "next_photo": "Envie um recorte mais proximo do relogio.",
+                "model_invoked": False,
                 "online_checks": checks,
             }
         if photo_quality == "reject":
@@ -64,6 +65,7 @@ class PilotService:
                 "replica_probability": None,
                 "message": "Foto sem nitidez suficiente. Tire outra mais perto e sem movimento.",
                 "next_photo": angle,
+                "model_invoked": False,
                 "online_checks": checks,
             }
         assessment = self.assessor.assess(image, angle, self.claims)
@@ -77,6 +79,7 @@ class PilotService:
             "replica_probability": None,
             "message": messages[assessment.verdict],
             "next_photo": assessment.missing_detail,
+            "model_invoked": True,
             "official_conflicts": [
                 {"field": field, "observed": observed}
                 for field, observed in assessment.official_conflicts
@@ -174,11 +177,14 @@ def analyze_batch(
 
     results: list[dict[str, Any]] = []
     submitted_angles: set[str] = set()
+    model_checked_images = 0
     for angle, content_type, data in validated:
         body = base64.b64decode(data, validate=True)
         result = service.predict(body, content_type, angle)
         results.append({"angle": angle, **result})
         submitted_angles.add(angle)
+        if result.get("model_invoked") is True:
+            model_checked_images += 1
 
     verdicts = {str(result.get("verdict")) for result in results}
     if "inconsistencia_com_referencia" in verdicts:
@@ -189,13 +195,18 @@ def analyze_batch(
         message = "Nenhuma foto pôde ser utilizada. Envie fotos mais nítidas."
     else:
         verdict = "inconclusivo"
-        message = "O conjunto não autentica o relógio; a análise permanece inconclusiva."
+        message = (
+            "Fotos recebidas, mas nenhuma foi enviada ao modelo."
+            if model_checked_images == 0
+            else "O conjunto não autentica o relógio; a análise permanece inconclusiva."
+        )
     return {
         "results": results,
         "joint": {
             "verdict": verdict,
             "message": message,
             "missing_angles": sorted(ANGLES - submitted_angles),
+            "model_checked_images": model_checked_images,
         },
     }
 
