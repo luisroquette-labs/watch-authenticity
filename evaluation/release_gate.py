@@ -17,7 +17,7 @@ from dataset.splits import (
     TRAIN,
     VAL,
 )
-from evaluation.evaluate import SourceProbeReport
+from evaluation.evaluate import EntitySafetyReport, SourceProbeReport, evaluate_entity_safety
 from training.data import TrainingBundle
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -71,6 +71,7 @@ class EvaluationReport:
     expected_calibration_error: float
     gold_baseline_accuracy: float
     slices: tuple[SliceMetric, ...]
+    entity_safety: EntitySafetyReport | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -147,6 +148,28 @@ def release_gate(
         reasons.append("evaluation identity differs from source probe or frozen dataset")
     if report.expected_calibration_error > maximum_calibration_error:
         reasons.append("calibration error exceeds release limit")
+    if report.entity_safety is None:
+        reasons.append("frozen entity-level safety evaluation is missing")
+    elif (
+        report.entity_safety.freeze_sha256 != report.freeze_sha256
+        or report.entity_safety.model_sha256 != report.model_sha256
+    ):
+        reasons.append("entity-level safety identity differs from evaluation")
+    else:
+        try:
+            entity_cohorts = evaluate_entity_safety(bundle, report.entity_safety)
+        except ValueError as exc:
+            reasons.append(f"invalid entity-level safety evidence: {exc}")
+        else:
+            for cohort in entity_cohorts[:2]:
+                if cohort.total == 0 or cohort.answered / cohort.total < 0.20:
+                    reasons.append(f"insufficient non-inconclusive coverage: {cohort.name}")
+            high_quality = entity_cohorts[-1]
+            if (
+                high_quality.false_reassurance_upper95 is None
+                or high_quality.false_reassurance_upper95 > 0.05
+            ):
+                reasons.append("high-quality fake false-reassurance upper bound exceeds 5% or holdout is insufficient")
 
     metrics = {metric.name: metric for metric in report.slices}
     missing = sorted(set(census.names) - set(metrics))
