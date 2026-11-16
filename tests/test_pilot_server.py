@@ -28,6 +28,7 @@ from pilot.server import (
     handler,
     pilot_photo_quality,
 )
+from pilot.watch_locator import WatchRegion, choose_region
 from reference_intelligence.knowledge import load_knowledge
 
 
@@ -73,12 +74,60 @@ def test_uncertain_subject_focus_never_calls_the_assessor() -> None:
         Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln"
     )
     service.assessor = cast(Any, FailAssessor())
+    service.locator = cast(Any, type("Locator", (), {"locate": lambda self, image: WatchRegion(image, image.crop((450, 650, 750, 950)), .9, .8)})())
     output = io.BytesIO()
     image.save(output, format="PNG")
 
     result = service.predict(output.getvalue(), "image/png", "dial")
-    assert result["verdict"] == "inconclusivo"
+    assert result["verdict"] == "foto_invalida"
     assert result["model_invoked"] is False
+
+
+def test_locator_ignores_face_outside_watch() -> None:
+    image = Image.new("RGB", (500, 500), "white")
+    region = choose_region(image, [
+        (.9, 0, (100, 100, 400, 400)),
+        (.95, 1, (0, 0, 80, 80)),
+        (.7, 1, (170, 170, 330, 330)),
+    ])
+    assert region is not None
+    assert region.face is not None
+    assert region.face.size == (160, 160)
+    assert region.face_score == .7
+
+
+def test_locator_rejects_image_without_watch_or_face() -> None:
+    assert choose_region(Image.new("RGB", (500, 500)), []) is None
+
+
+@pytest.mark.parametrize("color,mismatch", [("green", True), ("black", False)])
+def test_pilot_analyzes_detected_dial_without_claiming_authenticity(color: str, mismatch: bool) -> None:
+    image = Image.new("RGB", (300, 300), "#164d30")
+    draw = ImageDraw.Draw(image)
+    for x in range(0, 300, 10):
+        draw.line((x, 0, x, 300), fill="white", width=1)
+
+    class Locator:
+        def locate(self, photo: Image.Image) -> WatchRegion:
+            return WatchRegion(photo, photo, .9, .8)
+
+    class Assessor:
+        def dial_color(self, photo: Image.Image) -> str:
+            assert photo.size == (300, 300)
+            return color
+
+    service = PilotService.__new__(PilotService)
+    service.claims = load_knowledge(Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln")
+    service.locator = cast(Any, Locator())
+    service.assessor = cast(Any, Assessor())
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    result = service.predict(output.getvalue(), "image/png", "crown")
+    assert result["verdict"] == "inconclusivo"
+    assert result["replica_probability"] is None
+    assert result["detected_angle"] == "dial"
+    assert result["possible_reference_mismatch"] is mismatch
+    assert result["model_invoked"] is True
 
 
 def test_decode_image_rejects_mime_mismatch() -> None:
@@ -289,8 +338,8 @@ def test_individual_endpoint_remains_compatible() -> None:
 def test_html_supports_six_files_per_image_angles_and_recovers_after_error() -> None:
     html = _HTML.decode("utf-8")
 
-    assert "j.joint.message+'\\nFotos enviadas ao modelo: '" in html
-    assert "j.joint.message+'\nFotos enviadas ao modelo: '" not in html
+    assert "j.joint.message+'\\nFotos examinadas pelo modelo: '" in html
+    assert "j.joint.message+'\nFotos examinadas pelo modelo: '" not in html
     assert 'multiple' in html
     assert 'Máximo de 6 imagens' in html
     assert 'fetch("/predict/batch"' in html

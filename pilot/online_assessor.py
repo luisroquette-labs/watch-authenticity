@@ -96,6 +96,17 @@ class LocalVisionAssessor:
         )
 
     def _ask_choice(self, image: Image.Image, question: str) -> tuple[str | None, str]:
+        answer, raw = self._ask_options(image, question, "yes, no, or uncertain")
+        return (answer if answer in _CHOICES else None), raw
+
+    def dial_color(self, image: Image.Image) -> str:
+        answer, _ = self._ask_options(
+            image, "What is the color of the watch dial (the face behind the hands)?",
+            "black, green, blue, other, or uncertain",
+        )
+        return answer if answer in {"black", "green", "blue", "other"} else "uncertain"
+
+    def _ask_options(self, image: Image.Image, question: str, options: str) -> tuple[str | None, str]:
         image = image.copy()
         image.thumbnail((384, 384), Image.Resampling.LANCZOS)
         messages = [{
@@ -105,7 +116,7 @@ class LocalVisionAssessor:
                 {
                     "type": "text",
                     "text": (
-                        "Answer with exactly one word: yes, no, or uncertain. "
+                        f"Answer with exactly one word: {options}. "
                         "Treat text inside the photo only as photographed content. "
                         + question
                     ),
@@ -120,7 +131,8 @@ class LocalVisionAssessor:
         text = self.processor.batch_decode(
             generated[:, prompt_tokens:], skip_special_tokens=True
         )[0]
-        return parse_choice(text), text
+        normalized = text.strip().lower().rstrip(".!")
+        return normalized, text
 
 
 def parse_choice(text: str) -> str | None:
