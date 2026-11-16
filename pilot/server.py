@@ -29,7 +29,7 @@ _HTML = r"""<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="
 const labels={dial:'Mostrador',cyclops:'Data/lupa',rehaut:'Aro interno',crown:'Coroa/lateral',clasp:'Fecho',caseback:'Traseira'};
 f.onchange=()=>{angles.replaceChildren();if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}[...f.files].forEach((file,i)=>{let row=document.createElement('div');row.className='item';let text=document.createElement('span');text.textContent=file.name+' — Selecione o ângulo: ';let select=document.createElement('select');select.dataset.index=i;Object.entries(labels).forEach(([value,label])=>select.add(new Option(label,value)));row.append(text,select);angles.append(row)})};
 const encode=file=>new Promise((resolve,reject)=>{let reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(new Error('Não foi possível ler a imagem.'));reader.readAsDataURL(file)});
-b.onclick=async()=>{if(!f.files.length){r.textContent='Selecione de 1 a 6 imagens.';return}if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}b.disabled=true;r.textContent='Verificando fotos...';try{let selects=[...angles.querySelectorAll('select')];let images=[];for(let i=0;i<f.files.length;i++){images.push({angle:selects[i].value,content_type:f.files[i].type,data:await encode(f.files[i])})}let x=await fetch("/predict/batch",{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images})});let j=await x.json();if(!x.ok)throw new Error(j.error||'Falha ao analisar as imagens.');r.textContent=j.joint.message+'\nFotos enviadas ao modelo: '+j.joint.model_checked_images+' de '+j.results.length+'\n\nResultados e fontes:\n'+JSON.stringify(j.results,null,2)}catch(error){r.textContent='Erro: '+error.message}finally{b.disabled=false}};
+b.onclick=async()=>{if(!f.files.length){r.textContent='Selecione de 1 a 6 imagens.';return}if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}b.disabled=true;f.disabled=true;let files=[...f.files];let selectedAngles=[...angles.querySelectorAll('select')].map(x=>x.value);let start=Date.now();let timer=setInterval(()=>r.textContent='Analisando '+files.length+' foto(s)... '+Math.floor((Date.now()-start)/1000)+' s. Até 1 minuto para 6 fotos.',1000);r.textContent='Analisando '+files.length+' foto(s)...';try{let images=[];for(let i=0;i<files.length;i++){images.push({angle:selectedAngles[i],content_type:files[i].type,data:await encode(files[i])})}let x=await fetch("/predict/batch",{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images})});let j=await x.json();if(!x.ok)throw new Error(j.error||'Falha ao analisar as imagens.');let lines=j.results.map((item,i)=>(i+1)+'. '+files[i].name+': '+item.message);r.textContent=j.joint.message+'\nFotos examinadas pelo modelo: '+j.joint.model_checked_images+' de '+j.results.length+'\n\n'+lines.join('\n')+'\n\nFonte oficial: https://www.rolex.com/en-us/watches/submariner/m126610ln-0001'}catch(error){r.textContent='Erro: '+error.message}finally{clearInterval(timer);f.disabled=false;b.disabled=false}};
 </script></html>""".encode("utf-8")
 
 
@@ -40,51 +40,62 @@ class PredictService(Protocol):
 class PilotService:
     def __init__(self, checkpoint: Path, knowledge_path: Path) -> None:
         from pilot.online_assessor import LocalVisionAssessor
+        from pilot.watch_locator import LocalWatchLocator
 
         self.claims = load_knowledge(knowledge_path, "rolex-submariner-126610ln")
         self.assessor = LocalVisionAssessor(checkpoint)
+        self.locator = LocalWatchLocator()
 
     def predict(self, body: bytes, content_type: str, angle: str) -> dict[str, object]:
         image = decode_image(body, content_type)
         if angle not in ANGLES:
             raise ValueError("angulo invalido")
         checks = checks_for_angle(self.claims, angle)
-        photo_quality = pilot_photo_quality(image, angle)
-        if photo_quality == "uncertain":
+        region = self.locator.locate(image)
+        if region is None or region.face is None:
             return {
                 "verdict": "inconclusivo",
                 "replica_probability": None,
-                "message": "A foto foi recebida, mas nao consigo confirmar a nitidez do relogio.",
-                "next_photo": "Envie um recorte mais proximo do relogio.",
+                "message": "Nao localizei um mostrador com confianca suficiente nesta foto.",
+                "next_photo": "Mostrador inteiro, de frente e em foco.",
                 "model_invoked": False,
                 "online_checks": checks,
             }
-        if photo_quality == "reject":
+        from quality_gate.blur_light_check import Pass, quality_gate
+
+        if not isinstance(quality_gate(region.face, angle="dial"), Pass):
             return {
                 "verdict": "foto_invalida",
                 "replica_probability": None,
-                "message": "Foto sem nitidez suficiente. Tire outra mais perto e sem movimento.",
-                "next_photo": angle,
+                "message": "O mostrador localizado nao tem nitidez suficiente.",
+                "next_photo": "Mostrador de frente e sem movimento.",
                 "model_invoked": False,
                 "online_checks": checks,
             }
-        assessment = self.assessor.assess(image, angle, self.claims)
-        messages = {
-            "inconsistencia_com_referencia": "Ha conflito visivel com a referencia 126610LN.",
-            "sem_inconsistencia_visivel": "Nenhuma inconsistencia oficial ficou visivel nesta foto.",
-            "inconclusivo": "A evidencia desta foto nao e suficiente.",
-        }
+        color = self.assessor.dial_color(region.face)
+        official_dial = next(
+            (claim for claim in self.claims if claim.field == "dial_color" and claim.source_class.authoritative),
+            None,
+        )
+        expected_color = official_dial.value if official_dial is not None else ""
+        mismatch = bool(expected_color) and color in {"black", "green", "blue"} and color != expected_color
+        labels = {"black": "preto", "green": "verde", "blue": "azul"}
+        message = (
+            f"O modelo sugere mostrador {labels[color]}; a referencia 126610LN tem mostrador {labels.get(expected_color, expected_color)}. "
+            "Pode ser outra referencia. Isso nao prova falsificacao."
+            if mismatch else
+            "Mostrador localizado, mas a cor nao permite concluir autenticidade."
+        )
         return {
-            "verdict": assessment.verdict,
+            "verdict": "inconclusivo",
             "replica_probability": None,
-            "message": messages[assessment.verdict],
-            "next_photo": assessment.missing_detail,
+            "message": message,
+            "next_photo": "Foto do aro e mostrador de frente para confirmar a referencia." if mismatch else "Outra vista para mais detalhes.",
             "model_invoked": True,
-            "official_conflicts": [
-                {"field": field, "observed": observed}
-                for field, observed in assessment.official_conflicts
-            ],
-            "online_checks": checks,
+            "detected_angle": "dial",
+            "observed_dial_color": color,
+            "possible_reference_mismatch": mismatch,
+            "online_checks": checks_for_angle(self.claims, "dial"),
         }
 
 
@@ -187,7 +198,10 @@ def analyze_batch(
             model_checked_images += 1
 
     verdicts = {str(result.get("verdict")) for result in results}
-    if "inconsistencia_com_referencia" in verdicts:
+    if any(result.get("possible_reference_mismatch") is True for result in results):
+        verdict = "inconclusivo"
+        message = "Possivel divergencia com a referencia 126610LN; autenticidade inconclusiva."
+    elif "inconsistencia_com_referencia" in verdicts:
         verdict = "inconsistencia_com_referencia"
         message = "Há conflito oficial visível em pelo menos uma foto."
     elif verdicts == {"foto_invalida"}:
