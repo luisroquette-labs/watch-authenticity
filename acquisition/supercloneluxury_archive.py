@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -119,7 +120,9 @@ def _atomic_json(path: Path, value: object) -> None:
     os.replace(temporary, path)
 
 
-def discover_catalog(session: requests.Session, root: Path, *, refresh: bool = False) -> list[dict[str, object]]:
+def discover_catalog(
+    session: requests.Session, root: Path, *, refresh: bool = False, deadline: float | None = None
+) -> list[dict[str, object]]:
     snapshot = root / "catalog.json"
     if snapshot.exists() and not refresh:
         saved_products = json.loads(snapshot.read_text())
@@ -127,50 +130,63 @@ def discover_catalog(session: requests.Session, root: Path, *, refresh: bool = F
             raise CatalogError("stored catalog is invalid")
         return saved_products
     products: dict[int, dict[str, object]] = {}
+    staging = root / "discovery-pages"
     expected_total = None
     pages = None
     page = 1
     while pages is None or page <= pages:
-        response = session.get(
-            API,
-            params={"per_page": 100, "page": page},
-            headers={"User-Agent": "watch-authenticity/0.1 (private research archive)"},
-            timeout=(10, 30),
-            allow_redirects=False,
-            stream=True,
-        )
-        try:
-            if response.status_code != 200:
-                raise CatalogError(f"catalog page {page} returned HTTP {response.status_code}")
-            total = int(response.headers["X-WP-Total"])
-            total_pages = int(response.headers["X-WP-TotalPages"])
-            if total < 1 or total_pages < 1 or total_pages > 100:
-                raise CatalogError("catalog page count is invalid")
-            if expected_total is None:
-                expected_total, pages = total, total_pages
-            elif expected_total != total or pages != total_pages:
-                raise CatalogError("catalog changed during discovery; restart the snapshot")
-            data = bytearray()
-            for chunk in response.iter_content(64 * 1024):
-                data.extend(chunk)
-                if len(data) > MAX_RESPONSE_BYTES:
-                    raise CatalogError("catalog API page is too large")
-            raw = json.loads(data)
-            if not isinstance(raw, list) or not raw:
-                raise CatalogError("catalog page is empty or invalid")
-            for item in raw:
-                product = _product(item)
-                product_id = cast(int, product["product_id"])
-                if product_id in products:
-                    raise CatalogError("catalog pagination repeated a product")
-                products[product_id] = product
-        finally:
-            response.close()
+        if deadline is not None and time.monotonic() >= deadline:
+            raise CatalogError("discovery time budget exceeded")
+        checkpoint = staging / f"{page:03d}.json"
+        if checkpoint.exists():
+            saved = json.loads(checkpoint.read_text())
+            total, total_pages, raw = saved["total"], saved["pages"], saved["products"]
+        else:
+            response = session.get(
+                API,
+                params={"per_page": 100, "page": page},
+                headers={"User-Agent": "watch-authenticity/0.1 (private research archive)"},
+                timeout=(10, 30),
+                allow_redirects=False,
+                stream=True,
+            )
+            try:
+                if response.status_code != 200:
+                    raise CatalogError(f"catalog page {page} returned HTTP {response.status_code}")
+                total = int(response.headers["X-WP-Total"])
+                total_pages = int(response.headers["X-WP-TotalPages"])
+                data = bytearray()
+                for chunk in response.iter_content(64 * 1024):
+                    data.extend(chunk)
+                    if len(data) > MAX_RESPONSE_BYTES:
+                        raise CatalogError("catalog API page is too large")
+                raw = json.loads(data)
+            finally:
+                response.close()
+            _atomic_json(checkpoint, {"total": total, "pages": total_pages, "products": raw})
+        if not isinstance(total, int) or not isinstance(total_pages, int) or total < 1 or not 1 <= total_pages <= 100:
+            raise CatalogError("catalog page count is invalid")
+        if expected_total is None:
+            expected_total, pages = total, total_pages
+        elif expected_total != total or pages != total_pages:
+            shutil.rmtree(staging)
+            raise CatalogError("catalog changed during discovery; restart the snapshot")
+        if not isinstance(raw, list) or not raw:
+            raise CatalogError("catalog page is empty or invalid")
+        for item in raw:
+            product = _product(item)
+            product_id = cast(int, product["product_id"])
+            if product_id in products:
+                shutil.rmtree(staging)
+                raise CatalogError("catalog pagination repeated a product")
+            products[product_id] = product
         page += 1
     if len(products) != expected_total:
+        shutil.rmtree(staging)
         raise CatalogError(f"catalog incomplete: {len(products)} of {expected_total}")
     ordered = [products[key] for key in sorted(products)]
     _atomic_json(snapshot, ordered)
+    shutil.rmtree(staging)
     return ordered
 
 
@@ -239,28 +255,48 @@ def archive_catalog(
     started = time.monotonic()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     root.chmod(0o700)
-    with requests.Session() as session:
-        products = discover_catalog(session, root, refresh=refresh)
-        urls = tuple(dict.fromkeys(url for product in products for url in cast(list[str], product["image_urls"])))
-        completed = 0
-        for url in urls:
-            if time.monotonic() - started >= max_seconds:
-                break
-            downloaded = _archive_image(session, root, url)
-            completed += 1
-            if downloaded and interval:
-                time.sleep(interval)
-    result = {
+    result: dict[str, object] = {
         "source": HOST,
-        "products": len(products),
-        "images_total": len(urls),
-        "images_archived": completed,
-        "state": "complete" if completed == len(urls) else "partial",
-        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "products": 0,
+        "images_total": 0,
+        "images_archived": 0,
+        "state": "discovering",
         "quality_score_0_1000": None,
         "quality_score_status": "not_assessed",
         "training_eligible": False,
     }
+    _atomic_json(root / "status.json", result)
+    completed = 0
+    try:
+        with requests.Session() as session:
+            products = discover_catalog(session, root, refresh=refresh, deadline=started + max_seconds)
+            urls = tuple(dict.fromkeys(url for product in products for url in cast(list[str], product["image_urls"])))
+            result.update(products=len(products), images_total=len(urls), state="downloading")
+            _atomic_json(root / "status.json", result)
+            for url in urls:
+                if time.monotonic() - started >= max_seconds:
+                    break
+                downloaded = _archive_image(session, root, url)
+                completed += 1
+                if completed % 100 == 0:
+                    result["images_archived"] = completed
+                    _atomic_json(root / "status.json", result)
+                if downloaded and interval:
+                    time.sleep(interval)
+    except Exception as exc:
+        result.update(
+            state="partial" if str(exc) == "discovery time budget exceeded" else "failed",
+            images_archived=completed,
+            error_type=type(exc).__name__,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+        _atomic_json(root / "status.json", result)
+        raise
+    result.update(
+        images_archived=completed,
+        state="complete" if completed == len(urls) else "partial",
+        finished_at=datetime.now(timezone.utc).isoformat(),
+    )
     _atomic_json(root / "status.json", result)
     return result
 

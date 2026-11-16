@@ -102,3 +102,67 @@ def test_product_without_replica_declaration_is_not_labeled_fake() -> None:
     })
     assert product["source_label"] == "unlabeled"
     assert product["quality_score_0_1000"] is None
+
+
+def test_refresh_failure_never_leaves_old_complete_status(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = io.BytesIO()
+    Image.new("RGB", (20, 20), "green").save(output, format="WEBP")
+    session = Session(output.getvalue())
+    monkeypatch.setattr(archive.requests, "Session", lambda: session)
+    assert archive.archive_catalog(tmp_path, interval=0)["state"] == "complete"
+    original_get = session.get
+
+    def failing_get(url: str, **kwargs):
+        if url == archive.API:
+            response = original_get(url, **kwargs)
+            products = json.loads(response.content)
+            products[0]["images"] = [{"src": "https://supercloneluxury.com/wp-content/uploads/new.webp"}]
+            return Response(json.dumps(products).encode(), response.headers)
+        response = Response(b"")
+        response.status_code = 404
+        return response
+
+    session.get = failing_get  # type: ignore[method-assign]
+    with pytest.raises(archive.CatalogError, match="HTTP 404"):
+        archive.archive_catalog(tmp_path, interval=0, refresh=True)
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["state"] == "failed"
+    assert status["images_archived"] == 0
+    assert json.loads((tmp_path / "catalog.json").read_text())[0]["image_urls"] == [
+        "https://supercloneluxury.com/wp-content/uploads/new.webp"
+    ]
+
+
+def test_discovery_resumes_at_failed_page(tmp_path) -> None:
+    class PageSession(Session):
+        def __init__(self) -> None:
+            super().__init__(b"")
+            self.fail_second = True
+
+        def get(self, url: str, **kwargs):
+            page = kwargs["params"]["page"]
+            self.calls.append(str(page))
+            if page == 2 and self.fail_second:
+                response = Response(b"")
+                response.status_code = 503
+                return response
+            product = {
+                "id": page,
+                "name": "Super Clone",
+                "permalink": f"https://supercloneluxury.com/product/watch-{page}/",
+                "images": [],
+            }
+            return Response(
+                json.dumps([product]).encode(),
+                {"X-WP-Total": "2", "X-WP-TotalPages": "2"},
+            )
+
+    session = PageSession()
+    with pytest.raises(archive.CatalogError, match="page 2"):
+        archive.discover_catalog(session, tmp_path, refresh=True)
+    assert (tmp_path / "discovery-pages/001.json").exists()
+    session.fail_second = False
+    assert len(archive.discover_catalog(session, tmp_path, refresh=True)) == 2
+    assert session.calls == ["1", "2", "2"]
