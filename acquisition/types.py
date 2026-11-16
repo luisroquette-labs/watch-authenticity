@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
+
+if TYPE_CHECKING:
+    from dataset.angle_review import AngleUsabilityReview
 
 from core.types import Grade, Label
 from infra.ibm_types import ObjectRef
@@ -423,6 +427,7 @@ class TrainingRecord:
     evidence_record_id: str
     rights_record_id: str
     image_sha256: str
+    usability_review: AngleUsabilityReview | None
     phash: str
 
     def __post_init__(self) -> None:
@@ -465,6 +470,14 @@ class TrainingRecord:
             or self.rejection_reference_id is not None
         ):
             raise ValueError("authenticity records require an angle and no rejection metadata")
+        if self.label is Label.REJECTION:
+            if self.usability_review is not None:
+                raise ValueError("rejection records cannot claim usability review")
+        else:
+            from dataset.angle_review import verify_usability_review
+            verify_usability_review(
+                self.usability_review, self.candidate_id, self.image_sha256, self.angle
+            )
         _label_grade(self.label, self.grade, fake_grade_required=True)
         if self.factory is not None:
             _nonempty(self.factory, "factory")

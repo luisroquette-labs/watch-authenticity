@@ -14,9 +14,10 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from acquisition.types import DatasetFreeze
+from acquisition.types import Angle, DatasetFreeze
 from core.rules import model_class_for_label, require_all_model_classes
 from core.types import Label, ModelClass
+from dataset.angle_review import usability_review_from_json, verify_usability_review
 from dataset.crop import ANGLE_CROP_FRACTIONS
 from dataset.splits import (
     CROSS_SOURCE,
@@ -56,6 +57,7 @@ _RECORD_FIELDS = frozenset(
         "evidence_tier",
         "factory",
         "rejection_subtype",
+        "usability_review_sha256",
     }
 )
 _SOURCE_RECORD_FIELDS = frozenset(
@@ -85,6 +87,7 @@ _SOURCE_RECORD_FIELDS = frozenset(
         "rights_record_id",
         "image_sha256",
         "phash",
+        "usability_review",
     }
 )
 
@@ -109,6 +112,7 @@ class TrainingRecord:
     evidence_tier: str
     factory: str | None
     rejection_subtype: str | None
+    usability_review_sha256: str | None
     model_class: ModelClass
 
 
@@ -183,6 +187,12 @@ def _parse_record(raw: object, spec: RunSpec) -> TrainingRecord:
             raise TrainingDataRefused("authenticity record angle is invalid")
         if raw["rejection_subtype"] is not None:
             raise TrainingDataRefused("authenticity records cannot have a rejection subtype")
+    review_digest = raw["usability_review_sha256"]
+    if label is Label.REJECTION:
+        if review_digest is not None:
+            raise TrainingDataRefused("rejection cannot claim usability review")
+    elif not isinstance(review_digest, str) or _SHA256.fullmatch(review_digest) is None:
+        raise TrainingDataRefused("usability review digest is required")
     rights = _nonempty(raw["rights"], "rights")
     if rights not in _RIGHTS:
         raise TrainingDataRefused("training records require owner or licensed rights")
@@ -210,6 +220,7 @@ def _parse_record(raw: object, spec: RunSpec) -> TrainingRecord:
             raw["rejection_subtype"] if isinstance(raw["rejection_subtype"], str) else None
         ),
         model_class=model_class,
+        usability_review_sha256=review_digest,
     )
 
 
@@ -522,6 +533,17 @@ def _parse_freeze(
         raise TrainingDataRefused("canonical source splits do not match eligible assets")
     for record in records:
         source = source_by_asset[record.asset_id]
+        try:
+            if record.label is Label.REJECTION:
+                if source["usability_review"] is not None:
+                    raise ValueError("rejection cannot claim usability review")
+            else:
+                review = usability_review_from_json(source["usability_review"])
+                verify_usability_review(review, source["candidate_id"], record.image_sha256, Angle(record.angle))
+                if review.review_sha256 != record.usability_review_sha256:
+                    raise ValueError("usability review digest differs from training projection")
+        except (ValueError, TypeError, KeyError) as exc:
+            raise TrainingDataRefused(f"usability review is invalid: {exc}") from exc
         object_ref = source.get("object_ref")
         if (
             not isinstance(object_ref, dict)

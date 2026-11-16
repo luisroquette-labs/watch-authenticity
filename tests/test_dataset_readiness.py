@@ -8,6 +8,7 @@ import pytest
 from acquisition.types import Angle, DatasetFreeze, EvidenceTier, RightsStatus, TrainingRecord
 from core.types import Label
 from dataset import readiness
+from dataset.angle_review import record_usability_review
 from dataset.freeze import (
     CandidateObjectInventory,
     FrozenDatasetRefused,
@@ -59,6 +60,7 @@ def _record(
         rights_record_id=f"rights-{index}",
         image_sha256=digest,
         phash=f"{index:016x}",
+        usability_review=None if label is Label.REJECTION else record_usability_review(f"candidate-{index}", digest, Angle(angle), True, True, "angle-reviewer", NOW),
     )
 
 
@@ -351,3 +353,17 @@ def test_augmented_gold_does_not_satisfy_gold_gate(monkeypatch):
     report = evaluate_readiness(records, records[0].reference_id, splits=splits)
 
     assert any(reason.startswith("gold:") for reason in report.reasons)
+
+
+def test_training_contract_refuses_unreviewed_angle_and_preserves_raw_audit():
+    from dataset.angle_review import usability_review_from_json
+    from dataset.freeze import _record_json
+
+    record = _record(1, angle=Angle.CLASP)
+    with pytest.raises(ValueError, match="usability review"):
+        replace(record, usability_review=None)
+    raw = _record_json(record)
+    assert raw["original_sha256"] == record.original_sha256
+    restored = usability_review_from_json(raw["usability_review"])
+    assert restored == record.usability_review
+    assert restored.angle is Angle.CLASP

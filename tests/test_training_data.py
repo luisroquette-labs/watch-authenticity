@@ -66,3 +66,44 @@ def test_entity_wave_never_splits_one_watch_across_angles(training_fixture):
 
     assert {"z-dial", "z-caseback"} <= first_wave
 
+
+
+@pytest.mark.parametrize("case", ["missing-digest", "wrong-digest", "wrong-angle", "hidden", "tampered", "legacy-source"])
+def test_loader_refuses_unreviewed_or_mismatched_angle(training_fixture, case):
+    import hashlib
+
+    from acquisition.types import Angle
+    from dataset.angle_review import record_usability_review, usability_review_json
+    from tests.conftest import NOW
+    from tests.test_training_run import _canonical
+
+    _cos, _spec, manifest, splits, images = training_fixture
+    if case == "missing-digest":
+        del manifest["records"][0]["usability_review_sha256"]
+    elif case == "wrong-digest":
+        manifest["records"][0]["usability_review_sha256"] = "0" * 64
+    else:
+        source = manifest["source_records"][0]
+        if case == "legacy-source":
+            del source["usability_review"]
+        elif case in {"wrong-angle", "hidden"}:
+            review = record_usability_review(
+                source["candidate_id"], source["image_sha256"],
+                Angle.CLASP if case == "wrong-angle" else Angle(source["angle"]),
+                case != "hidden", case != "hidden", "angle-reviewer", NOW,
+            )
+            source["usability_review"] = usability_review_json(review)
+            manifest["records"][0]["usability_review_sha256"] = review.review_sha256
+        else:
+            source["usability_review"]["reviewer_id"] = "changed"
+        manifest["freeze"]["manifest_sha256"] = hashlib.sha256(_canonical(manifest["source_records"])).hexdigest()
+    cos, spec = _seed(manifest, splits, images, refresh_freeze=False)
+    with pytest.raises(TrainingDataRefused, match="schema|usability|canonical"):
+        load_training_data(cos, spec)
+
+
+def test_loader_retains_review_digest_and_rejection_exception(training_fixture):
+    cos, spec, manifest, _splits, _images = training_fixture
+    records = load_training_data(cos, spec).records
+    assert records[0].usability_review_sha256 == manifest["records"][0]["usability_review_sha256"]
+    assert all(record.usability_review_sha256 is None for record in records if record.label.value == "rejection")

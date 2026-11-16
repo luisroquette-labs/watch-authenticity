@@ -7,6 +7,7 @@ import io
 import json
 import math
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -15,8 +16,10 @@ from PIL import Image
 from torch import nn
 
 import training.run as training_run
+from acquisition.types import Angle
 from adapters.backbone import BACKBONE_EMBED_DIM, BACKBONE_REVISION
 from core.types import ModelClass
+from dataset.angle_review import record_usability_review, usability_review_json
 from dataset.crop import ANGLE_CROP_FRACTIONS
 from infra.ibm_types import RunSpec
 from model.heads import build_trainable_model
@@ -92,6 +95,10 @@ def _record(
     rejection_subtype: str | None = None,
 ) -> dict[str, object]:
     digest = _sha256(image)
+    usability = None if label == "rejection" else record_usability_review(
+        f"candidate-{asset_id}", digest, Angle(angle), True, True, "angle-reviewer",
+        datetime(2026, 11, 9, tzinfo=timezone.utc),
+    )
     return {
         "asset_id": asset_id,
         "object_key": f"{spec.prefix}/inputs/images/{digest}",
@@ -107,6 +114,7 @@ def _record(
         "evidence_tier": "b",
         "factory": factory,
         "rejection_subtype": rejection_subtype,
+        "usability_review_sha256": None if usability is None else usability.review_sha256,
     }
 
 
@@ -146,6 +154,10 @@ def _source_record(record: dict[str, object], spec: RunSpec) -> dict[str, object
         "rights_record_id": record["rights_record_id"],
         "image_sha256": digest,
         "phash": digest[:16],
+        "usability_review": None if label == "rejection" else usability_review_json(record_usability_review(
+            f"candidate-{record['asset_id']}", digest, Angle(record["angle"]), True, True,
+            "angle-reviewer", datetime(2026, 11, 9, tzinfo=timezone.utc),
+        )),
     }
 
 
@@ -516,6 +528,11 @@ def test_same_image_bytes_cannot_cross_splits_under_different_asset_ids(training
     )
     validation_record["image_sha256"] = train_record["image_sha256"]
     validation_record["object_key"] = train_record["object_key"]
+    validation_record["usability_review_sha256"] = record_usability_review(
+        f"candidate-{validation_record['asset_id']}", str(train_record["image_sha256"]),
+        Angle(validation_record["angle"]), True, True, "angle-reviewer",
+        datetime(2026, 11, 9, tzinfo=timezone.utc),
+    ).review_sha256
     cos, final_spec = _seed(manifest, splits, images)
 
     with pytest.raises(TrainingDataRefused, match="image content crosses"):

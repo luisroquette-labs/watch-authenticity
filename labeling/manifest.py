@@ -30,6 +30,7 @@ from acquisition.types import (
     validate_contract_bundle,
 )
 from core.types import Label, ManifestRecord
+from dataset.angle_review import AngleUsabilityReview, verify_usability_review
 from dataset.entities import GroupingDecision
 from infra.ibm_types import ObjectRef
 from labeling.adjudicate import NotTrainingEligible, adjudicate, verify_evidence_record
@@ -97,6 +98,7 @@ def build_training_record(
     *,
     object_ref: ObjectRef,
     angle: Angle,
+    usability_review: AngleUsabilityReview | None,
     capture_style: str,
     now: datetime,
     reviews: Sequence[ReviewDecision],
@@ -141,6 +143,13 @@ def build_training_record(
         != f"datasets/derivatives/{candidate.derivative_sha256}"
     ):
         raise NotTrainingEligible("verified candidate derivative is required")
+    if evidence.accepted_label is not Label.REJECTION:
+        try:
+            verify_usability_review(usability_review, candidate.candidate_id, object_ref.sha256, angle)
+        except ValueError as exc:
+            raise NotTrainingEligible(f"usability review required: {exc}") from exc
+    elif usability_review is not None:
+        raise NotTrainingEligible("rejection cannot claim a usability review")
     domain = urlsplit(candidate.source_url).hostname
     if domain is None:
         raise ValueError("candidate source domain is missing")
@@ -173,6 +182,7 @@ def build_training_record(
         rights_record_id=rights.rights_record_id,
         image_sha256=object_ref.sha256,
         phash=candidate.phash,
+        usability_review=usability_review,
     )
     validate_contract_bundle(candidate, rights, evidence, record)
     return record

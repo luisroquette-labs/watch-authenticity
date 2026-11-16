@@ -63,7 +63,9 @@ def test_duplicate_review_does_not_inflate_bootstrap_count():
 
 def test_usability_review_binds_content_and_rejects_tampering():
     from dataclasses import replace
+
     import pytest
+
     from dataset.angle_review import record_usability_review, verify_usability_review
 
     review = record_usability_review("candidate-1", "a" * 64, Angle.CLASP, True, True, "r1", NOW)
@@ -77,6 +79,7 @@ def test_usability_review_binds_content_and_rejects_tampering():
 
 def test_hidden_or_blurred_detail_cannot_be_admitted():
     import pytest
+
     from dataset.angle_review import record_usability_review, verify_usability_review
 
     for visible, usable in ((False, False), (True, False)):

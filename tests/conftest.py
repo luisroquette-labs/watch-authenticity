@@ -522,6 +522,7 @@ def valid_contract_bundle(candidate, rights, object_ref):
         review_decision_sha256s=("f" * 64,),
         decision_sha256="f" * 64,
     )
+    from dataset.angle_review import record_usability_review
     training = TrainingRecord(
         asset_id="asset-1",
         candidate_id=candidate.candidate_id,
@@ -548,6 +549,7 @@ def valid_contract_bundle(candidate, rights, object_ref):
         rights_record_id=rights.rights_record_id,
         image_sha256=object_ref.sha256,
         phash="fedcba9876543210",
+        usability_review=record_usability_review(candidate.candidate_id, object_ref.sha256, Angle.DIAL, True, True, "angle-reviewer", NOW),
     )
     return candidate, rights, evidence, training
 
