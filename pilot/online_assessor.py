@@ -67,7 +67,7 @@ class LocalVisionAssessor:
             )
 
         visible: list[str] = []
-        conflicts: list[tuple[str, str]] = []
+        needs_confirmation: str | None = None
         for claim in official:
             is_visible, raw = self._ask_choice(
                 image,
@@ -85,15 +85,14 @@ class LocalVisionAssessor:
             )
             raw_answers.append(raw)
             if matches == "no":
-                conflicts.append((claim.field, f"not {claim.value}"))
+                needs_confirmation = claim.field
 
-        if conflicts:
-            verdict = "inconsistencia_com_referencia"
-        else:
-            verdict = "inconclusivo"
-        missing = "Envie outra vista para confirmar o detalhe."
+        missing = (
+            f"Envie uma foto mais proxima de {needs_confirmation} para confirmar o detalhe."
+            if needs_confirmation else "Envie outra vista para confirmar o detalhe."
+        )
         return OnlineAssessment(
-            verdict, tuple(visible), tuple(conflicts), missing, "\n".join(raw_answers)
+            "inconclusivo", tuple(visible), (), missing, "\n".join(raw_answers)
         )
 
     def _ask_choice(self, image: Image.Image, question: str) -> tuple[str | None, str]:

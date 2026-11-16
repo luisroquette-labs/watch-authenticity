@@ -76,7 +76,9 @@ def test_uncertain_subject_focus_never_calls_the_assessor() -> None:
     output = io.BytesIO()
     image.save(output, format="PNG")
 
-    assert service.predict(output.getvalue(), "image/png", "dial")["verdict"] == "inconclusivo"
+    result = service.predict(output.getvalue(), "image/png", "dial")
+    assert result["verdict"] == "inconclusivo"
+    assert result["model_invoked"] is False
 
 
 def test_decode_image_rejects_mime_mismatch() -> None:
@@ -162,6 +164,7 @@ class _StubService:
             "verdict": verdict,
             "message": verdict,
             "next_photo": angle,
+            "model_invoked": verdict != "foto_invalida",
             "online_checks": [{"field": angle, "url": f"https://example.test/{angle}"}],
         }
 
@@ -187,6 +190,19 @@ def test_batch_processes_each_image_sequentially_and_preserves_sources() -> None
     assert result["results"][0]["online_checks"][0]["url"].endswith("/dial")
     assert result["joint"]["verdict"] == "inconclusivo"
     assert result["joint"]["missing_angles"] == sorted(ANGLES - {"dial", "crown"})
+    assert result["joint"]["model_checked_images"] == 2
+
+
+def test_submitted_but_unchecked_photos_are_reported_separately() -> None:
+    class Unassessed:
+        def predict(self, *_args: object) -> dict[str, object]:
+            return {"verdict": "inconclusivo", "model_invoked": False}
+
+    result = analyze_batch(Unassessed(), {"images": [_batch_item(angle) for angle in ANGLES]})
+
+    assert result["joint"]["missing_angles"] == []
+    assert result["joint"]["model_checked_images"] == 0
+    assert "nenhuma foi enviada ao modelo" in result["joint"]["message"]
 
 
 @pytest.mark.parametrize(
@@ -273,8 +289,8 @@ def test_individual_endpoint_remains_compatible() -> None:
 def test_html_supports_six_files_per_image_angles_and_recovers_after_error() -> None:
     html = _HTML.decode("utf-8")
 
-    assert "j.joint.message+'\\nÂngulos ausentes: '" in html
-    assert "j.joint.message+'\nÂngulos ausentes: '" not in html
+    assert "j.joint.message+'\\nFotos enviadas ao modelo: '" in html
+    assert "j.joint.message+'\nFotos enviadas ao modelo: '" not in html
     assert 'multiple' in html
     assert 'Máximo de 6 imagens' in html
     assert 'fetch("/predict/batch"' in html
