@@ -139,8 +139,12 @@ def discover_catalog(
             raise CatalogError("discovery time budget exceeded")
         checkpoint = staging / f"{page:03d}.json"
         if checkpoint.exists():
-            saved = json.loads(checkpoint.read_text())
-            total, total_pages, raw = saved["total"], saved["pages"], saved["products"]
+            try:
+                saved = json.loads(checkpoint.read_text())
+                total, total_pages, raw = saved["total"], saved["pages"], saved["products"]
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                checkpoint.unlink(missing_ok=True)
+                raise CatalogError("stored discovery page is invalid") from exc
         else:
             response = session.get(
                 API,
@@ -163,23 +167,34 @@ def discover_catalog(
                 raw = json.loads(data)
             finally:
                 response.close()
+            if total < 1 or not 1 <= total_pages <= 100:
+                raise CatalogError("catalog page count is invalid")
+            if not isinstance(raw, list) or not raw:
+                raise CatalogError("catalog page is empty or invalid")
+            for item in raw:
+                _product(item)
             _atomic_json(checkpoint, {"total": total, "pages": total_pages, "products": raw})
         if not isinstance(total, int) or not isinstance(total_pages, int) or total < 1 or not 1 <= total_pages <= 100:
+            checkpoint.unlink(missing_ok=True)
             raise CatalogError("catalog page count is invalid")
         if expected_total is None:
             expected_total, pages = total, total_pages
         elif expected_total != total or pages != total_pages:
             shutil.rmtree(staging)
             raise CatalogError("catalog changed during discovery; restart the snapshot")
-        if not isinstance(raw, list) or not raw:
-            raise CatalogError("catalog page is empty or invalid")
-        for item in raw:
-            product = _product(item)
-            product_id = cast(int, product["product_id"])
-            if product_id in products:
-                shutil.rmtree(staging)
-                raise CatalogError("catalog pagination repeated a product")
-            products[product_id] = product
+        try:
+            if not isinstance(raw, list) or not raw:
+                raise CatalogError("catalog page is empty or invalid")
+            for item in raw:
+                product = _product(item)
+                product_id = cast(int, product["product_id"])
+                if product_id in products:
+                    shutil.rmtree(staging)
+                    raise CatalogError("catalog pagination repeated a product")
+                products[product_id] = product
+        except (CatalogError, TypeError, KeyError):
+            checkpoint.unlink(missing_ok=True)
+            raise
         page += 1
     if len(products) != expected_total:
         shutil.rmtree(staging)

@@ -166,3 +166,33 @@ def test_discovery_resumes_at_failed_page(tmp_path) -> None:
     session.fail_second = False
     assert len(archive.discover_catalog(session, tmp_path, refresh=True)) == 2
     assert session.calls == ["1", "2", "2"]
+
+
+def test_invalid_200_page_is_not_checkpointed(tmp_path) -> None:
+    class FlakySession(Session):
+        def __init__(self) -> None:
+            super().__init__(b"")
+
+        def get(self, url: str, **kwargs):
+            page = kwargs["params"]["page"]
+            self.calls.append(str(page))
+            product = {
+                "id": page,
+                "name": "Super Clone",
+                "permalink": f"https://supercloneluxury.com/product/watch-{page}/",
+                "images": [],
+            }
+            if page == 2 and self.calls.count("2") == 1:
+                product.pop("name")
+            return Response(
+                json.dumps([product]).encode(),
+                {"X-WP-Total": "2", "X-WP-TotalPages": "2"},
+            )
+
+    session = FlakySession()
+    with pytest.raises(archive.CatalogError, match="name"):
+        archive.discover_catalog(session, tmp_path, refresh=True)
+    assert (tmp_path / "discovery-pages/001.json").exists()
+    assert not (tmp_path / "discovery-pages/002.json").exists()
+    assert len(archive.discover_catalog(session, tmp_path, refresh=True)) == 2
+    assert session.calls == ["1", "2", "2"]
