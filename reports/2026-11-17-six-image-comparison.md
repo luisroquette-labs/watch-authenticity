@@ -66,3 +66,23 @@ Próximo experimento técnico: corrigir e testar a localização do aro com foto
 verdes, pretas e controles difíceis; depois testar identificação da referência
 em relógios físicos distintos e um conjunto confirmado de originais e réplicas.
 Nenhuma métrica de acerto em falsificações pode ser inferida deste lote.
+
+## Nova execução após corrigir o recorte do aro
+
+O detector anterior exigia dois círculos completos. Nas seis fotos, o localizador
+às vezes recorta parte da borda externa; por isso o aro visivelmente verde era
+descartado. O ajuste aceita a borda interna do mostrador e exige cor consistente
+em grande parte do anel, além de um exterior de outra cor. Um teste de regressão
+mantém o fundo verde sem aro como `uncertain`.
+
+Na nova execução local pela rota HTTP e pela página real em Chrome isolado:
+seis fotos enviadas e usadas; mostrador verde em seis; aro verde em **duas**;
+referência **116610LV (Hulk) sugerida apenas como configuração compatível**.
+As outras quatro fotos continuam sem cor de aro verificada. O veredito é
+`inconclusivo`; confiança calibrada, nota 0–1.000 e classificador de
+autenticidade continuam ausentes. O navegador mostrou esses limites ao usuário.
+
+O perfil de seis fotos atribuiu 28,71 s à localização do relógio, 25,90 s à
+leitura visual do mostrador e 0,11 s à leitura do aro. Uma tentativa de reduzir
+a resolução do localizador acelerou essa etapa, mas perdeu a detecção do aro;
+não foi incorporada. A meta de velocidade ainda não foi comprovada.

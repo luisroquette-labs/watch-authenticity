@@ -131,6 +131,18 @@ def test_dial_without_visible_bezel_cannot_supply_bezel_color() -> None:
     assert reference_candidate("green", bezel_color_hint(face)) is None
 
 
+def test_partly_cropped_bezel_uses_dial_boundary_and_rejects_green_backdrop() -> None:
+    photo = Image.new("RGB", (360, 360), "#dadbd5")
+    draw = ImageDraw.Draw(photo)
+    draw.ellipse((6, 6, 354, 354), fill="#137746")
+    draw.ellipse((48, 48, 312, 312), fill="#263b31")
+    assert bezel_color_hint(photo.crop((0, 12, 360, 348))) == "green"
+
+    backdrop = Image.new("RGB", (360, 360), "#137746")
+    ImageDraw.Draw(backdrop).ellipse((48, 48, 312, 312), fill="#263b31")
+    assert bezel_color_hint(backdrop) == "uncertain"
+
+
 def test_bezel_analysis_downsamples_large_photo(monkeypatch: pytest.MonkeyPatch) -> None:
     original = cv2.cvtColor
     shapes = []

@@ -12,7 +12,9 @@ da versão dos pesos do modelo e da versão do conjunto de dados.
 - A análise em lote distingue conteúdo visual repetido e reaproveitamento de
   resultados; o treinamento e a coleta receberam controles adicionais.
 - O teste das seis fotos de 14/11 mostrou que a identificação da cor do aro
-  ainda falha nesse caso. A versão não representa um autenticador aprovado.
+  falhava nesse caso; o ajuste seguinte reconheceu o aro em duas das seis
+  fotos e sugeriu 116610LV como hipótese de configuração. A versão não
+  representa um autenticador aprovado.
 
 ## 0.1.0 — base anterior
 

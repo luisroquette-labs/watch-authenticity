@@ -20,62 +20,53 @@ REFERENCE_PATTERNS = {
 
 
 def bezel_color_hint(face: Image.Image) -> str:
-    """Read the bezel only when distinct concentric dial and bezel edges are visible."""
+    """Read color outside a visible dial boundary, including a partly cropped bezel."""
     if min(face.size) < 160:
         return "uncertain"
     face = face.convert("RGB")
     face.thumbnail((512, 512))
     rgb = np.asarray(face)
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 45, 110)
     height, width = gray.shape
     size = min(height, width)
-    circles = []
-    for contour in cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[0]:
-        if len(contour) < 40:
-            continue
-        perimeter = cv2.arcLength(contour, True)
-        area = cv2.contourArea(contour)
-        if perimeter == 0 or 4 * np.pi * area / perimeter**2 < 0.65:
-            continue
-        (cx, cy), r = cv2.minEnclosingCircle(contour)
-        if 0.25 * size < r < 0.51 * size:
-            circles.append((cx, cy, r))
-    pair = next(
-        ((outer, inner) for outer in sorted(circles, key=lambda c: -c[2])
-         for inner in circles
-         if 0.08 * size < outer[2] - inner[2] < 0.24 * size
-         and np.hypot(outer[0] - inner[0], outer[1] - inner[1]) < 0.04 * size),
-        None,
+    circles = cv2.HoughCircles(
+        cv2.medianBlur(gray, 5), cv2.HOUGH_GRADIENT, 1.2, size * 0.15,
+        param1=100, param2=45, minRadius=int(size * 0.23), maxRadius=int(size * 0.6),
     )
-    if pair is None:
+    if circles is None:
         return "uncertain"
-    outer, inner = pair
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
     y, x = np.mgrid[:height, :width]
-    dx = (x - outer[0]) / outer[2]
-    dy = (y - outer[1]) / outer[2]
-    radius = np.hypot(dx, dy)
-    sector = ((np.arctan2(dy, dx) + np.pi) / (np.pi / 4)).astype(int) % 8
-    ring = (radius > (inner[2] / outer[2] + 0.03)) & (radius < 0.96)
     hue, saturation, lightness = cv2.split(hsv)
     masks = {
         "green": (hue >= 35) & (hue < 90) & (saturation > 45) & (lightness > 30),
         "blue": (hue >= 90) & (hue < 140) & (saturation > 45) & (lightness > 30),
         "black": (saturation < 45) & (lightness < 105),
     }
-    coverage = {
-        color: sum(
-            np.mean(mask[ring & (sector == index)]) > 0.15
-            for index in range(8)
-        )
-        for color, mask in masks.items()
-    }
-    ranked = sorted(coverage, key=coverage.get, reverse=True)  # type: ignore[arg-type]
-    # shortcut: reflections or a tight crop can mimic a bezel; require broad, separated coverage.
-    if coverage[ranked[0]] < 6 or coverage[ranked[0]] - coverage[ranked[1]] < 2:
-        return "uncertain"
-    return ranked[0]
+    for cx, cy, dial_radius in circles[0]:
+        if not (0.28 * size < dial_radius < 0.46 * size):
+            continue
+        if np.hypot(cx - width / 2, cy - height / 2) > 0.1 * size:
+            continue
+        dx, dy = x - cx, y - cy
+        radius = np.hypot(dx, dy) / dial_radius
+        sector = ((np.arctan2(dy, dx) + np.pi) / (np.pi / 4)).astype(int) % 8
+        ring = (radius > 1.08) & (radius < 1.22)
+        exterior = (radius > 1.45) & (radius < 1.65)
+        coverage = {
+            color: sum(
+                np.count_nonzero(ring & (sector == index)) >= 50
+                and np.mean(mask[ring & (sector == index)]) > 0.3
+                and np.count_nonzero(exterior & (sector == index)) >= 50
+                and np.mean(mask[exterior & (sector == index)]) < 0.2
+                for index in range(8)
+            )
+            for color, mask in masks.items()
+        }
+        ranked = sorted(coverage, key=coverage.get, reverse=True)  # type: ignore[arg-type]
+        if coverage[ranked[0]] >= 6 and coverage[ranked[0]] - coverage[ranked[1]] >= 2:
+            return ranked[0]
+    return "uncertain"
 
 
 def consensus(values: list[str]) -> tuple[str, int]:
