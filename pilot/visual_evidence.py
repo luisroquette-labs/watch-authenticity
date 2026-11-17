@@ -55,11 +55,11 @@ def bezel_color_hint(face: Image.Image) -> str:
         exterior = (radius > 1.45) & (radius < 1.65)
         coverage = {
             color: sum(
-                np.count_nonzero(ring & (sector == index)) >= 50
+                1 for index in range(8)
+                if np.count_nonzero(ring & (sector == index)) >= 50
                 and np.mean(mask[ring & (sector == index)]) > 0.3
                 and np.count_nonzero(exterior & (sector == index)) >= 50
                 and np.mean(mask[exterior & (sector == index)]) < 0.2
-                for index in range(8)
             )
             for color, mask in masks.items()
         }
