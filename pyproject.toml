@@ -1,7 +1,7 @@
 [project]
 name = "watch-authenticity"
-version = "0.2.1"
-description = "Open-source multi-angle authenticity model for Rolex Submariner"
+version = "0.2.2"
+description = "Open-source research prototype for multi-angle watch analysis"
 requires-python = ">=3.12"
 
 [tool.ruff]

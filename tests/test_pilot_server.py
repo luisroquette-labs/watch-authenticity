@@ -501,8 +501,8 @@ def test_untrained_pilot_separates_seen_photos_uncertainty_and_fake_quality() ->
     page = _HTML.decode("utf-8")
     assert "Fotos usadas:" in page
     assert "confiança calibrada:" in page
-    assert "Nota da falsificação:" in page
-    assert "nenhuma foto adicional deste piloto comprova autenticidade" in page
+    assert "Qualidade da falsificação (somente após confirmação):" in page
+    assert "nenhuma foto adicional desta prévia comprova autenticidade" in page
 
 
 def test_rejected_photo_cannot_supply_cited_facts_or_fake_quality() -> None:
@@ -608,6 +608,9 @@ def test_individual_endpoint_remains_compatible() -> None:
 
 def test_html_supports_six_files_per_image_angles_and_recovers_after_error() -> None:
     html = _HTML.decode("utf-8")
+    assert "Prévia visual Rolex Submariner" in html
+    assert "Ainda não detecta falsificações" in html
+    assert "não há classificador de autenticidade treinado e validado" in html
 
     assert "j.joint.message+'\\nFotos enviadas: '" in html
     assert "j.joint.message+'\nFotos enviadas: '" not in html
