@@ -323,7 +323,7 @@ def test_batch_reuses_identical_photo_and_counts_evidence_once() -> None:
     assert batch["joint"]["visible_evidence"]["dial_color"]["supporting_photos"] == 1
 
 
-def test_batch_reuses_visual_inspection_across_angles_and_encodings() -> None:
+def test_batch_reuses_visual_inspection_across_angles_and_encodings(monkeypatch: pytest.MonkeyPatch) -> None:
     service = PilotService.__new__(PilotService)
     service.claims = load_knowledge(Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln")
     calls = []
@@ -332,7 +332,7 @@ def test_batch_reuses_visual_inspection_across_angles_and_encodings() -> None:
         calls.append(True)
         return _VisualInspection("inspected", "green", "green")
 
-    service.inspect = cast(Any, inspect)
+    monkeypatch.setattr(service, "inspect", inspect)
     png = io.BytesIO()
     Image.new("RGB", (300, 300), "white").save(png, format="PNG")
     result = analyze_batch(service, {"images": [
@@ -348,7 +348,7 @@ def test_batch_reuses_visual_inspection_across_angles_and_encodings() -> None:
     assert result["results"][1]["online_checks"] == result["results"][0]["online_checks"]
 
 
-def test_batch_releases_each_decoded_image_before_inspecting_next() -> None:
+def test_batch_releases_each_decoded_image_before_inspecting_next(monkeypatch: pytest.MonkeyPatch) -> None:
     service = PilotService.__new__(PilotService)
     service.claims = load_knowledge(Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln")
     prior_images: list[weakref.ReferenceType[Image.Image]] = []
@@ -359,7 +359,7 @@ def test_batch_releases_each_decoded_image_before_inspecting_next() -> None:
         prior_images.append(weakref.ref(image))
         return _VisualInspection("inspected", "green", "green")
 
-    service.inspect = cast(Any, inspect)
+    monkeypatch.setattr(service, "inspect", inspect)
     result = analyze_batch(service, {"images": [
         _batch_item(body=_jpeg_variant(1)),
         _batch_item(body=_jpeg_variant(2)),
@@ -390,7 +390,8 @@ def test_selected_clasp_does_not_claim_clasp_when_only_dial_is_located() -> None
     result = service.predict(output.getvalue(), "image/png", "clasp")
     assert result["detected_angle"] == "dial"
     assert result["angle_mismatch"] is True
-    assert all(item["field"] != "clasp" for item in result["online_checks"])
+    checks = cast(list[dict[str, str]], result["online_checks"])
+    assert all(item["field"] != "clasp" for item in checks)
 
 
 def test_batch_reports_one_tentative_reference_from_multiple_photos() -> None:
