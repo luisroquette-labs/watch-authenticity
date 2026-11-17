@@ -10,6 +10,26 @@
 
 **Spec:** `.specs/tasks/in-progress/train-watch-authenticity-model.feature.md`; acquisition detail in `.specs/sub-tasks/train-watch-authenticity-model.feature/04c-data-acquisition.md` and `04d-source-acquisition-connectors.md`; reference detail in `04e-reference-intelligence.md`.
 
+## Current execution map (checked 2026-11-17)
+
+This parent plan retains the ten-stage design. The six focused plans below supersede its task text where the code has since advanced; an unchecked box in this document is **not** proof that its function is absent. Execute each focused plan in this order, one result at a time:
+
+1. [Confirmed watch data](2026-11-17-confirmed-watch-data.md): collection yield, accepted labels, identity and real freeze. Existing planner, usability binding and quality gate have focused tests; actual training-ready confirmed data is still missing.
+2. [Visual evidence](2026-11-17-visual-evidence.md): held-out angle review, cited reference facts and six-photo pilot comparison. Existing pilot proposes 116610LV only as a reference hypothesis.
+3. [Pilot speed](2026-11-17-pilot-speed.md): comparable latency, honest distinct-image counts and browser recovery. Request-local visual reuse already exists.
+4. [Classifier and release](2026-11-17-classifier-release.md): frozen independent sets, bounded IBM training and real release decision. Current archive cannot authorize training.
+5. [Confidence report](2026-11-17-confidence-report.md): null confidence now; calibrated confidence only from an exact released artifact.
+6. [Confirmed fake quality](2026-11-17-fake-quality.md): existing rubric and review gates; actual full inspection and scored fake remain absent.
+
+**Dependency and truth gate:** Plans 2–3 can validate the local pilot without Plan 1. Plans 4–5 cannot claim a released classifier before Plan 1 provides a ready freeze and Plan 4 passes evaluation. Plan 6 can prove null output now; a numeric score requires an independently confirmed fake and complete exterior, opened-case and mechanical inspection. Existing archive labels never become ground truth by repetition. Each plan records two consecutive optimization passes without a substantial change after its last improvement.
+
+| Cross-plan pass | Substantial improvement | Decision |
+|---|---|---|
+| 1 | Yes: current code already has planner yield, usability review, visual reuse, release gates and quality rubric. | Replace duplicate implementation work with real-data and final-route proof. |
+| 2 | Yes: lock confidence and numeric quality behind separate released-model and complete-inspection gates. | Clarify Plans 5–6. |
+| 3 | No: all six plans preserve the candidate/training/release boundaries. | Keep. |
+| 4 | No: ownership, dependency order and measurable result are consistent across plans. | Stop after two consecutive unchanged cross-plan passes. |
+
 ## Global Constraints
 
 - Initial coverage is Rolex Submariner 126610LN; a different reference must not become a fake label merely by differing from it.
