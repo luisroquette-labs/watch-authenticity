@@ -424,6 +424,7 @@ def test_batch_reports_one_tentative_reference_from_multiple_photos() -> None:
     joint = result["joint"]
     assert joint["verdict"] == "inconclusivo"
     assert joint["reference_candidate"]["reference"] == "116610LV"
+    assert joint["next_useful_angle"] is None
     assert joint["visible_evidence"]["dial_color"]["supporting_photos"] == 3
     assert joint["visible_evidence"]["bezel_color"]["supporting_photos"] == 2
     assert "não permitem autenticar" in joint["message"]
@@ -477,6 +478,7 @@ def test_untrained_pilot_separates_seen_photos_uncertainty_and_fake_quality() ->
     assert "Fotos usadas:" in page
     assert "confiança calibrada:" in page
     assert "Nota da falsificação:" in page
+    assert "nenhuma foto adicional deste piloto comprova autenticidade" in page
 
 
 def test_rejected_photo_cannot_supply_cited_facts_or_fake_quality() -> None:
