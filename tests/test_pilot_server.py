@@ -446,6 +446,45 @@ def test_submitted_but_unchecked_photos_are_reported_separately() -> None:
     assert "nenhuma foi enviada ao modelo" in result["joint"]["message"]
 
 
+def test_untrained_pilot_separates_seen_photos_uncertainty_and_fake_quality() -> None:
+    result = analyze_batch(
+        _StubService(["inconclusivo"]),
+        {"images": [_batch_item("dial", _jpeg_variant(1))]},
+    )
+    joint = result["joint"]
+    assert joint["used_photo_indices"] == [1]
+    assert joint["next_useful_angle"] == "dial"
+    assert joint["model_sha256"] is None
+    assert joint["calibrated_confidence"] is None
+    assert joint["quality_score_0_1000"] is None
+    assert joint["quality_assessment"] == "não avaliada"
+    assert joint["cited_reference_facts"] == []
+    page = _HTML.decode("utf-8")
+    assert "Fotos usadas:" in page
+    assert "confiança calibrada:" in page
+    assert "Nota da falsificação:" in page
+
+
+def test_rejected_photo_cannot_supply_cited_facts_or_fake_quality() -> None:
+    class UnsupportedClaim:
+        def predict(self, *_args: object) -> dict[str, object]:
+            return {
+                "verdict": "foto_invalida",
+                "model_invoked": False,
+                "online_checks": [{"field": "dial_color", "url": "https://www.rolex.com/x", "role": "official_spec"}],
+                "quality_score_0_1000": 1000,
+                "replica_probability": 0.99,
+            }
+
+    joint = analyze_batch(UnsupportedClaim(), {"images": [_batch_item()]})["joint"]
+
+    assert joint["used_photo_indices"] == []
+    assert joint["cited_reference_facts"] == []
+    assert joint["quality_score_0_1000"] is None
+    assert joint["calibrated_confidence"] is None
+    assert joint["next_useful_angle"] == "dial"
+
+
 @pytest.mark.parametrize(
     ("verdicts", "expected"),
     [

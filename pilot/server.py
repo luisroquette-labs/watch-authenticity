@@ -37,7 +37,7 @@ _HTML = r"""<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="
 const labels={dial:'Mostrador',cyclops:'Data/lupa',rehaut:'Aro interno',crown:'Coroa/lateral',clasp:'Fecho',caseback:'Traseira'};
 f.onchange=()=>{angles.replaceChildren();if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}[...f.files].forEach((file,i)=>{let row=document.createElement('div');row.className='item';let text=document.createElement('span');text.textContent=file.name+' — Vista informada (o piloto verifica mostrador e aro): ';let select=document.createElement('select');select.dataset.index=i;Object.entries(labels).forEach(([value,label])=>select.add(new Option(label,value)));row.append(text,select);angles.append(row)})};
 const encode=file=>new Promise((resolve,reject)=>{let reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(new Error('Não foi possível ler a imagem.'));reader.readAsDataURL(file)});
-b.onclick=async()=>{if(!f.files.length){r.textContent='Selecione de 1 a 6 imagens.';return}if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}b.disabled=true;f.disabled=true;let files=[...f.files];let selectedAngles=[...angles.querySelectorAll('select')].map(x=>x.value);let start=Date.now();let timer=setInterval(()=>r.textContent='Analisando '+files.length+' foto(s)... '+Math.floor((Date.now()-start)/1000)+' s. O tempo aumenta com o número de fotos.',1000);r.textContent='Analisando '+files.length+' foto(s)...';try{let images=[];for(let i=0;i<files.length;i++){images.push({angle:selectedAngles[i],content_type:files[i].type,data:await encode(files[i])})}let x=await fetch("/predict/batch",{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images})});let j=await x.json();if(!x.ok)throw new Error(j.error||'Falha ao analisar as imagens.');let lines=j.results.map((item,i)=>(i+1)+'. '+files[i].name+': '+item.message);let ev=j.joint.visible_evidence;let colors={green:'verde',black:'preto',blue:'azul',uncertain:'não verificada'};let count=n=>n+' '+(n===1?'foto':'fotos');let findings='Mostrador: '+(colors[ev.dial_color.value]||ev.dial_color.value)+' ('+count(ev.dial_color.supporting_photos)+'). Aro: '+(colors[ev.bezel_color.value]||ev.bezel_color.value)+' ('+count(ev.bezel_color.supporting_photos)+').';r.textContent=j.joint.message+'\nFotos enviadas: '+j.joint.submitted_photos+'. Conteúdos visuais distintos: '+j.joint.unique_visual_contents+'. Análises executadas: '+j.joint.model_checked_images+'. Resultados reaproveitados: '+j.joint.reused_results+'.\nAs fotos são tratadas como um relógio; não são provas independentes.\n\nObservado: '+findings+'\n\nAinda não verificado: '+j.joint.unverified.join('; ')+'.\n\nPor foto:\n'+lines.join('\n')+'\n\nFonte da configuração sugerida: '+(j.joint.reference_candidate?j.joint.reference_candidate.source_url:'não disponível')+'\nProcesso de inspeção: '+j.joint.inspection_source_url+'\nReferência inicialmente comparada: https://www.rolex.com/en-us/watches/submariner/m126610ln-0001'}catch(error){r.textContent='Erro: '+error.message}finally{clearInterval(timer);f.disabled=false;b.disabled=false}};
+b.onclick=async()=>{if(!f.files.length){r.textContent='Selecione de 1 a 6 imagens.';return}if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}b.disabled=true;f.disabled=true;let files=[...f.files];let selectedAngles=[...angles.querySelectorAll('select')].map(x=>x.value);let start=Date.now();let timer=setInterval(()=>r.textContent='Analisando '+files.length+' foto(s)... '+Math.floor((Date.now()-start)/1000)+' s. O tempo aumenta com o número de fotos.',1000);r.textContent='Analisando '+files.length+' foto(s)...';try{let images=[];for(let i=0;i<files.length;i++){images.push({angle:selectedAngles[i],content_type:files[i].type,data:await encode(files[i])})}let x=await fetch("/predict/batch",{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images})});let j=await x.json();if(!x.ok)throw new Error(j.error||'Falha ao analisar as imagens.');let lines=j.results.map((item,i)=>(i+1)+'. '+files[i].name+': '+item.message);let ev=j.joint.visible_evidence;let colors={green:'verde',black:'preto',blue:'azul',uncertain:'não verificada'};let count=n=>n+' '+(n===1?'foto':'fotos');let findings='Mostrador: '+(colors[ev.dial_color.value]||ev.dial_color.value)+' ('+count(ev.dial_color.supporting_photos)+'). Aro: '+(colors[ev.bezel_color.value]||ev.bezel_color.value)+' ('+count(ev.bezel_color.supporting_photos)+').';r.textContent=j.joint.message+'\nFotos enviadas: '+j.joint.submitted_photos+'. Conteúdos visuais distintos: '+j.joint.unique_visual_contents+'. Análises executadas: '+j.joint.model_checked_images+'. Resultados reaproveitados: '+j.joint.reused_results+'.\nAs fotos são tratadas como um relógio; não são provas independentes.\n\nObservado: '+findings+'\n\nAinda não verificado: '+j.joint.unverified.join('; ')+'.\n\nPor foto:\n'+lines.join('\n')+'\n\nFonte da configuração sugerida: '+(j.joint.reference_candidate?j.joint.reference_candidate.source_url:'não disponível')+'\nProcesso de inspeção: '+j.joint.inspection_source_url+'\nReferência inicialmente comparada: https://www.rolex.com/en-us/watches/submariner/m126610ln-0001';let facts=j.joint.cited_reference_facts.map(x=>x.field+': '+x.url).join('; ');r.textContent+='\n\nFotos usadas: '+(j.joint.used_photo_indices.join(', ')||'nenhuma')+'\nFatos oficiais citados: '+(facts||'nenhum detalhe confirmado')+'\nPróxima foto útil: '+(labels[j.joint.next_useful_angle]||'outra vista nítida')+'\nModelo visual de cores: carregado; classificador de autenticidade: '+(j.joint.model_sha256||'não liberado')+'; confiança calibrada: '+(j.joint.calibrated_confidence??'indisponível')+'\nNota da falsificação: '+(j.joint.quality_score_0_1000??j.joint.quality_assessment)}catch(error){r.textContent='Erro: '+error.message}finally{clearInterval(timer);f.disabled=false;b.disabled=false}};
 </script></html>""".encode("utf-8")
 
 
@@ -227,10 +227,12 @@ def analyze_batch(
     observed_angles: set[str] = set()
     model_checked_images = 0
     reused_results = 0
+    used_photo_indices: list[int] = []
+    used_digests: set[str] = set()
     cache: dict[tuple[str, str, str], dict[str, object]] = {}
     visual_cache: dict[str, _VisualInspection] = {}
     unique_evidence: dict[str, dict[str, Any]] = {}
-    for angle, content_type, body in encoded_images:
+    for index, (angle, content_type, body) in enumerate(encoded_images, start=1):
         image = decode_image(body, content_type)
         digest = hashlib.sha256(
             f"{image.width}x{image.height}:".encode() + image.tobytes()
@@ -256,6 +258,9 @@ def analyze_batch(
                 if result.get("model_invoked") is True:
                     model_checked_images += 1
         results.append({"angle": angle, **result})
+        if result.get("model_invoked") is True and digest not in used_digests:
+            used_photo_indices.append(index)
+            used_digests.add(digest)
         if digest not in unique_evidence or (
             not unique_evidence[digest].get("model_invoked") and result.get("model_invoked")
         ):
@@ -294,12 +299,34 @@ def analyze_batch(
             f"({candidate['name']}); referência não confirmada. "
             "As fotos não permitem autenticar a peça nem os documentos."
         )
+    missing_angles = sorted(ANGLES - observed_angles)
+    # The local pilot currently verifies only dial and bezel, even when another view is selected.
+    next_useful_angle = "dial"
+    cited_facts = {
+        (check["field"], check["url"])
+        for result in results
+        if result.get("model_invoked") is True
+        for check in result.get("online_checks", [])
+        if isinstance(check, dict)
+        and check.get("role") == "official_spec"
+        and isinstance(check.get("field"), str)
+        and isinstance(check.get("url"), str)
+    }
     return {
         "results": results,
         "joint": {
             "verdict": verdict,
             "message": message,
-            "missing_angles": sorted(ANGLES - observed_angles),
+            "missing_angles": missing_angles,
+            "next_useful_angle": next_useful_angle,
+            "used_photo_indices": used_photo_indices,
+            "cited_reference_facts": [
+                {"field": field, "url": url} for field, url in sorted(cited_facts)
+            ],
+            "model_sha256": None,
+            "calibrated_confidence": None,
+            "quality_score_0_1000": None,
+            "quality_assessment": "não avaliada",
             "submitted_photos": len(results),
             "unique_visual_contents": len(unique_evidence),
             "reused_results": reused_results,
