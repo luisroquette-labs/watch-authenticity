@@ -1,6 +1,6 @@
 [project]
 name = "watch-authenticity"
-version = "0.2.0"
+version = "0.2.1"
 description = "Open-source multi-angle authenticity model for Rolex Submariner"
 requires-python = ">=3.12"
 

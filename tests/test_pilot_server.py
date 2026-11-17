@@ -107,6 +107,30 @@ def test_locator_ignores_face_outside_watch() -> None:
     assert region.face_score == .7
 
 
+def test_locator_keeps_face_with_small_detector_box_overhang() -> None:
+    # Real 1440px vendor photo: detector face extends ~5px beyond its watch box.
+    image = Image.new("RGB", (1440, 1440), "white")
+    region = choose_region(image, [
+        (.4671, 0, (417.1, 246.5, 888.2, 1162.4)),
+        (.4002, 1, (418.8, 262.3, 893.3, 793.3)),
+    ])
+
+    assert region is not None
+    assert region.face is not None
+    assert region.face_score == .4002
+
+
+def test_locator_rejects_face_with_large_detector_box_overhang() -> None:
+    image = Image.new("RGB", (500, 500), "white")
+    region = choose_region(image, [
+        (.9, 0, (100, 100, 400, 400)),
+        (.8, 1, (50, 150, 350, 350)),
+    ])
+
+    assert region is not None
+    assert region.face is None
+
+
 def test_locator_rejects_image_without_watch_or_face() -> None:
     assert choose_region(Image.new("RGB", (500, 500)), []) is None
 
