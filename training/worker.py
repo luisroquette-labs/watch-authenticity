@@ -43,10 +43,16 @@ def load_training_data(cos: Any, spec: RunSpec) -> Any:
     return implementation(cos, spec)
 
 
-def run_training_waves(bundle: Any, spec: RunSpec, output_dir: Path) -> Any:
+def run_training_waves(
+    bundle: Any, spec: RunSpec, output_dir: Path, *,
+    deadline: float, on_wave_complete: Any,
+) -> Any:
     from training.run import run_training_waves as implementation
 
-    return implementation(bundle, spec, output_dir)
+    return implementation(
+        bundle, spec, output_dir, deadline=deadline,
+        on_wave_complete=on_wave_complete,
+    )
 
 
 def _environment() -> dict[str, str]:

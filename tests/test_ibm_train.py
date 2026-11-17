@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 import pytest
 
 import infra.ibm_train as subject
+import training.run as training_run
 import training.worker as worker
 from infra.ibm_bootstrap import bootstrap_sha256_for
 from infra.ibm_cos import IntegrityError
@@ -801,6 +802,25 @@ def test_worker_persists_failure_receipt_when_training_fails(monkeypatch):
     assert b'"status":"failed"' in receipts[0]
     assert b'"error_type":"RuntimeError"' in receipts[0]
     assert b"training failed" not in receipts[0]
+
+
+def test_worker_forwards_deadline_and_completion_callback(monkeypatch, tmp_path):
+    bundle = object()
+    spec = _spec()
+    calls = []
+    def callback(_wave):
+        pass
+
+    def fake_waves(actual_bundle, actual_spec, actual_path, *, deadline, on_wave_complete):
+        calls.append((actual_bundle, actual_spec, actual_path, deadline, on_wave_complete))
+        return ()
+
+    monkeypatch.setattr(training_run, "run_training_waves", fake_waves)
+
+    assert worker.run_training_waves(
+        bundle, spec, tmp_path, deadline=123.0, on_wave_complete=callback,
+    ) == ()
+    assert calls == [(bundle, spec, tmp_path, 123.0, callback)]
 
 
 def test_worker_publishes_best_wave_candidate_only(monkeypatch):
