@@ -719,6 +719,26 @@ def test_github_fallback_runs_preflight_without_building_images():
     assert "--ignore=tests/test_training_image_runtime.py" in script
 
 
+def _planned_row():
+    from dataclasses import replace
+
+    from acquisition.types import Angle
+    from dataset.angle_review import record_usability_review
+    from tests.test_dataset_readiness import _record
+
+    original = _record(1)
+    return replace(
+        original,
+        candidate_id="candidate",
+        source_domain="partner",
+        seller_group_id="seller",
+        usability_review=record_usability_review(
+            "candidate", original.image_sha256, Angle.DIAL, True, True,
+            "angle-reviewer", NOW,
+        ),
+    )
+
+
 @pytest.mark.parametrize(
     "admit,known,expected", [(False, False, 0), (True, False, 1), (True, True, 0)]
 )
@@ -730,13 +750,7 @@ def test_planned_wave_selects_viable_source_and_persists_reviewed_yield(
     target = AcquisitionTarget(
         "genuine", "dial", 500, 100, "partner", "seller", 0, True, 20, 11, None
     )
-    from dataclasses import replace
-
-    from tests.test_dataset_readiness import _record
-
-    row = replace(
-        _record(1), candidate_id="candidate", source_domain="partner", seller_group_id="seller"
-    )
+    row = _planned_row()
     calls = []
     def collect(*args, **kwargs):
         calls.append(args[3].source)
@@ -906,11 +920,10 @@ def test_review_result_reused_after_cursor_write_failure(cos, monkeypatch):
 
     from acquisition.planner import AcquisitionTarget
     from acquisition.run import run_planned_public_collection_once
-    from tests.test_dataset_readiness import _record
 
     policy, access, authorization = _planned_source()
     target = AcquisitionTarget("genuine", "dial", 500, 100, "partner", "seller", 0, True, 20, 11, None)
-    row = replace(_record(1), candidate_id="candidate", source_domain="partner", seller_group_id="seller")
+    row = _planned_row()
     from acquisition.discovery import append_discovery_page
 
     calls = []
@@ -945,15 +958,12 @@ def test_review_result_reused_after_cursor_write_failure(cos, monkeypatch):
 
 
 def test_admission_is_idempotent_when_review_result_write_fails(cos, monkeypatch):
-    from dataclasses import replace
-
     from acquisition.planner import AcquisitionTarget
     from acquisition.run import run_planned_public_collection_once
-    from tests.test_dataset_readiness import _record
 
     policy, access, authorization = _planned_source()
     target = AcquisitionTarget("genuine", "dial", 500, 100, "partner", "seller", 0, True, 20, 11, None)
-    row = replace(_record(1), candidate_id="candidate", source_domain="partner", seller_group_id="seller")
+    row = _planned_row()
     admissions = []
     saved_decisions = {}
 

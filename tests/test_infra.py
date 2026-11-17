@@ -152,9 +152,14 @@ def test_ibm_only_mocked_e2e_persists_artifacts_and_resource_deletions(monkeypat
         assert _cos is cos and observed_spec == spec
         return "mocked immutable dataset"
 
-    def train(bundle, observed_spec, output_dir):
+    def train(bundle, observed_spec, output_dir, *, deadline, on_wave_complete):
+        import time
+
         assert bundle == "mocked immutable dataset" and observed_spec == spec
+        assert deadline > time.monotonic()
         worker_calls.append("train")
+        output_dir = output_dir / "wave-025"
+        output_dir.mkdir()
         bodies = {
             "checkpoint.pt": b"mocked six-class checkpoint",
             "class-map.json": controller._canonical({item.name: item.value for item in ModelClass}),
@@ -175,11 +180,16 @@ def test_ibm_only_mocked_e2e_persists_artifacts_and_resource_deletions(monkeypat
             },
         }
         (output_dir / "run-result.json").write_bytes(controller._canonical(result))
-        return SimpleNamespace(artifacts=artifacts)
+        wave = SimpleNamespace(
+            fraction=0.25,
+            result=SimpleNamespace(artifacts=artifacts, best_validation_nll=0.5),
+        )
+        on_wave_complete(wave)
+        return (wave,)
 
     monkeypatch.setattr(worker, "_require_gpu", lambda: None)
     monkeypatch.setattr(worker, "load_training_data", load_data)
-    monkeypatch.setattr(worker, "run_training", train)
+    monkeypatch.setattr(worker, "run_training_waves", train)
 
     def create(prototype):
         nonlocal live
