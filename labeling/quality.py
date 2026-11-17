@@ -164,9 +164,10 @@ def submit_quality_review(
         or not reviewer.effective_at <= reviewed_at < reviewer.expires_at
     ):
         raise ValueError("qualified active reviewer, review time and integer score required")
+    registry_sha256 = quality_reviewer_digest(reviewer)
     payload = dict(
         reviewer_id=reviewer.reviewer_id,
-        reviewer_registry_sha256=quality_reviewer_digest(reviewer),
+        reviewer_registry_sha256=registry_sha256,
         inspection_evidence_sha256=inspection.sha256,
         rubric_version=RUBRIC_VERSION,
         rubric_sha256=RUBRIC_SHA256,
@@ -174,7 +175,14 @@ def submit_quality_review(
         score_0_1000=score_0_1000,
     )
     return QualityReviewDecision(
-        **{**payload, "reviewed_at": reviewed_at}, decision_sha256=_digest(payload)
+        reviewer_id=reviewer.reviewer_id,
+        reviewer_registry_sha256=registry_sha256,
+        inspection_evidence_sha256=inspection.sha256,
+        rubric_version=RUBRIC_VERSION,
+        rubric_sha256=RUBRIC_SHA256,
+        reviewed_at=reviewed_at,
+        score_0_1000=score_0_1000,
+        decision_sha256=_digest(payload),
     )
 
 
@@ -296,6 +304,8 @@ def assess_fake_quality(
         else (adjudicator_decision.reviewer_id, adjudicator_decision.score_0_1000)
     )
     score = adjudicator_score[1] if adjudicator_score else (sum(v for _, v in scores) + 1) // 2
+    review_decision_sha256s = tuple(sorted(d.decision_sha256 for d in votes))
+    grouping_sha256 = _digest(asdict(grouping))
     payload = dict(
         watch_entity_id=watch_entity_id,
         evidence_record_id=evidence.evidence_record_id,
@@ -304,8 +314,20 @@ def assess_fake_quality(
         rubric_sha256=RUBRIC_SHA256,
         score_0_1000=score,
         reviewer_scores=scores,
-        review_decision_sha256s=tuple(sorted(d.decision_sha256 for d in votes)),
-        grouping_sha256=_digest(asdict(grouping)),
+        review_decision_sha256s=review_decision_sha256s,
+        grouping_sha256=grouping_sha256,
         adjudicator_score=adjudicator_score,
     )
-    return FakeQualityAssessment(**payload, assessment_sha256=_digest(payload))
+    return FakeQualityAssessment(
+        watch_entity_id=watch_entity_id,
+        evidence_record_id=evidence.evidence_record_id,
+        inspection_evidence_sha256=inspection_evidence_sha256,
+        rubric_version=rubric_version,
+        rubric_sha256=RUBRIC_SHA256,
+        score_0_1000=score,
+        reviewer_scores=scores,
+        review_decision_sha256s=review_decision_sha256s,
+        grouping_sha256=grouping_sha256,
+        adjudicator_score=adjudicator_score,
+        assessment_sha256=_digest(payload),
+    )
