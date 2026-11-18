@@ -120,6 +120,39 @@ def test_locator_keeps_face_with_small_detector_box_overhang() -> None:
     assert region.face_score == .4002
 
 
+@pytest.mark.parametrize(
+    ("watch_score", "face_score", "watch_box", "face_box"),
+    [
+        (.336, .410, (20.8, 99.3, 1424.2, 2174.9), (6.8, 609.9, 1305.8, 1776.9)),
+        (.162, .349, (1.9, -17.4, 1415.3, 1957.2), (7.0, 774.9, 1268.6, 1793.1)),
+    ],
+)
+def test_locator_keeps_white_background_watch_with_correlated_face(
+    watch_score: float, face_score: float,
+    watch_box: tuple[float, float, float, float], face_box: tuple[float, float, float, float],
+) -> None:
+    # Detector outputs observed on two clear 126610LN listing photos.
+    image = Image.new("RGB", (1412, 2160), "white")
+    region = choose_region(image, [(watch_score, 0, watch_box), (face_score, 1, face_box)])
+
+    assert region is not None
+    assert region.face is not None
+    assert region.watch_score == watch_score
+    assert region.face_score == face_score
+
+
+def test_locator_rejects_weak_watch_without_correlated_face() -> None:
+    image = Image.new("RGB", (500, 500), "white")
+    assert choose_region(image, [
+        (.20, 0, (100, 100, 400, 400)),
+        (.29, 1, (130, 130, 370, 370)),
+    ]) is None
+    assert choose_region(image, [
+        (.20, 0, (100, 100, 400, 400)),
+        (.40, 1, (0, 0, 80, 80)),
+    ]) is None
+
+
 def test_locator_rejects_face_with_large_detector_box_overhang() -> None:
     image = Image.new("RGB", (500, 500), "white")
     region = choose_region(image, [
