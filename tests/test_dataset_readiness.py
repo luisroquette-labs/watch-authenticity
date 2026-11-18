@@ -104,10 +104,75 @@ def test_small_complete_dataset_passes_when_thresholds_are_scaled(monkeypatch):
     monkeypatch.setattr(readiness, "MIN_GOLD_IMAGES", 1)
     splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
 
-    report = evaluate_readiness(records, "rolex-submariner-126610ln", splits=splits)
+    report = evaluate_readiness(records, "rolex-submariner-126610ln", splits=splits, required_angles=tuple(Angle))
 
     assert report.ready
     assert report.reasons == ()
+
+
+def test_patek_readiness_uses_its_views_and_non_target_rejections(monkeypatch):
+    reference = "patek-nautilus-58111g001"
+    required_angles = (Angle.DIAL, Angle.CROWN, Angle.CLASP, Angle.CASEBACK)
+    records = [
+        replace(
+            record,
+            reference_id=reference,
+            rejection_subtype=(
+                "non-target-reference" if record.rejection_subtype == "non-submariner"
+                else record.rejection_subtype
+            ),
+        )
+        for record in _small_complete_records()
+        if record.angle is None or record.angle in required_angles
+    ]
+    monkeypatch.setattr(readiness, "MIN_CELL_IMAGES", 1)
+    monkeypatch.setattr(readiness, "MIN_CELL_ENTITIES", 1)
+    monkeypatch.setattr(readiness, "MIN_REJECTION_IMAGES", 1)
+    monkeypatch.setattr(readiness, "MIN_REJECTION_SUBJECTS", 1)
+    monkeypatch.setattr(readiness, "MIN_GOLD_IMAGES", 1)
+    splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
+
+    report = evaluate_readiness(records, reference, splits=splits, required_angles=required_angles)
+
+    assert not any("rejection:" in reason for reason in report.reasons)
+    assert not any("cyclops" in reason or "rehaut" in reason for reason in report.reasons)
+    assert report.required_angles == required_angles
+    assert len(report.cell_counts) == 20
+    assert not any("cyclops" in cell or "rehaut" in cell for cell, _, _ in report.cell_counts)
+
+
+def test_other_watch_rejection_cannot_name_its_target_reference():
+    with pytest.raises(ValueError, match="cannot name the target"):
+        _record(
+            99,
+            label=Label.REJECTION,
+            angle=None,
+            subtype="non-target-reference",
+            rejection_reference="rolex-submariner-126610ln",
+        )
+
+
+@pytest.mark.parametrize("target, self_reference", [
+    ("rolex-datejust-126334", "rolex-datejust-41-126334"),
+    ("rolex-datejust-41-126334", "rolex-datejust-126334"),
+])
+def test_rejection_aliases_do_not_count_as_other_references(catalog_fixture, target, self_reference):
+    aliases = catalog_fixture.catalog.aliases
+    records = [
+        replace(_record(index, label=Label.REJECTION, angle=None,
+                        subtype="non-target-reference", rejection_reference=reference),
+                reference_id=target)
+        for index, reference in enumerate(
+            (self_reference, "other-1", "other-2", "other-3", "other-4", "other-5"), 1
+        )
+    ]
+    splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
+
+    report = evaluate_readiness(records, target, splits=splits,
+                                required_angles=(Angle.DIAL,), reference_aliases=aliases)
+
+    assert "rejection: other-watch example names the target reference or an alias" in report.reasons
+    assert "rejection: requires five non-target-reference references" not in report.reasons
 
 
 def test_augmented_or_repeated_original_does_not_increase_cell_count(monkeypatch):
@@ -117,7 +182,7 @@ def test_augmented_or_repeated_original_does_not_increase_cell_count(monkeypatch
     records = [original, repeated, augmented]
     splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
 
-    report = evaluate_readiness(records, original.reference_id, splits=splits)
+    report = evaluate_readiness(records, original.reference_id, splits=splits, required_angles=tuple(Angle))
 
     dial = next(cell for cell in report.cell_counts if cell[0] == "genuine/dial")
     assert dial == ("genuine/dial", 1, 1)
@@ -130,7 +195,7 @@ def test_ambiguous_content_links_do_not_inflate_independent_watch_count():
     records = [first, second, third]
     splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
 
-    report = evaluate_readiness(records, first.reference_id, splits=splits)
+    report = evaluate_readiness(records, first.reference_id, splits=splits, required_angles=tuple(Angle))
 
     assert next(cell for cell in report.cell_counts if cell[0] == "genuine/dial") == (
         "genuine/dial", 2, 1
@@ -145,7 +210,7 @@ def test_cross_angle_content_link_reduces_dial_entity_count():
     records = [first, bridge, other_view, second_dial]
     splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
 
-    report = evaluate_readiness(records, first.reference_id, splits=splits)
+    report = evaluate_readiness(records, first.reference_id, splits=splits, required_angles=tuple(Angle))
 
     assert next(cell for cell in report.cell_counts if cell[0] == "genuine/dial") == (
         "genuine/dial", 2, 1
@@ -161,7 +226,7 @@ def test_rejection_subject_count_uses_content_components(monkeypatch):
     )
     splits = DatasetSplits(((first.asset_id, TRAIN), (repeated.asset_id, TRAIN)), NOW, 42)
 
-    report = evaluate_readiness([first, repeated], first.reference_id, splits=splits)
+    report = evaluate_readiness([first, repeated], first.reference_id, splits=splits, required_angles=tuple(Angle))
 
     assert "rejection: requires 250 distinct subjects" in report.reasons
 
@@ -178,7 +243,7 @@ def test_ambiguous_aliases_cannot_hide_source_or_seller_dominance():
     )
     splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
 
-    report = evaluate_readiness(records, records[0].reference_id, splits=splits)
+    report = evaluate_readiness(records, records[0].reference_id, splits=splits, required_angles=tuple(Angle))
 
     assert any("dominant.example.co.za exceeds 40%" in reason for reason in report.reasons)
     assert any("seller seller-1 exceeds 10%" in reason for reason in report.reasons)
@@ -191,7 +256,7 @@ def test_source_share_above_forty_percent_is_reported(monkeypatch):
     ]
     splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
 
-    report = evaluate_readiness(records, records[0].reference_id, splits=splits)
+    report = evaluate_readiness(records, records[0].reference_id, splits=splits, required_angles=tuple(Angle))
 
     assert any("exceeds 40%" in reason for reason in report.reasons)
 
@@ -206,7 +271,7 @@ def test_exactly_forty_percent_source_share_is_allowed():
     ]
     splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
 
-    report = evaluate_readiness(records, records[0].reference_id, splits=splits)
+    report = evaluate_readiness(records, records[0].reference_id, splits=splits, required_angles=tuple(Angle))
 
     assert not any("boundary.example.co.za exceeds 40%" in reason for reason in report.reasons)
 
@@ -231,7 +296,7 @@ def test_dominant_source_and_seller_are_seen_across_multiple_photos_per_entity()
         records.extend((alternate, dominant))
     splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
 
-    report = evaluate_readiness(records, records[0].reference_id, splits=splits)
+    report = evaluate_readiness(records, records[0].reference_id, splits=splits, required_angles=tuple(Angle))
 
     assert any("source dominant.co.za exceeds 40%" in reason for reason in report.reasons)
     assert any("seller dominant-seller exceeds 10%" in reason for reason in report.reasons)
@@ -285,7 +350,7 @@ def test_readiness_thresholds_match_the_mvp_contract():
 
 
 def test_freeze_excludes_expired_rights_and_reports_impacted_artifact(
-    rights, policy_set
+    rights, policy_set, catalog_fixture
 ):
     record = replace(_record(1), rights_record_id=rights.rights_record_id)
     splits = build_splits([record], seed=42, held_out_factories=set())
@@ -313,6 +378,7 @@ def test_freeze_excludes_expired_rights_and_reports_impacted_artifact(
         now=NOW,
         object_inventory={record.candidate_id: inventory},
         artifact_lineage={artifact: {previous.manifest_sha256}},
+        reference_catalog=catalog_fixture.catalog,
     )
 
     assert result.freeze.blocked
@@ -361,7 +427,7 @@ def test_prior_freeze_rechecks_current_rights(policy_set, rights):
         )
 
 
-def test_freeze_hashes_do_not_depend_on_record_order(policy_set, rights):
+def test_freeze_hashes_do_not_depend_on_record_order(policy_set, rights, catalog_fixture):
     records = [
         replace(_record(index), rights_record_id=rights.rights_record_id)
         for index in range(1, 6)
@@ -378,6 +444,7 @@ def test_freeze_hashes_do_not_depend_on_record_order(policy_set, rights):
         now=NOW,
         object_inventory={},
         artifact_lineage={},
+        reference_catalog=catalog_fixture.catalog,
     )
     second = freeze_dataset(
         list(reversed(records)),
@@ -389,12 +456,13 @@ def test_freeze_hashes_do_not_depend_on_record_order(policy_set, rights):
         now=NOW,
         object_inventory={},
         artifact_lineage={},
+        reference_catalog=catalog_fixture.catalog,
     )
 
     assert first.freeze == second.freeze
 
 
-def test_freeze_rejects_noncanonical_split_assignments(policy_set, rights):
+def test_freeze_rejects_noncanonical_split_assignments(policy_set, rights, catalog_fixture):
     records = [
         replace(_record(index), rights_record_id=rights.rights_record_id)
         for index in range(1, 6)
@@ -418,6 +486,7 @@ def test_freeze_rejects_noncanonical_split_assignments(policy_set, rights):
             now=NOW,
             object_inventory={},
             artifact_lineage={},
+            reference_catalog=catalog_fixture.catalog,
         )
 
 
@@ -430,7 +499,7 @@ def test_augmented_gold_does_not_satisfy_gold_gate(monkeypatch):
     monkeypatch.setattr(readiness, "MIN_GOLD_IMAGES", 1)
     splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
 
-    report = evaluate_readiness(records, records[0].reference_id, splits=splits)
+    report = evaluate_readiness(records, records[0].reference_id, splits=splits, required_angles=tuple(Angle))
 
     assert any(reason.startswith("gold:") for reason in report.reasons)
 

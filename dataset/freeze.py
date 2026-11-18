@@ -22,6 +22,7 @@ from acquisition.types import (
 from core.types import Label
 from dataset.angle_review import usability_review_json, verify_usability_review
 from dataset.readiness import evaluate_readiness
+from dataset.reference_catalog import ReferenceCatalog
 from dataset.splits import DatasetSplits, build_splits
 from infra.ibm_types import ObjectRef
 
@@ -101,6 +102,7 @@ def freeze_dataset(
     now: datetime,
     object_inventory: Mapping[str, CandidateObjectInventory],
     artifact_lineage: Mapping[str, Collection[str]],
+    reference_catalog: ReferenceCatalog,
 ) -> FreezeResult:
     """Freeze eligible assets while reporting every rights-driven removal."""
     if now.tzinfo is None or now.utcoffset() is None:
@@ -163,6 +165,10 @@ def freeze_dataset(
     references = {record.reference_id for record in records}
     if len(references) != 1:
         raise ValueError("one freeze must contain exactly one watch reference")
+    reference_id = next(iter(references))
+    if reference_catalog.entry_for(reference_id).reference_id != reference_id:
+        raise ValueError("freeze reference ID must be canonical")
+    required_angles = reference_catalog.entry_for(reference_id).required_angles
     eligible_splits = build_splits(
         eligible_records,
         seed=splits.seed,
@@ -170,8 +176,10 @@ def freeze_dataset(
     )
     readiness = evaluate_readiness(
         eligible_records,
-        next(iter(references)),
+        reference_id,
         splits=eligible_splits,
+        required_angles=required_angles,
+        reference_aliases=reference_catalog.aliases,
     )
     manifest_sha256 = _digest([_record_json(record) for record in eligible_records])
     split_sha256 = _digest(
@@ -188,7 +196,10 @@ def freeze_dataset(
     )
     policy_sha256 = _digest([_policy_json(policy) for policy in sorted(policies.values(), key=lambda item: item.policy_id)])
     rights_sha256 = _digest([_rights_json(item) for item in sorted(rights.values(), key=lambda value: value.rights_record_id)])
-    readiness_sha256 = _digest(asdict(readiness))
+    readiness_sha256 = _digest({
+        **asdict(readiness),
+        "required_angles": [angle.value for angle in readiness.required_angles],
+    })
     reason_counts = tuple(sorted(Counter(exclusions.values()).items()))
     freeze = DatasetFreeze(
         manifest_sha256=manifest_sha256,

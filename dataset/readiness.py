@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from acquisition.types import Angle, EvidenceTier, TrainingRecord
@@ -24,6 +24,7 @@ class ReadinessReport:
     ready: bool
     reasons: tuple[str, ...]
     cell_counts: tuple[tuple[str, int, int], ...]
+    required_angles: tuple[Angle, ...]
 
 
 def evaluate_readiness(
@@ -31,8 +32,13 @@ def evaluate_readiness(
     reference_id: str,
     *,
     splits: DatasetSplits,
+    required_angles: Sequence[Angle],
+    reference_aliases: Mapping[str, str] | None = None,
 ) -> ReadinessReport:
     """Return every readiness deficit without inflating crops or augmentations."""
+    angles = tuple(required_angles)
+    if not angles or any(not isinstance(angle, Angle) for angle in angles) or len(set(angles)) != len(angles):
+        raise ValueError("required_angles must be nonempty, unique Angle values")
     scoped = [record for record in records if record.reference_id == reference_id]
     components = _independent_entity_components(
         [record for record in scoped if not record.is_augmented]
@@ -43,7 +49,7 @@ def evaluate_readiness(
         (f"fake-{grade}", Label.FAKE, grade) for grade in range(1, 5)
     )
     for output, label, grade in outputs:
-        for angle in Angle:
+        for angle in angles:
             cell = [
                 record
                 for record in scoped
@@ -72,16 +78,28 @@ def evaluate_readiness(
         reasons.append("rejection: requires 500 distinct original images")
     if rejection_subjects < MIN_REJECTION_SUBJECTS:
         reasons.append("rejection: requires 250 distinct subjects")
+    other_watch_subtype = "non-submariner" if reference_id == "rolex-submariner-126610ln" else "non-target-reference"
     subtypes = {record.rejection_subtype for record in rejections}
-    if not {"no-watch", "non-submariner"}.issubset(subtypes):
-        reasons.append("rejection: requires no-watch and non-submariner examples")
+    if not {"no-watch", other_watch_subtype}.issubset(subtypes):
+        reasons.append(f"rejection: requires no-watch and {other_watch_subtype} examples")
+    aliases = reference_aliases or {}
+    canonical_reference_id = aliases.get(reference_id, reference_id)
+    if any(
+        record.label is Label.REJECTION
+        and record.rejection_subtype in {"non-submariner", "non-target-reference"}
+        and record.rejection_reference_id is not None
+        and aliases.get(record.rejection_reference_id, record.rejection_reference_id) == canonical_reference_id
+        for record in scoped
+    ):
+        reasons.append("rejection: other-watch example names the target reference or an alias")
     references = {
-        record.rejection_reference_id
+        aliases.get(record.rejection_reference_id, record.rejection_reference_id)
         for record in rejections
-        if record.rejection_subtype == "non-submariner"
+        if record.rejection_subtype == other_watch_subtype
+        and record.rejection_reference_id is not None
     }
-    if len(references - {None}) < 5:
-        reasons.append("rejection: requires five non-submariner references")
+    if len(references - {None, reference_id}) < 5:
+        reasons.append(f"rejection: requires five {other_watch_subtype} references")
 
     for name, label in (("genuine", Label.GENUINE), ("fake", Label.FAKE)):
         label_records = _unique_content_records(
@@ -119,6 +137,7 @@ def evaluate_readiness(
         ready=not reasons,
         reasons=tuple(sorted(reasons)),
         cell_counts=tuple(counts),
+        required_angles=angles,
     )
 
 

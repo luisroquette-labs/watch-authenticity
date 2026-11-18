@@ -1,10 +1,11 @@
 from acquisition.planner import plan_acquisition
+from acquisition.types import Angle
 from dataset.readiness import ReadinessReport
 from evaluation.evaluate import CollectionWave
 
 
 def _report(*cells):
-    return ReadinessReport("rolex-submariner-126610ln", False, (), tuple(cells))
+    return ReadinessReport("rolex-submariner-126610ln", False, (), tuple(cells), tuple(Angle))
 
 
 def _plan(report, waves=(), yields=None, consumption=None):
@@ -61,7 +62,7 @@ def test_two_saturated_waves_stop_same_distribution():
 def test_ranking_is_deterministic_when_cells_and_counts_change_order():
     report = _report(("fake-2/clasp", 10, 10), ("genuine/dial", 10, 10))
     forward = _plan(report)
-    reverse = _plan(ReadinessReport(report.reference_id, False, (), tuple(reversed(report.cell_counts))))
+    reverse = _plan(ReadinessReport(report.reference_id, False, (), tuple(reversed(report.cell_counts)), report.required_angles))
 
     assert forward == reverse
 

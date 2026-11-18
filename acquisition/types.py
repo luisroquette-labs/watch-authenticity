@@ -456,12 +456,14 @@ class TrainingRecord:
         if self.label is Label.REJECTION:
             if self.angle is not None:
                 raise ValueError("rejection records cannot claim a guided angle")
-            if self.rejection_subtype not in {"no-watch", "non-submariner"}:
+            if self.rejection_subtype not in {"no-watch", "non-submariner", "non-target-reference"}:
                 raise ValueError("rejection_subtype is required for rejection records")
-            if self.rejection_subtype == "non-submariner":
+            if self.rejection_subtype in {"non-submariner", "non-target-reference"}:
                 if self.rejection_reference_id is None:
-                    raise ValueError("non-submariner records require a reference")
+                    raise ValueError("other-watch rejection records require a reference")
                 _nonempty(self.rejection_reference_id, "rejection_reference_id")
+                if self.rejection_reference_id == self.reference_id:
+                    raise ValueError("other-watch rejection cannot name the target reference")
             elif self.rejection_reference_id is not None:
                 raise ValueError("no-watch records cannot claim a reference")
         elif (

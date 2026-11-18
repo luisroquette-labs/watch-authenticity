@@ -107,3 +107,13 @@ def test_loader_retains_review_digest_and_rejection_exception(training_fixture):
     records = load_training_data(cos, spec).records
     assert records[0].usability_review_sha256 == manifest["records"][0]["usability_review_sha256"]
     assert all(record.usability_review_sha256 is None for record in records if record.label.value == "rejection")
+
+
+def test_loader_refuses_rejection_subtype_different_from_canonical_source(training_fixture):
+    _cos, _spec, manifest, splits, images = training_fixture
+    rejection = next(record for record in manifest["records"] if record["rejection_subtype"] == "no-watch")
+    rejection["rejection_subtype"] = "non-target-reference"
+    cos, spec = _seed(manifest, splits, images, refresh_freeze=False)
+
+    with pytest.raises(TrainingDataRefused, match="projection differs"):
+        load_training_data(cos, spec)
