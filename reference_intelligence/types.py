@@ -12,7 +12,7 @@ from acquisition.types import Angle
 
 _REFERENCE_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)+")
 _FIELD = re.compile(r"[a-z][a-z0-9_]*")
-_OFFICIAL_DOMAINS = {"rolex": "rolex.com", "patek": "patek.com"}
+_OFFICIAL_DOMAINS = {"rolex": "rolex.com", "patek": "patek.com", "omega": "omegawatches.com"}
 
 
 def _single_line(value: str, field: str) -> None:
