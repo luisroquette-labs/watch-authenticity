@@ -25,9 +25,10 @@
    literatura; um teste em outra fonte por classe é obrigatório antes de
    afirmar que o modelo reconhece falsificações. Hashes idênticos ligam
    anúncios repetidos, mas cortes ou recodificações do mesmo relógio não são
-   detectados por hash. Antes de dividir dados, reconciliar manualmente ou por
-   comparação visual os possíveis reposts e excluir grupos ambíguos. Nunca
-   usar `provisional_group` diretamente como chave final de separação.
+   detectados por hash. Antes de interpretar qualquer divisão como avaliação
+   independente, reconciliar manualmente ou por comparação visual os possíveis
+   reposts e excluir grupos ambíguos. Nunca usar `provisional_group`
+   diretamente como chave final de separação.
 4. **Treinar o primeiro resultado observável como triagem binária.** Usar
    imagens de originais com proveniência explícita e réplicas declaradas,
    balanceadas por relógio e fonte. O teste precisa informar, por relógio,
@@ -70,6 +71,32 @@ ao mesmo inventário experimental; depois executar um treino binário local
 limitado no tempo, com teste separado por relógio e fonte. Se a separação
 independente não for possível, publicar o resultado como experimento sem
 afirmar precisão de detecção.
+
+## Atualização de 18/11/2026: primeiro treino diagnóstico
+
+- A segunda tentativa de coleta completou as **51 imagens de 24 anúncios CPO**:
+  17 da Watches of Switzerland, 30 da Goldsmiths e quatro da Precision
+  Watches. Watches of Switzerland e Goldsmiths pertencem ao mesmo grupo
+  vendedor; contam como **duas origens independentes de vendedor**, não três.
+- Duas fontes adicionais de réplicas declaradas forneceram 20 imagens. Com
+  as nove da VS Factory USA, o recorte 126610LN contém **29 imagens falsas
+  declaradas de apenas três anúncios**. Hashes de todos os 80 arquivos foram
+  conferidos; nenhum destes rótulos equivale a autenticação independente.
+- Treinei localmente uma saída binária simples sobre o DINOv2 congelado,
+  reservando uma fonte de cada classe em seis divisões **diagnósticas**, sem
+  tratar essas divisões como avaliação independente. Em uma delas, o
+  classificador chamou **7 dos 23 anúncios CPO reservados** de falsos; nas
+  outras duas divisões com esse mesmo grupo CPO, chamou os 23 de originais.
+  A variação mostra que o resultado depende da pequena seleção de vendedores.
+  Cada teste de falsos contém só **um anúncio**; seus acertos não medem
+  capacidade de reconhecer falsificações novas. Artefato local:
+  `.runtime/execution-20261117/weak-probe-20261118-v2.json`.
+
+Esse treino é um diagnóstico, não o classificador do piloto. O próximo dado
+necessário é diversidade de relógios físicos falsos 126610LN, com confirmação
+melhor que declaração do vendedor, e originais de mais grupos vendedores.
+Antes de medir acerto, também é preciso reconciliar repostagens e verificar
+ângulos comparáveis. Nenhuma nota de qualidade 0–1.000 foi inferida.
 
 ## Fontes técnicas verificadas
 
