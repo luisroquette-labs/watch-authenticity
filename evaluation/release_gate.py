@@ -17,7 +17,12 @@ from dataset.splits import (
     TRAIN,
     VAL,
 )
-from evaluation.evaluate import SourceProbeReport
+from evaluation.evaluate import (
+    EntityCohort,
+    EntitySafetyReport,
+    SourceProbeReport,
+    evaluate_entity_safety,
+)
 from training.data import TrainingBundle
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -71,6 +76,7 @@ class EvaluationReport:
     expected_calibration_error: float
     gold_baseline_accuracy: float
     slices: tuple[SliceMetric, ...]
+    entity_safety: EntitySafetyReport | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -88,6 +94,7 @@ class EvaluationReport:
 class ReleaseDecision:
     allowed: bool
     reasons: tuple[str, ...]
+    provisional_entity_cohorts: tuple[EntityCohort, ...] = ()
 
 
 def build_slice_census(bundle: TrainingBundle) -> SliceCensus:
@@ -134,6 +141,7 @@ def release_gate(
     maximum_cross_source_delta: float = 0.10,
 ) -> ReleaseDecision:
     reasons: list[str] = []
+    entity_cohorts: tuple[EntityCohort, ...] = ()
     if source_probe.blocked:
         reasons.append("source-domain shortcut")
     if report is None or bundle is None:
@@ -147,6 +155,30 @@ def release_gate(
         reasons.append("evaluation identity differs from source probe or frozen dataset")
     if report.expected_calibration_error > maximum_calibration_error:
         reasons.append("calibration error exceeds release limit")
+    if report.entity_safety is None:
+        reasons.append("frozen entity-level safety evaluation is missing")
+    elif (
+        report.entity_safety.freeze_sha256 != report.freeze_sha256
+        or report.entity_safety.model_sha256 != report.model_sha256
+    ):
+        reasons.append("entity-level safety identity differs from evaluation")
+    else:
+        try:
+            entity_cohorts = evaluate_entity_safety(bundle, report.entity_safety)
+        except ValueError as exc:
+            reasons.append(f"invalid entity-level safety evidence: {exc}")
+        else:
+            # shortcut: no persisted prediction/qualified-quality producer exists; verify those artifacts before enabling release.
+            reasons.append("authoritative persisted prediction and qualified-quality evidence is missing")
+            for cohort in entity_cohorts[:2]:
+                if cohort.total == 0 or cohort.answered / cohort.total < 0.20:
+                    reasons.append(f"insufficient non-inconclusive coverage: {cohort.name}")
+            high_quality = entity_cohorts[-1]
+            if (
+                high_quality.false_reassurance_upper95 is None
+                or high_quality.false_reassurance_upper95 > 0.05
+            ):
+                reasons.append("high-quality fake false-reassurance upper bound exceeds 5% or holdout is insufficient")
 
     metrics = {metric.name: metric for metric in report.slices}
     missing = sorted(set(census.names) - set(metrics))
@@ -182,4 +214,4 @@ def release_gate(
         gold.balanced_accuracy, report.gold_baseline_accuracy
     ):
         reasons.append("gold-set regression")
-    return ReleaseDecision(not reasons, tuple(reasons))
+    return ReleaseDecision(not reasons, tuple(reasons), entity_cohorts)

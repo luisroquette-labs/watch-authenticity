@@ -21,6 +21,7 @@ from typing import Protocol
 
 from acquisition.types import TrainingRecord as AcceptedTrainingRecord
 from core.types import Label, ManifestRecord
+from dataset.entities import find_near_duplicate_pairs
 
 # item 13's cross-source defense pairs genuine photos shot in a casual,
 # forum-style setting against fake photos shot in a studio/catalog style —
@@ -224,6 +225,13 @@ def build_splits(
         ):
             prior = seen.setdefault((field, value), record.asset_id)
             union.union(prior, record.asset_id)
+    by_phash: dict[str, str] = {}
+    for record in records:
+        prior = by_phash.setdefault(record.phash, record.asset_id)
+        union.union(prior, record.asset_id)
+    unique_phashes = sorted(by_phash)
+    for left, right in find_near_duplicate_pairs(unique_phashes):
+        union.union(by_phash[unique_phashes[left]], by_phash[unique_phashes[right]])
 
     components: dict[str, list[AcceptedTrainingRecord]] = {}
     for record in records:
@@ -311,6 +319,16 @@ def assert_no_connected_component_crosses_splits(
             previous = observed.setdefault((field, value), split)
             if previous != split:
                 raise ValueError(f"{field} group crosses dataset splits")
+    by_phash: dict[str, str] = {}
+    for record in records:
+        split = split_by_asset[record.asset_id]
+        previous = by_phash.setdefault(record.phash, split)
+        if previous != split:
+            raise ValueError("pHash group crosses dataset splits")
+    unique_phashes = sorted(by_phash)
+    for left, right in find_near_duplicate_pairs(unique_phashes):
+        if by_phash[unique_phashes[left]] != by_phash[unique_phashes[right]]:
+            raise ValueError("near-pHash group crosses dataset splits")
 
 
 def _class_key(record: AcceptedTrainingRecord) -> str:

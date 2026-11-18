@@ -6,6 +6,8 @@ import hashlib
 import json
 import os
 import tempfile
+import time
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -41,10 +43,16 @@ def load_training_data(cos: Any, spec: RunSpec) -> Any:
     return implementation(cos, spec)
 
 
-def run_training(bundle: Any, spec: RunSpec, output_dir: Path) -> Any:
-    from training.run import run_training as implementation
+def run_training_waves(
+    bundle: Any, spec: RunSpec, output_dir: Path, *,
+    deadline: float, on_wave_complete: Any,
+) -> Any:
+    from training.run import run_training_waves as implementation
 
-    return implementation(bundle, spec, output_dir)
+    return implementation(
+        bundle, spec, output_dir, deadline=deadline,
+        on_wave_complete=on_wave_complete,
+    )
 
 
 def _environment() -> dict[str, str]:
@@ -130,29 +138,38 @@ def execute_worker(cos: Any | None = None) -> None:
     try:
         _require_gpu()
         bundle = load_training_data(cos, spec)
+        budget_seconds = min(90 * 60, float(spec.max_hours * Decimal(3600)) - 30 * 60)
+        if budget_seconds <= 0:
+            raise RuntimeError("run has no training budget after teardown reserve")
+        deadline = time.monotonic() + budget_seconds
+        published_waves: dict[float, list[dict[str, object]]] = {}
         with tempfile.TemporaryDirectory(prefix="watch-auth-training-") as directory:
             output_dir = Path(directory)
-            result = run_training(bundle, spec, output_dir)
-            artifacts = dict(result.artifacts)
-            result_path = output_dir / "run-result.json"
-            artifacts[result_path] = hashlib.sha256(result_path.read_bytes()).hexdigest()
-            published: list[dict[str, object]] = []
-            for path, digest in sorted(artifacts.items(), key=lambda item: item[0].name):
-                ref = upload_verified(
-                    cos,
-                    path,
-                    spec.bucket,
-                    f"{spec.prefix}/artifacts/{path.name}",
-                    digest,
-                )
-                published.append(
-                    {
-                        "key": ref.key,
-                        "length": ref.length,
-                        "name": path.name,
-                        "sha256": ref.sha256,
-                    }
-                )
+
+            def publish_wave(wave: Any) -> None:
+                artifacts = dict(wave.result.artifacts)
+                result_path = output_dir / f"wave-{round(wave.fraction * 100):03d}" / "run-result.json"
+                artifacts[result_path] = hashlib.sha256(result_path.read_bytes()).hexdigest()
+                published: list[dict[str, object]] = []
+                for path, digest in sorted(artifacts.items(), key=lambda item: item[0].name):
+                    ref = upload_verified(
+                        cos, path, spec.bucket,
+                        f"{spec.prefix}/artifacts/{path.name}/wave-{round(wave.fraction * 100):03d}",
+                        digest,
+                    )
+                    published.append({
+                        "key": ref.key, "length": ref.length,
+                        "name": path.name, "sha256": ref.sha256,
+                    })
+                published_waves[wave.fraction] = published
+
+            waves = run_training_waves(
+                bundle, spec, output_dir, deadline=deadline, on_wave_complete=publish_wave,
+            )
+            if not waves:
+                raise RuntimeError("training produced no independent entity wave")
+            selected = min(waves, key=lambda wave: wave.result.best_validation_nll)
+            published = published_waves[selected.fraction]
         if {item["name"] for item in published} != {
             "checkpoint.pt",
             "class-map.json",

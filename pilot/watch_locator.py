@@ -65,12 +65,15 @@ def choose_region(
     faces = [(score, box) for score, label, box in candidates if label == 1 and score >= 0.2 and valid(box)]
     if watches:
         watch_score, watch_box = max(watches, key=lambda item: item[0])
+        # Detector boxes can disagree by a few pixels around the same watch.
+        x_slack = (watch_box[2] - watch_box[0]) * 0.02
+        y_slack = (watch_box[3] - watch_box[1]) * 0.02
         faces = [
             (score, box) for score, box in faces
-            if watch_box[0] <= (box[0] + box[2]) / 2 <= watch_box[2]
-            and watch_box[1] <= (box[1] + box[3]) / 2 <= watch_box[3]
-            and box[2] - box[0] <= watch_box[2] - watch_box[0]
-            and box[3] - box[1] <= watch_box[3] - watch_box[1]
+            if box[0] >= watch_box[0] - x_slack
+            and box[1] >= watch_box[1] - y_slack
+            and box[2] <= watch_box[2] + x_slack
+            and box[3] <= watch_box[3] + y_slack
         ]
     elif faces and max(faces, key=lambda item: item[0])[0] >= 0.45:
         watch_score, watch_box = max(faces, key=lambda item: item[0])

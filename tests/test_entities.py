@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+from dataclasses import replace
 from itertools import combinations
 
 import pytest
@@ -20,10 +21,34 @@ from dataset.entities import (
 )
 
 
-def test_syndicated_listing_photos_share_content_cluster(grouped_records):
-    clusters = build_content_clusters(grouped_records)
+def test_syndicated_listing_with_identical_bytes_shares_content_cluster(grouped_records):
+    records = [grouped_records[0], replace(grouped_records[1], raw_sha256=grouped_records[0].raw_sha256)]
+    clusters = build_content_clusters(records)
 
     assert clusters["front"] == clusters["repost"]
+
+
+def test_distinct_listings_with_similar_phash_do_not_become_one_image(grouped_records):
+    # Distinct catalog watches can have near-identical composition and pHash.
+    records = [
+        replace(grouped_records[0], candidate_id="sku-188633", acquisition_batch_id="batch-a", phash="bed0d503522f2f54"),
+        replace(grouped_records[1], candidate_id="sku-188165", acquisition_batch_id="batch-b", phash="bed0d503522f2fd0"),
+    ]
+    clusters = build_content_clusters(records)
+    entities = assign_watch_entities(records, clusters)
+
+    assert clusters["sku-188633"] != clusters["sku-188165"]
+    assert entities.split_families["sku-188633"] == entities.split_families["sku-188165"]
+
+
+def test_near_phash_with_conflicting_labels_is_quarantined(grouped_records):
+    records = [grouped_records[0], replace(grouped_records[1], proposed_label=Label.FAKE)]
+    clusters = build_content_clusters(records)
+    assignments = assign_watch_entities(records, clusters)
+
+    assert clusters["front"] != clusters["repost"]
+    assert build_grouping_decision(records[0], clusters, assignments).quarantined
+    assert build_grouping_decision(records[1], clusters, assignments).quarantined
 
 
 def test_uncertain_same_watch_is_grouped_not_split(grouped_records):
@@ -48,7 +73,7 @@ def test_visual_similarity_alone_does_not_assert_physical_watch_identity(grouped
 
     entity_ids = assign_watch_entities(grouped_records, clusters)
 
-    assert clusters["front"] == clusters["repost"]
+    assert clusters["front"] != clusters["repost"]
     assert entity_ids["front"] != entity_ids["repost"]
     assert entity_ids.split_families["front"] == entity_ids.split_families["repost"]
 
@@ -71,6 +96,7 @@ def test_reviewer_link_and_hashed_serial_can_join_angles(grouped_records):
 
 
 def test_conflicting_labels_quarantine_entire_content_cluster(grouped_records):
+    grouped_records[1] = replace(grouped_records[1], raw_sha256=grouped_records[0].raw_sha256)
     clusters = build_content_clusters(grouped_records)
     evidence = {
         "front": EntityEvidence(accepted_label=Label.GENUINE, evidence_record_id="evidence-genuine"),

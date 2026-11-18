@@ -6,8 +6,11 @@ import hashlib
 import io
 import json
 import math
+from contextlib import nullcontext
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 import torch
@@ -15,8 +18,10 @@ from PIL import Image
 from torch import nn
 
 import training.run as training_run
+from acquisition.types import Angle
 from adapters.backbone import BACKBONE_EMBED_DIM, BACKBONE_REVISION
 from core.types import ModelClass
+from dataset.angle_review import record_usability_review, usability_review_json
 from dataset.crop import ANGLE_CROP_FRACTIONS
 from infra.ibm_types import RunSpec
 from model.heads import build_trainable_model
@@ -92,6 +97,10 @@ def _record(
     rejection_subtype: str | None = None,
 ) -> dict[str, object]:
     digest = _sha256(image)
+    usability = None if label == "rejection" else record_usability_review(
+        f"candidate-{asset_id}", digest, Angle(angle), True, True, "angle-reviewer",
+        datetime(2026, 11, 9, tzinfo=timezone.utc),
+    )
     return {
         "asset_id": asset_id,
         "object_key": f"{spec.prefix}/inputs/images/{digest}",
@@ -107,6 +116,7 @@ def _record(
         "evidence_tier": "b",
         "factory": factory,
         "rejection_subtype": rejection_subtype,
+        "usability_review_sha256": None if usability is None else usability.review_sha256,
     }
 
 
@@ -146,6 +156,10 @@ def _source_record(record: dict[str, object], spec: RunSpec) -> dict[str, object
         "rights_record_id": record["rights_record_id"],
         "image_sha256": digest,
         "phash": digest[:16],
+        "usability_review": None if label == "rejection" else usability_review_json(record_usability_review(
+            f"candidate-{record['asset_id']}", digest, Angle(record["angle"]), True, True,
+            "angle-reviewer", datetime(2026, 11, 9, tzinfo=timezone.utc),
+        )),
     }
 
 
@@ -395,21 +409,76 @@ def test_loader_refuses_projection_changed_from_canonical_source(training_fixtur
         load_training_data(cos, spec)
 
 
-def test_wave_runner_uses_four_nested_entity_waves(training_fixture, monkeypatch, tmp_path):
+def test_wave_runner_refuses_duplicate_only_entity_waves(training_fixture, monkeypatch, tmp_path):
     cos, spec, _manifest, _splits, _images = training_fixture
     bundle = load_training_data(cos, spec)
     called: list[Path] = []
 
-    def fake_run(_bundle, _spec, output_dir):
+    def fake_run(_bundle, _spec, output_dir, **_kwargs):
         called.append(output_dir)
         return RunResult(1, 1, 0.5, {})
 
     monkeypatch.setattr(training_run, "run_training", fake_run)
 
+    with pytest.raises(TrainingRefused, match="no new independent watch entities"):
+        run_training_waves(bundle, spec, tmp_path)
+    assert called == []
+
+
+def test_wave_runner_trains_only_when_entity_set_grows(training_fixture, monkeypatch, tmp_path):
+    cos, spec, _manifest, _splits, _images = training_fixture
+    bundle = load_training_data(cos, spec)
+    train_ids = tuple(bundle.splits["train"])
+    original = next(record for record in bundle.records if record.asset_id in train_ids)
+    additions = tuple(
+        replace(original, asset_id=f"new-watch-{index}", subject_id=f"new-watch-{index}")
+        for index in (1, 2)
+    )
+    splits = dict(bundle.splits)
+    splits["train"] = train_ids + tuple(record.asset_id for record in additions)
+    bundle = replace(
+        bundle,
+        records=bundle.records + additions,
+        splits=MappingProxyType(splits),
+        split_by_asset=MappingProxyType({
+            **bundle.split_by_asset,
+            **{record.asset_id: "train" for record in additions},
+        }),
+    )
+    monkeypatch.setattr(
+        training_run,
+        "entity_wave_asset_ids",
+        lambda _bundle: {
+            0.25: train_ids,
+            0.5: train_ids + (additions[0].asset_id,),
+            0.75: splits["train"],
+        },
+    )
+    called: list[str] = []
+
+    def fake_run(_bundle, _spec, output_dir, **_kwargs):
+        called.append(output_dir.name)
+        assert len({
+            record.subject_id
+            for record in _bundle.records
+            if _bundle.split_by_asset[record.asset_id] == "train"
+        }) == len({
+            record.subject_id for record in bundle.records if record.asset_id in train_ids
+        }) + len(called) - 1
+        return RunResult(1, 1, {"wave-025": 0.4, "wave-050": 0.6}[output_dir.name], {})
+
+    monkeypatch.setattr(
+        training_run,
+        "run_training",
+        fake_run,
+    )
+
     results = run_training_waves(bundle, spec, tmp_path)
 
-    assert tuple(item.fraction for item in results) == (0.25, 0.5, 0.75, 1.0)
-    assert [path.name for path in called] == ["wave-025", "wave-050", "wave-075", "wave-100"]
+    assert len(results) == 2
+    assert results[1].entity_count > results[0].entity_count
+    assert results[1].result.best_validation_nll > results[0].result.best_validation_nll
+    assert called == ["wave-025", "wave-050"]
 
 
 @pytest.mark.parametrize("failure", ["placeholder", "single-source", "missing", "bad-metadata"])
@@ -516,6 +585,11 @@ def test_same_image_bytes_cannot_cross_splits_under_different_asset_ids(training
     )
     validation_record["image_sha256"] = train_record["image_sha256"]
     validation_record["object_key"] = train_record["object_key"]
+    validation_record["usability_review_sha256"] = record_usability_review(
+        f"candidate-{validation_record['asset_id']}", str(train_record["image_sha256"]),
+        Angle(validation_record["angle"]), True, True, "angle-reviewer",
+        datetime(2026, 11, 9, tzinfo=timezone.utc),
+    ).review_sha256
     cos, final_spec = _seed(manifest, splits, images)
 
     with pytest.raises(TrainingDataRefused, match="image content crosses"):
@@ -578,6 +652,34 @@ def test_two_epoch_cpu_training_writes_verified_head_only_artifacts(
         lambda _counts: pytest.fail("valid completed run must resume without retraining"),
     )
     assert run_training(bundle, spec, tmp_path) == result
+
+
+def test_deadline_publishes_last_complete_epoch_checkpoint(
+    training_fixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    cos, spec, _manifest, _splits, _images = training_fixture
+    bundle = load_training_data(cos, spec)
+    monkeypatch.setattr(training_run, "MAX_EPOCHS", 3)
+    monkeypatch.setattr(training_run, "_hard_deadline", lambda _deadline: nullcontext())
+    monkeypatch.setattr(
+        training_run, "build_trainable_model",
+        lambda counts: build_trainable_model(counts, backbone=_StubBackbone()),
+    )
+    clock = iter((0.0, 0.0, 2.0))
+    monkeypatch.setattr(training_run.time, "monotonic", lambda: next(clock, 2.0))
+
+    def fake_epoch_loss(_model, _bundle, split, _cache_dir, _criteria, _device, *, epoch, optimizer):
+        if epoch == 2:
+            raise TimeoutError("training deadline expired")
+        return 0.5 if split == "train" else 0.4
+
+    monkeypatch.setattr(training_run, "_epoch_loss", fake_epoch_loss)
+
+    result = run_training(bundle, spec, tmp_path, deadline=1.0)
+
+    assert result.epochs_completed == 1
+    assert (tmp_path / "checkpoint.pt").is_file()
+    assert (tmp_path / "run-result.json").is_file()
 
 
 def test_resume_refuses_mismatched_lineage(training_fixture, tmp_path: Path):

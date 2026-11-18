@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import hashlib
 import io
 import json
+from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -31,16 +33,23 @@ MAX_BATCH_ENCODED_BYTES = ((MAX_BATCH_DECODED_BYTES + 2) // 3) * 4
 MAX_BATCH_REQUEST_BYTES = MAX_BATCH_ENCODED_BYTES + 16_384
 ALLOWED_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 ANGLES = frozenset({"dial", "cyclops", "rehaut", "crown", "clasp", "caseback"})
-_HTML = r"""<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Piloto Rolex Submariner</title><style>body{font:16px system-ui;max-width:680px;margin:40px auto;padding:0 18px;background:#101214;color:#f5f5f5}main{background:#1a1e21;padding:24px;border-radius:16px}button,input,select{font:inherit;margin:8px 0;padding:10px}button{cursor:pointer}.item{border:1px solid #444;padding:8px;margin:8px 0}#r{white-space:pre-wrap;padding:16px;background:#0b0d0e;border-radius:10px}.warn{color:#ffcc66}</style><main><h1>Piloto Rolex Submariner</h1><p class="warn">Experimental: pressupõe um Submariner e sugere configuração pelas cores visíveis. Não confirma marca, referência ou autenticidade.</p><label>Fotos (1 a 6, até 15 MB cada)<br><input id="f" type="file" multiple accept="image/jpeg,image/png,image/webp"></label><div id="angles"></div><button id="b">Analisar</button><div id="r">Escolha fotos nítidas.</div></main><script>
+_HTML = r"""<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Prévia visual Rolex Submariner</title><style>body{font:16px system-ui;max-width:680px;margin:40px auto;padding:0 18px;background:#101214;color:#f5f5f5}main{background:#1a1e21;padding:24px;border-radius:16px}button,input,select{font:inherit;margin:8px 0;padding:10px}button{cursor:pointer}.item{border:1px solid #444;padding:8px;margin:8px 0}#r{white-space:pre-wrap;padding:16px;background:#0b0d0e;border-radius:10px}.warn{color:#ffcc66}</style><main><h1>Prévia visual Rolex Submariner</h1><p class="warn">Ainda não detecta falsificações: não há classificador de autenticidade treinado e validado neste serviço. Esta prévia apenas sugere uma configuração pelas cores visíveis; não confirma marca, referência ou autenticidade.</p><label>Fotos (1 a 6, até 15 MB cada)<br><input id="f" type="file" multiple accept="image/jpeg,image/png,image/webp"></label><div id="angles"></div><button id="b">Analisar</button><div id="r">Escolha fotos nítidas.</div></main><script>
 const labels={dial:'Mostrador',cyclops:'Data/lupa',rehaut:'Aro interno',crown:'Coroa/lateral',clasp:'Fecho',caseback:'Traseira'};
-f.onchange=()=>{angles.replaceChildren();if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}[...f.files].forEach((file,i)=>{let row=document.createElement('div');row.className='item';let text=document.createElement('span');text.textContent=file.name+' — Vista informada (o piloto verifica mostrador e aro): ';let select=document.createElement('select');select.dataset.index=i;Object.entries(labels).forEach(([value,label])=>select.add(new Option(label,value)));row.append(text,select);angles.append(row)})};
+f.onchange=()=>{angles.replaceChildren();if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}[...f.files].forEach((file,i)=>{let row=document.createElement('div');row.className='item';let text=document.createElement('span');text.textContent=file.name+' — Vista informada (esta prévia verifica mostrador e aro): ';let select=document.createElement('select');select.dataset.index=i;Object.entries(labels).forEach(([value,label])=>select.add(new Option(label,value)));row.append(text,select);angles.append(row)})};
 const encode=file=>new Promise((resolve,reject)=>{let reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(new Error('Não foi possível ler a imagem.'));reader.readAsDataURL(file)});
-b.onclick=async()=>{if(!f.files.length){r.textContent='Selecione de 1 a 6 imagens.';return}if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}b.disabled=true;f.disabled=true;let files=[...f.files];let selectedAngles=[...angles.querySelectorAll('select')].map(x=>x.value);let start=Date.now();let timer=setInterval(()=>r.textContent='Analisando '+files.length+' foto(s)... '+Math.floor((Date.now()-start)/1000)+' s. O tempo aumenta com o número de fotos.',1000);r.textContent='Analisando '+files.length+' foto(s)...';try{let images=[];for(let i=0;i<files.length;i++){images.push({angle:selectedAngles[i],content_type:files[i].type,data:await encode(files[i])})}let x=await fetch("/predict/batch",{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images})});let j=await x.json();if(!x.ok)throw new Error(j.error||'Falha ao analisar as imagens.');let lines=j.results.map((item,i)=>(i+1)+'. '+files[i].name+': '+item.message);let ev=j.joint.visible_evidence;let colors={green:'verde',black:'preto',blue:'azul',uncertain:'não verificada'};let count=n=>n+' '+(n===1?'foto':'fotos');let findings='Mostrador: '+(colors[ev.dial_color.value]||ev.dial_color.value)+' ('+count(ev.dial_color.supporting_photos)+'). Aro: '+(colors[ev.bezel_color.value]||ev.bezel_color.value)+' ('+count(ev.bezel_color.supporting_photos)+').';r.textContent=j.joint.message+'\nFotos examinadas pelo modelo: '+j.joint.model_checked_images+' de '+j.results.length+'\nAs fotos são tratadas como um relógio; não são provas independentes.\n\nObservado: '+findings+'\n\nAinda não verificado: '+j.joint.unverified.join('; ')+'.\n\nPor foto:\n'+lines.join('\n')+'\n\nFonte da configuração sugerida: '+(j.joint.reference_candidate?j.joint.reference_candidate.source_url:'não disponível')+'\nProcesso de inspeção: '+j.joint.inspection_source_url+'\nReferência inicialmente comparada: https://www.rolex.com/en-us/watches/submariner/m126610ln-0001'}catch(error){r.textContent='Erro: '+error.message}finally{clearInterval(timer);f.disabled=false;b.disabled=false}};
+b.onclick=async()=>{if(!f.files.length){r.textContent='Selecione de 1 a 6 imagens.';return}if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}b.disabled=true;f.disabled=true;let files=[...f.files];let selectedAngles=[...angles.querySelectorAll('select')].map(x=>x.value);let start=Date.now();let timer=setInterval(()=>r.textContent='Analisando '+files.length+' foto(s)... '+Math.floor((Date.now()-start)/1000)+' s. O tempo aumenta com o número de fotos.',1000);r.textContent='Analisando '+files.length+' foto(s)...';try{let images=[];for(let i=0;i<files.length;i++){images.push({angle:selectedAngles[i],content_type:files[i].type,data:await encode(files[i])})}let x=await fetch("/predict/batch",{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images})});let j=await x.json();if(!x.ok)throw new Error(j.error||'Falha ao analisar as imagens.');let lines=j.results.map((item,i)=>(i+1)+'. '+files[i].name+': '+item.message);let ev=j.joint.visible_evidence;let colors={green:'verde',black:'preto',blue:'azul',uncertain:'não verificada'};let count=n=>n+' '+(n===1?'foto':'fotos');let findings='Mostrador: '+(colors[ev.dial_color.value]||ev.dial_color.value)+' ('+count(ev.dial_color.supporting_photos)+'). Aro: '+(colors[ev.bezel_color.value]||ev.bezel_color.value)+' ('+count(ev.bezel_color.supporting_photos)+').';r.textContent=j.joint.message+'\nFotos enviadas: '+j.joint.submitted_photos+'. Conteúdos visuais distintos: '+j.joint.unique_visual_contents+'. Análises executadas: '+j.joint.model_checked_images+'. Resultados reaproveitados: '+j.joint.reused_results+'.\nAs fotos são tratadas como um relógio; não são provas independentes.\n\nObservado: '+findings+'\n\nAinda não verificado: '+j.joint.unverified.join('; ')+'.\n\nPor foto:\n'+lines.join('\n')+'\n\nFonte da configuração sugerida: '+(j.joint.reference_candidate?j.joint.reference_candidate.source_url:'não disponível')+'\nProcesso de inspeção: '+j.joint.inspection_source_url+'\nReferência inicialmente comparada: https://www.rolex.com/en-us/watches/submariner/m126610ln-0001';let facts=j.joint.cited_reference_facts.map(x=>x.field+': '+x.url).join('; ');r.textContent+='\n\nFotos usadas: '+(j.joint.used_photo_indices.join(', ')||'nenhuma')+'\nFatos oficiais citados: '+(facts||'nenhum detalhe confirmado')+'\nPróxima foto útil: '+(j.joint.next_useful_angle?labels[j.joint.next_useful_angle]:'nenhuma foto adicional desta prévia comprova autenticidade')+'\nModelo visual de cores: carregado; classificador de autenticidade: '+(j.joint.model_sha256||'não liberado')+'; confiança calibrada: '+(j.joint.calibrated_confidence??'indisponível')+'\nQualidade da falsificação (somente após confirmação): '+(j.joint.quality_score_0_1000??j.joint.quality_assessment)}catch(error){r.textContent='Erro: '+error.message}finally{clearInterval(timer);f.disabled=false;b.disabled=false}};
 </script></html>""".encode("utf-8")
 
 
 class PredictService(Protocol):
     def predict(self, body: bytes, content_type: str, angle: str) -> dict[str, object]: ...
+
+
+@dataclass(frozen=True)
+class _VisualInspection:
+    status: str
+    dial_color: str = "uncertain"
+    bezel_color: str = "uncertain"
 
 
 class PilotService:
@@ -56,9 +65,25 @@ class PilotService:
         image = decode_image(body, content_type)
         if angle not in ANGLES:
             raise ValueError("angulo invalido")
-        checks = checks_for_angle(self.claims, angle)
+        return self.render(self.inspect(image), angle)
+
+    def inspect(self, image: Image.Image) -> _VisualInspection:
         region = self.locator.locate(image)
         if region is None or region.face is None:
+            return _VisualInspection("no_face")
+        from quality_gate.blur_light_check import Pass, quality_gate
+
+        if not isinstance(quality_gate(region.face, angle="dial"), Pass):
+            return _VisualInspection("blurry")
+        return _VisualInspection(
+            "inspected", self.assessor.dial_color(region.face), bezel_color_hint(region.face)
+        )
+
+    def render(self, visual: _VisualInspection, angle: str) -> dict[str, object]:
+        if angle not in ANGLES:
+            raise ValueError("angulo invalido")
+        checks = checks_for_angle(self.claims, angle)
+        if visual.status == "no_face":
             return {
                 "verdict": "inconclusivo",
                 "replica_probability": None,
@@ -67,9 +92,7 @@ class PilotService:
                 "model_invoked": False,
                 "online_checks": checks,
             }
-        from quality_gate.blur_light_check import Pass, quality_gate
-
-        if not isinstance(quality_gate(region.face, angle="dial"), Pass):
+        if visual.status == "blurry":
             return {
                 "verdict": "foto_invalida",
                 "replica_probability": None,
@@ -78,8 +101,8 @@ class PilotService:
                 "model_invoked": False,
                 "online_checks": checks,
             }
-        color = self.assessor.dial_color(region.face)
-        bezel_color = bezel_color_hint(region.face)
+        color = visual.dial_color
+        bezel_color = visual.bezel_color
         official_dial = next(
             (claim for claim in self.claims if claim.field == "dial_color" and claim.source_class.authoritative),
             None,
@@ -90,13 +113,22 @@ class PilotService:
         dial_label = labels.get(color, "cor indefinida")
         bezel_label = labels.get(bezel_color, "cor não verificável")
         message = f"Mostrador: {dial_label}. Aro: {bezel_label}. Esta foto não comprova autenticidade."
+        angle_mismatch = angle != "dial"
+        if angle_mismatch:
+            message += " Só localizei o mostrador; a vista informada não foi verificada."
         return {
             "verdict": "inconclusivo",
             "replica_probability": None,
             "message": message,
-            "next_photo": "Foto do aro e mostrador de frente para confirmar a referencia." if mismatch else "Outra vista para mais detalhes.",
+            "next_photo": (
+                "Foto do aro e mostrador de frente para confirmar a referencia."
+                if mismatch else
+                f"Envie uma foto nítida de {angle}." if angle_mismatch else
+                "Outra vista para mais detalhes."
+            ),
             "model_invoked": True,
             "detected_angle": "dial",
+            "angle_mismatch": angle_mismatch,
             "observed_dial_color": color,
             "observed_bezel_color": bezel_color,
             "possible_reference_mismatch": mismatch,
@@ -168,7 +200,7 @@ def analyze_batch(
     if encoded_total > MAX_BATCH_ENCODED_BYTES:
         raise ValueError("lote codificado excede o limite")
 
-    validated: list[tuple[str, str, str]] = []
+    encoded_images: list[tuple[str, str, bytes]] = []
     decoded_total = 0
     for item in images:
         angle = item.get("angle")
@@ -189,20 +221,56 @@ def analyze_batch(
         decoded_total += len(body)
         if decoded_total > MAX_BATCH_DECODED_BYTES:
             raise ValueError("lote decodificado excede o limite")
-        validated.append((angle, content_type, data))
+        encoded_images.append((angle, content_type, body))
 
     results: list[dict[str, Any]] = []
     observed_angles: set[str] = set()
     model_checked_images = 0
-    for angle, content_type, data in validated:
-        body = base64.b64decode(data, validate=True)
-        result = service.predict(body, content_type, angle)
+    reused_results = 0
+    used_photo_indices: list[int] = []
+    used_digests: set[str] = set()
+    cache: dict[tuple[str, str, str], dict[str, object]] = {}
+    visual_cache: dict[str, _VisualInspection] = {}
+    unique_evidence: dict[str, dict[str, Any]] = {}
+    for index, (angle, content_type, body) in enumerate(encoded_images, start=1):
+        image = decode_image(body, content_type)
+        digest = hashlib.sha256(
+            f"{image.width}x{image.height}:".encode() + image.tobytes()
+        ).hexdigest()
+        if isinstance(service, PilotService):
+            if digest in visual_cache:
+                visual = visual_cache[digest]
+                reused_results += 1
+            else:
+                visual = service.inspect(image)
+                visual_cache[digest] = visual
+                if visual.status == "inspected":
+                    model_checked_images += 1
+            result = service.render(visual, angle)
+        else:
+            key = (digest, content_type, angle)
+            if key in cache:
+                result = cache[key]
+                reused_results += 1
+            else:
+                result = service.predict(body, content_type, angle)
+                cache[key] = result
+                if result.get("model_invoked") is True:
+                    model_checked_images += 1
         results.append({"angle": angle, **result})
+        if result.get("model_invoked") is True and digest not in used_digests:
+            used_photo_indices.append(index)
+            used_digests.add(digest)
+        if digest not in unique_evidence or (
+            not unique_evidence[digest].get("model_invoked") and result.get("model_invoked")
+        ):
+            unique_evidence[digest] = result
         if result.get("model_invoked") is True:
-            model_checked_images += 1
             detected = result.get("detected_angle")
             if isinstance(detected, str) and detected in ANGLES:
                 observed_angles.add(detected)
+        image.close()
+        del image
 
     verdicts = {str(result.get("verdict")) for result in results}
     if any(result.get("possible_reference_mismatch") is True for result in results):
@@ -221,8 +289,8 @@ def analyze_batch(
             if model_checked_images == 0
             else "O conjunto não autentica o relógio; a análise permanece inconclusiva."
         )
-    dial, dial_count = consensus([str(result.get("observed_dial_color", "uncertain")) for result in results])
-    bezel, bezel_count = consensus([str(result.get("observed_bezel_color", "uncertain")) for result in results])
+    dial, dial_count = consensus([str(result.get("observed_dial_color", "uncertain")) for result in unique_evidence.values()])
+    bezel, bezel_count = consensus([str(result.get("observed_bezel_color", "uncertain")) for result in unique_evidence.values()])
     candidate = reference_candidate(dial, bezel)
     if candidate:
         verdict = "inconclusivo"
@@ -231,12 +299,37 @@ def analyze_batch(
             f"({candidate['name']}); referência não confirmada. "
             "As fotos não permitem autenticar a peça nem os documentos."
         )
+    missing_angles = sorted(ANGLES - observed_angles)
+    # The visual preview currently verifies only dial and bezel, even when another view is selected.
+    next_useful_angle = None if candidate else "dial"
+    cited_facts = {
+        (check["field"], check["url"])
+        for result in results
+        if result.get("model_invoked") is True
+        for check in result.get("online_checks", [])
+        if isinstance(check, dict)
+        and check.get("role") == "official_spec"
+        and isinstance(check.get("field"), str)
+        and isinstance(check.get("url"), str)
+    }
     return {
         "results": results,
         "joint": {
             "verdict": verdict,
             "message": message,
-            "missing_angles": sorted(ANGLES - observed_angles),
+            "missing_angles": missing_angles,
+            "next_useful_angle": next_useful_angle,
+            "used_photo_indices": used_photo_indices,
+            "cited_reference_facts": [
+                {"field": field, "url": url} for field, url in sorted(cited_facts)
+            ],
+            "model_sha256": None,
+            "calibrated_confidence": None,
+            "quality_score_0_1000": None,
+            "quality_assessment": "não avaliada",
+            "submitted_photos": len(results),
+            "unique_visual_contents": len(unique_evidence),
+            "reused_results": reused_results,
             "model_checked_images": model_checked_images,
             "reference_candidate": candidate,
             "visible_evidence": {
@@ -317,7 +410,7 @@ def main() -> None:
         raise SystemExit("port must be between 1024 and 65535")
     service = PilotService(args.checkpoint, args.knowledge)
     server = HTTPServer(("127.0.0.1", args.port), handler(service))
-    print(f"Piloto local: http://127.0.0.1:{args.port}", flush=True)
+    print(f"Prévia visual local: http://127.0.0.1:{args.port}", flush=True)
     server.serve_forever()
 
 

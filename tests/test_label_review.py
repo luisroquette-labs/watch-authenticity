@@ -8,6 +8,7 @@ import pytest
 
 from acquisition.types import Angle, EvidenceTier, ReviewStatus, RightsStatus
 from core.types import Label
+from dataset.angle_review import record_usability_review
 from dataset.entities import (
     EntityEvidence,
     assign_watch_entities,
@@ -111,6 +112,7 @@ def test_dealer_reputation_alone_is_tier_c_and_not_trainable(
             rights,
             object_ref=object_ref,
             angle=Angle.DIAL,
+            usability_review=record_usability_review(candidate.candidate_id, candidate.derivative_sha256, Angle.DIAL, True, True, "angle-reviewer", candidate.collected_at),
             capture_style="casual",
             now=candidate.collected_at,
             reviews=[review],
@@ -356,6 +358,7 @@ def test_revoked_rights_and_price_only_grade_cannot_reach_training(
             replace(rights, status=RightsStatus.REVOKED),
             object_ref=object_ref,
             angle=Angle.DIAL,
+            usability_review=record_usability_review(candidate.candidate_id, candidate.derivative_sha256, Angle.DIAL, True, True, "angle-reviewer", candidate.collected_at),
             capture_style="casual",
             now=candidate.collected_at,
             reviews=[accepted_review],
@@ -374,6 +377,7 @@ def test_revoked_rights_and_price_only_grade_cannot_reach_training(
             rights,
             object_ref=object_ref,
             angle=Angle.DIAL,
+            usability_review=record_usability_review(candidate.candidate_id, candidate.derivative_sha256, Angle.DIAL, True, True, "angle-reviewer", candidate.collected_at),
             capture_style="casual",
             now=candidate.collected_at,
             reviews=[price_review],
@@ -393,6 +397,7 @@ def test_build_training_record_uses_only_accepted_evidence(
         rights,
         object_ref=object_ref,
         angle=Angle.DIAL,
+        usability_review=record_usability_review(candidate.candidate_id, candidate.derivative_sha256, Angle.DIAL, True, True, "angle-reviewer", candidate.collected_at),
         capture_style="studio",
         now=candidate.collected_at,
         reviews=[review],
@@ -417,6 +422,7 @@ def test_build_training_record_rejects_grouping_from_another_candidate(
             rights,
             object_ref=object_ref,
             angle=Angle.DIAL,
+            usability_review=record_usability_review(candidate.candidate_id, candidate.derivative_sha256, Angle.DIAL, True, True, "angle-reviewer", candidate.collected_at),
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
@@ -439,6 +445,7 @@ def test_build_training_record_rejects_tampered_evidence(
             rights,
             object_ref=object_ref,
             angle=Angle.DIAL,
+            usability_review=record_usability_review(candidate.candidate_id, candidate.derivative_sha256, Angle.DIAL, True, True, "angle-reviewer", candidate.collected_at),
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
@@ -481,6 +488,7 @@ def test_build_training_record_rejects_rehashed_result_not_supported_by_reviews(
             rights,
             object_ref=object_ref,
             angle=Angle.DIAL,
+            usability_review=record_usability_review(candidate.candidate_id, candidate.derivative_sha256, Angle.DIAL, True, True, "angle-reviewer", candidate.collected_at),
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
@@ -512,6 +520,7 @@ def test_build_training_record_rejects_candidate_changed_after_review(
             rights,
             object_ref=changed_ref,
             angle=Angle.DIAL,
+            usability_review=record_usability_review(candidate.candidate_id, candidate.derivative_sha256, Angle.DIAL, True, True, "angle-reviewer", candidate.collected_at),
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
@@ -545,6 +554,7 @@ def test_build_training_record_rejects_rights_outside_validity(
             rights,
             object_ref=object_ref,
             angle=Angle.DIAL,
+            usability_review=record_usability_review(candidate.candidate_id, candidate.derivative_sha256, Angle.DIAL, True, True, "angle-reviewer", candidate.collected_at),
             capture_style="studio",
             now=invalid_now,
             reviews=[review],
@@ -571,8 +581,58 @@ def test_build_training_record_rejects_unlinked_image(
             rights,
             object_ref=unrelated,
             angle=Angle.DIAL,
+            usability_review=record_usability_review(candidate.candidate_id, candidate.derivative_sha256, Angle.DIAL, True, True, "angle-reviewer", candidate.collected_at),
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
             reviewer_registry=reviewer_registry,
+        )
+
+
+@pytest.mark.parametrize(
+    ("evidence_type", "label", "grade"),
+    [("seller_text", Label.FAKE, 4), ("owner_claim", Label.GENUINE, None)],
+)
+def test_seller_superclone_and_unsupported_original_remain_candidate_only(
+    candidate,
+    reviewer,
+    evidence_type,
+    label,
+    grade,
+):
+    authority = replace(reviewer, allowed_evidence_types=(evidence_type,))
+    review = submit_review(
+        candidate,
+        authority,
+        proposed_label=label,
+        proposed_grade=grade,
+        proposed_tier=EvidenceTier.C,
+        evidence_type=evidence_type,
+        supporting_artifact_hashes=("a" * 64,),
+        reviewed_at=candidate.collected_at,
+    )
+    evidence = adjudicate(candidate, [review], {authority.reviewer_id: authority})
+    assert evidence.tier is EvidenceTier.C
+    assert not evidence.tier.training_eligible
+
+
+@pytest.mark.parametrize("case", ["missing", "hidden", "wrong-angle", "wrong-image"])
+def test_training_requires_matching_visible_usable_angle(
+    case, candidate, make_review, reviewer_registry, grouping, rights, object_ref
+):
+    from dataset.angle_review import record_usability_review
+
+    review = make_review()
+    evidence = adjudicate(candidate, [review], reviewer_registry)
+    usability = None if case == "missing" else record_usability_review(
+        candidate.candidate_id,
+        "0" * 64 if case == "wrong-image" else candidate.derivative_sha256,
+        Angle.CLASP if case == "wrong-angle" else Angle.DIAL,
+        case != "hidden", case != "hidden", "angle-reviewer", candidate.collected_at,
+    )
+    with pytest.raises(NotTrainingEligible, match="usability"):
+        build_training_record(
+            candidate, evidence, grouping, rights, object_ref=object_ref,
+            angle=Angle.DIAL, usability_review=usability, capture_style="studio",
+            now=candidate.collected_at, reviews=[review], reviewer_registry=reviewer_registry,
         )

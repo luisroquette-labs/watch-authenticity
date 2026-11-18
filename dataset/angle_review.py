@@ -45,7 +45,7 @@ def record_angle_review(
         raise ValueError("image_sha256 must be a lowercase SHA-256")
     if angle is not None and not isinstance(angle, Angle):
         raise ValueError("angle must be a known Angle or unknown")
-    if reviewed_at.tzinfo is None or reviewed_at.utcoffset() is None:
+    if not isinstance(reviewed_at, datetime) or reviewed_at.tzinfo is None or reviewed_at.utcoffset() is None:
         raise ValueError("reviewed_at must be timezone-aware")
     payload = {
         "candidate_id": candidate_id,
@@ -123,3 +123,87 @@ def _review_digest(review: AngleReview) -> str:
             }
         )
     ).hexdigest()
+
+
+@dataclass(frozen=True)
+class AngleUsabilityReview:
+    candidate_id: str
+    image_sha256: str
+    angle: Angle
+    detail_visible: bool
+    usable: bool
+    reviewer_id: str
+    reviewed_at: datetime
+    review_sha256: str
+
+
+def record_usability_review(
+    candidate_id: str,
+    image_sha256: str,
+    angle: Angle,
+    detail_visible: bool,
+    usable: bool,
+    reviewer_id: str,
+    reviewed_at: datetime,
+) -> AngleUsabilityReview:
+    record_angle_review(candidate_id, image_sha256, angle, reviewer_id, reviewed_at)
+    if not isinstance(angle, Angle):
+        raise ValueError("usability review requires a known angle")
+    if not isinstance(detail_visible, bool) or not isinstance(usable, bool):
+        raise ValueError("visibility and usability must be bool")
+    if usable and not detail_visible:
+        raise ValueError("usable detail must be visible")
+    payload = {
+        "candidate_id": candidate_id,
+        "image_sha256": image_sha256,
+        "angle": angle.value,
+        "detail_visible": detail_visible,
+        "usable": usable,
+        "reviewer_id": reviewer_id,
+        "reviewed_at": reviewed_at.isoformat(),
+    }
+    return AngleUsabilityReview(
+        candidate_id, image_sha256, angle, detail_visible, usable, reviewer_id,
+        reviewed_at, hashlib.sha256(_canonical(payload)).hexdigest(),
+    )
+
+
+def verify_usability_review(
+    review: object, candidate_id: str, image_sha256: str, angle: Angle | None
+) -> None:
+    if not isinstance(review, AngleUsabilityReview):
+        raise ValueError("immutable usability review is required")
+    expected = record_usability_review(
+        review.candidate_id, review.image_sha256, review.angle,
+        review.detail_visible, review.usable, review.reviewer_id, review.reviewed_at,
+    )
+    if expected != review:
+        raise ValueError("usability review hash differs from content")
+    if (review.candidate_id, review.image_sha256, review.angle) != (candidate_id, image_sha256, angle):
+        raise ValueError("usability review candidate, image or angle differs")
+    if not review.detail_visible or not review.usable:
+        raise ValueError("angle requires visible usable detail")
+
+
+def usability_review_json(review: AngleUsabilityReview | None) -> dict[str, object] | None:
+    if review is None:
+        return None
+    from dataclasses import asdict
+    raw = asdict(review)
+    raw["angle"] = review.angle.value
+    raw["reviewed_at"] = review.reviewed_at.isoformat()
+    return raw
+
+
+def usability_review_from_json(raw: object) -> AngleUsabilityReview:
+    fields = {"candidate_id", "image_sha256", "angle", "detail_visible", "usable", "reviewer_id", "reviewed_at", "review_sha256"}
+    if not isinstance(raw, dict) or set(raw) != fields:
+        raise ValueError("usability review schema is invalid")
+    review = AngleUsabilityReview(
+        candidate_id=raw["candidate_id"], image_sha256=raw["image_sha256"],
+        angle=Angle(raw["angle"]), detail_visible=raw["detail_visible"], usable=raw["usable"],
+        reviewer_id=raw["reviewer_id"], reviewed_at=datetime.fromisoformat(raw["reviewed_at"]),
+        review_sha256=raw["review_sha256"],
+    )
+    verify_usability_review(review, review.candidate_id, review.image_sha256, review.angle)
+    return review

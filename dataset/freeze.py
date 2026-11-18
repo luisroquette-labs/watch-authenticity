@@ -19,6 +19,8 @@ from acquisition.types import (
     SourcePolicy,
     TrainingRecord,
 )
+from core.types import Label
+from dataset.angle_review import usability_review_json, verify_usability_review
 from dataset.readiness import evaluate_readiness
 from dataset.splits import DatasetSplits, build_splits
 from infra.ibm_types import ObjectRef
@@ -103,6 +105,9 @@ def freeze_dataset(
     """Freeze eligible assets while reporting every rights-driven removal."""
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("now must be timezone-aware")
+    for record in records:
+        if record.label is not Label.REJECTION:
+            verify_usability_review(record.usability_review, record.candidate_id, record.image_sha256, record.angle)
     split_by_asset = splits.split_by_asset
     asset_ids = [record.asset_id for record in records]
     if len(asset_ids) != len(set(asset_ids)) or set(split_by_asset) != set(asset_ids):
@@ -257,6 +262,7 @@ def _impacted_report(
 def _record_json(record: TrainingRecord) -> dict[str, object]:
     raw = asdict(record)
     raw["angle"] = None if record.angle is None else record.angle.value
+    raw["usability_review"] = usability_review_json(record.usability_review)
     raw["collected_at"] = record.collected_at.isoformat()
     raw["label"] = record.label.value
     raw["evidence_tier"] = record.evidence_tier.value

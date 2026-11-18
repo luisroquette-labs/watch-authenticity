@@ -34,6 +34,9 @@ def evaluate_readiness(
 ) -> ReadinessReport:
     """Return every readiness deficit without inflating crops or augmentations."""
     scoped = [record for record in records if record.reference_id == reference_id]
+    components = _independent_entity_components(
+        [record for record in scoped if not record.is_augmented]
+    )
     reasons: list[str] = []
     counts: list[tuple[str, int, int]] = []
     outputs = (("genuine", Label.GENUINE, None),) + tuple(
@@ -50,7 +53,7 @@ def evaluate_readiness(
                 and not record.is_augmented
             ]
             images = len({record.content_cluster_id for record in cell})
-            entities = len({record.watch_entity_id for record in cell})
+            entities = len({components[record.asset_id] for record in cell})
             cell_name = f"{output}/{angle.value}"
             counts.append((cell_name, images, entities))
             if images < MIN_CELL_IMAGES:
@@ -64,7 +67,7 @@ def evaluate_readiness(
         if record.label is Label.REJECTION and not record.is_augmented
     ]
     rejection_images = len({record.content_cluster_id for record in rejections})
-    rejection_subjects = len({record.watch_entity_id for record in rejections})
+    rejection_subjects = len({components[record.asset_id] for record in rejections})
     if rejection_images < MIN_REJECTION_IMAGES:
         reasons.append("rejection: requires 500 distinct original images")
     if rejection_subjects < MIN_REJECTION_SUBJECTS:
@@ -110,7 +113,7 @@ def evaluate_readiness(
     if not train:
         reasons.append("train split is empty")
     else:
-        _append_dominance_reasons(train, reasons)
+        _append_dominance_reasons(train, components, reasons)
     return ReadinessReport(
         reference_id=reference_id,
         ready=not reasons,
@@ -119,15 +122,17 @@ def evaluate_readiness(
     )
 
 
-def _append_dominance_reasons(records: Sequence[TrainingRecord], reasons: list[str]) -> None:
+def _append_dominance_reasons(
+    records: Sequence[TrainingRecord], components: dict[str, str], reasons: list[str]
+) -> None:
     records = [record for record in records if not record.is_augmented]
     by_label: dict[Label, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     seller_entities: dict[str, set[str]] = defaultdict(set)
-    all_entities = {record.watch_entity_id for record in records}
+    all_entities = {components[record.asset_id] for record in records}
     for record in records:
         if record.label in {Label.GENUINE, Label.FAKE}:
-            by_label[record.label][record.source_domain].add(record.watch_entity_id)
-        seller_entities[record.seller_group_id].add(record.watch_entity_id)
+            by_label[record.label][record.source_domain].add(components[record.asset_id])
+        seller_entities[record.seller_group_id].add(components[record.asset_id])
     for label, domains in by_label.items():
         label_entities = set().union(*domains.values()) if domains else set()
         for domain, entities in domains.items():
@@ -149,3 +154,20 @@ def _unique_content_records(records: Iterable[TrainingRecord]) -> list[TrainingR
     for record in sorted(records, key=lambda item: item.asset_id):
         unique.setdefault(record.content_cluster_id, record)
     return list(unique.values())
+
+
+def _independent_entity_components(records: Sequence[TrainingRecord]) -> dict[str, str]:
+    """Use one conservative watch/content graph across every view and output."""
+    parent = {record.watch_entity_id: record.watch_entity_id for record in records}
+
+    def root(entity: str) -> str:
+        while parent[entity] != entity:
+            entity = parent[entity]
+        return entity
+
+    first_by_content: dict[str, str] = {}
+    for record in records:
+        entity = record.watch_entity_id
+        first = first_by_content.setdefault(record.content_cluster_id, entity)
+        parent[root(entity)] = root(first)
+    return {record.asset_id: root(record.watch_entity_id) for record in records}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from datetime import timedelta
 
@@ -8,6 +9,7 @@ import pytest
 from acquisition.types import Angle, DatasetFreeze, EvidenceTier, RightsStatus, TrainingRecord
 from core.types import Label
 from dataset import readiness
+from dataset.angle_review import record_usability_review
 from dataset.freeze import (
     CandidateObjectInventory,
     FrozenDatasetRefused,
@@ -15,7 +17,12 @@ from dataset.freeze import (
     require_frozen_asset_read,
 )
 from dataset.readiness import evaluate_readiness
-from dataset.splits import TRAIN, DatasetSplits, build_splits
+from dataset.splits import (
+    TRAIN,
+    DatasetSplits,
+    assert_no_connected_component_crosses_splits,
+    build_splits,
+)
 from infra.ibm_types import ObjectRef
 from tests.conftest import NOW
 
@@ -58,7 +65,8 @@ def _record(
         evidence_record_id=f"evidence-{index}",
         rights_record_id=f"rights-{index}",
         image_sha256=digest,
-        phash=f"{index:016x}",
+        phash=hashlib.sha256(str(index).encode()).hexdigest()[:16],
+        usability_review=None if label is Label.REJECTION else record_usability_review(f"candidate-{index}", digest, Angle(angle), True, True, "angle-reviewer", NOW),
     )
 
 
@@ -112,7 +120,68 @@ def test_augmented_or_repeated_original_does_not_increase_cell_count(monkeypatch
     report = evaluate_readiness(records, original.reference_id, splits=splits)
 
     dial = next(cell for cell in report.cell_counts if cell[0] == "genuine/dial")
-    assert dial == ("genuine/dial", 1, 2)
+    assert dial == ("genuine/dial", 1, 1)
+
+
+def test_ambiguous_content_links_do_not_inflate_independent_watch_count():
+    first = _record(1)
+    second = replace(_record(2), watch_entity_id=first.watch_entity_id)
+    third = replace(_record(3), content_cluster_id=second.content_cluster_id)
+    records = [first, second, third]
+    splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
+
+    report = evaluate_readiness(records, first.reference_id, splits=splits)
+
+    assert next(cell for cell in report.cell_counts if cell[0] == "genuine/dial") == (
+        "genuine/dial", 2, 1
+    )
+
+
+def test_cross_angle_content_link_reduces_dial_entity_count():
+    first = _record(1)
+    bridge = replace(_record(2, angle=Angle.CROWN), watch_entity_id=first.watch_entity_id)
+    other_view = replace(_record(3, angle=Angle.CROWN), content_cluster_id=bridge.content_cluster_id)
+    second_dial = replace(_record(4), watch_entity_id=other_view.watch_entity_id)
+    records = [first, bridge, other_view, second_dial]
+    splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
+
+    report = evaluate_readiness(records, first.reference_id, splits=splits)
+
+    assert next(cell for cell in report.cell_counts if cell[0] == "genuine/dial") == (
+        "genuine/dial", 2, 1
+    )
+
+
+def test_rejection_subject_count_uses_content_components(monkeypatch):
+    monkeypatch.setattr(readiness, "MIN_REJECTION_SUBJECTS", 2)
+    first = _record(1, label=Label.REJECTION, angle=None, subtype="no-watch")
+    repeated = replace(
+        _record(2, label=Label.REJECTION, angle=None, subtype="no-watch"),
+        content_cluster_id=first.content_cluster_id,
+    )
+    splits = DatasetSplits(((first.asset_id, TRAIN), (repeated.asset_id, TRAIN)), NOW, 42)
+
+    report = evaluate_readiness([first, repeated], first.reference_id, splits=splits)
+
+    assert "rejection: requires 250 distinct subjects" in report.reasons
+
+
+def test_ambiguous_aliases_cannot_hide_source_or_seller_dominance():
+    records = [
+        _record(1, source="dominant.example.co.za"),
+        _record(2, source="dominant.example.co.za"),
+        _record(3, source="other.example.co.za"),
+    ]
+    records.extend(
+        replace(_record(index, source="other.example.co.za"), content_cluster_id=records[2].content_cluster_id)
+        for index in range(4, 15)
+    )
+    splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
+
+    report = evaluate_readiness(records, records[0].reference_id, splits=splits)
+
+    assert any("dominant.example.co.za exceeds 40%" in reason for reason in report.reasons)
+    assert any("seller seller-1 exceeds 10%" in reason for reason in report.reasons)
 
 
 def test_source_share_above_forty_percent_is_reported(monkeypatch):
@@ -181,6 +250,19 @@ def test_grouped_splits_keep_transitive_relations_together():
     assert assigned[first.asset_id] == assigned[second.asset_id] == assigned[third.asset_id]
     assert assigned[fourth.asset_id] == "gold"
     assert splits.temporal_cutoff is not None
+
+
+def test_near_phash_cannot_cross_train_and_gold_splits():
+    first = replace(_record(1), phash="bed0d503522f2f54")
+    second = replace(_record(2, gold=True), phash="bed0d503522f2fd0")
+
+    splits = build_splits([first, second], seed=42, held_out_factories=set())
+
+    assert splits.split_by_asset[first.asset_id] == splits.split_by_asset[second.asset_id] == "gold"
+    with pytest.raises(ValueError, match="near-pHash group crosses dataset splits"):
+        assert_no_connected_component_crosses_splits(
+            [first, second], DatasetSplits(((first.asset_id, TRAIN), (second.asset_id, "gold")), NOW, 42)
+        )
 
 
 def test_grouped_splits_are_deterministic_for_input_order():
@@ -351,3 +433,17 @@ def test_augmented_gold_does_not_satisfy_gold_gate(monkeypatch):
     report = evaluate_readiness(records, records[0].reference_id, splits=splits)
 
     assert any(reason.startswith("gold:") for reason in report.reasons)
+
+
+def test_training_contract_refuses_unreviewed_angle_and_preserves_raw_audit():
+    from dataset.angle_review import usability_review_from_json
+    from dataset.freeze import _record_json
+
+    record = _record(1, angle=Angle.CLASP)
+    with pytest.raises(ValueError, match="usability review"):
+        replace(record, usability_review=None)
+    raw = _record_json(record)
+    assert raw["original_sha256"] == record.original_sha256
+    restored = usability_review_from_json(raw["usability_review"])
+    assert restored == record.usability_review
+    assert restored.angle is Angle.CLASP

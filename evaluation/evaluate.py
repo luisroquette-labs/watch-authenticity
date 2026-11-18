@@ -7,9 +7,157 @@ import random
 import re
 from dataclasses import dataclass
 from statistics import mean
+from typing import TYPE_CHECKING
+
+from core.types import Label
+from labeling.quality import (
+    RUBRIC_SHA256,
+    RUBRIC_VERSION,
+    FakeQualityAssessment,
+    verify_fake_quality,
+)
+
+if TYPE_CHECKING:
+    from training.data import TrainingBundle
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MIN_GROUPS_PER_SOURCE = 5
+_ENTITY_CONCLUSIONS = frozenset({"fake_likely", "no_visible_inconsistency", "inconclusive", "rejection"})
+HIGH_QUALITY_FAKE_MIN_SCORE = 800
+
+
+@dataclass(frozen=True)
+class EntityOutcome:
+    watch_entity_id: str
+    conclusion: str
+
+    def __post_init__(self) -> None:
+        if not self.watch_entity_id.strip() or self.conclusion not in _ENTITY_CONCLUSIONS:
+            raise ValueError("entity outcome requires one valid watch-level conclusion")
+
+
+@dataclass(frozen=True)
+class EntitySafetyReport:
+    freeze_sha256: str
+    model_sha256: str
+    outcomes: tuple[EntityOutcome, ...]
+    quality_assessments: tuple[FakeQualityAssessment, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            _SHA256.fullmatch(self.freeze_sha256) is None
+            or _SHA256.fullmatch(self.model_sha256) is None
+            or len({item.watch_entity_id for item in self.outcomes}) != len(self.outcomes)
+            or len({item.watch_entity_id for item in self.quality_assessments}) != len(self.quality_assessments)
+        ):
+            raise ValueError("entity safety report has invalid identity or duplicate watches")
+
+
+@dataclass(frozen=True)
+class EntityCohort:
+    name: str
+    answered: int
+    total: int
+    false_reassurance: int
+    false_reassurance_upper95: float | None
+    conclusion_counts: tuple[tuple[str, int], ...]
+
+    @property
+    def abstention_rate(self) -> float:
+        return 1 - self.answered / self.total if self.total else 1.0
+
+
+def false_reassurance_upper95(errors: int, total: int) -> float:
+    """Exact one-sided binomial upper bound by inversion of the CDF."""
+    if not 0 <= errors <= total or total < 1:
+        raise ValueError("false-reassurance bound requires a nonempty valid count")
+    if errors == total:
+        return 1.0
+    if errors == 0:
+        return 1 - 0.05 ** (1 / total)
+    low, high = 0.0, 1.0
+    for _ in range(55):
+        middle = (low + high) / 2
+        cdf = sum(
+            math.exp(
+                math.lgamma(total + 1) - math.lgamma(index + 1)
+                - math.lgamma(total - index + 1)
+                + index * math.log(middle)
+                + (total - index) * math.log1p(-middle)
+            )
+            for index in range(errors + 1)
+        )
+        if cdf > 0.05:
+            low = middle
+        else:
+            high = middle
+    return high
+
+
+def evaluate_entity_safety(bundle: TrainingBundle, report: EntitySafetyReport) -> tuple[EntityCohort, ...]:
+    """Compute provisional counts; caller-supplied claims are not release evidence."""
+    from dataset.splits import TRAIN, VAL
+
+    if report.freeze_sha256 != bundle.freeze_sha256:
+        raise ValueError("entity outcomes belong to another frozen dataset")
+    holdout: dict[str, list] = {}
+    for record in bundle.records:
+        if bundle.split_by_asset[record.asset_id] not in {TRAIN, VAL}:
+            holdout.setdefault(record.subject_id, []).append(record)
+    if set(holdout) != {item.watch_entity_id for item in report.outcomes}:
+        raise ValueError("entity outcomes must cover every frozen holdout watch exactly once")
+    outcomes = {item.watch_entity_id: item for item in report.outcomes}
+    if any(len({(record.label, record.grade) for record in records}) != 1 for records in holdout.values()):
+        raise ValueError("one holdout watch cannot have conflicting labels or grades")
+    fake_entities = {
+        entity: records for entity, records in holdout.items()
+        if records[0].label is Label.FAKE
+    }
+    assessed = {item.watch_entity_id: item for item in report.quality_assessments}
+    if set(assessed) != set(fake_entities):
+        raise ValueError("every frozen fake holdout watch requires a separate quality assessment")
+    for entity, assessment in assessed.items():
+        verify_fake_quality(assessment)
+        if (
+            assessment.rubric_version != RUBRIC_VERSION
+            or assessment.rubric_sha256 != RUBRIC_SHA256
+            or not isinstance(assessment.score_0_1000, int)
+            or isinstance(assessment.score_0_1000, bool)
+            or not 0 <= assessment.score_0_1000 <= 1000
+            or len(assessment.reviewer_scores) != 2
+            or len({reviewer for reviewer, _ in assessment.reviewer_scores}) != 2
+            or any(not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 1000 for _, score in assessment.reviewer_scores)
+            or len(assessment.review_decision_sha256s) != 2
+            or any(_SHA256.fullmatch(digest) is None for digest in assessment.review_decision_sha256s)
+            or assessment.evidence_record_id not in {
+                record.provenance_id for record in fake_entities[entity]
+            }
+        ):
+            raise ValueError("fake quality is not bound to this frozen watch and evidence")
+
+    def cohort(name: str, entities: set[str], *, fake: bool = False) -> EntityCohort:
+        values = [outcomes[entity].conclusion for entity in entities]
+        answered = sum(value not in {"inconclusive", "rejection"} for value in values)
+        errors = sum(value == "no_visible_inconsistency" for value in values) if fake else 0
+        return EntityCohort(
+            name, answered, len(values), errors,
+            false_reassurance_upper95(errors, len(values)) if fake and values else None,
+            tuple((conclusion, values.count(conclusion)) for conclusion in sorted(_ENTITY_CONCLUSIONS)),
+        )
+
+    genuine_entities = {entity for entity, records in holdout.items() if records[0].label is Label.GENUINE}
+    high_quality = {
+        entity for entity, assessment in assessed.items()
+        if assessment.score_0_1000 >= HIGH_QUALITY_FAKE_MIN_SCORE
+    }
+    return (
+        cohort("genuine", genuine_entities),
+        cohort("fake", set(fake_entities), fake=True),
+        *(cohort(f"fake-{grade}", {
+            entity for entity, records in fake_entities.items() if records[0].grade == grade
+        }, fake=True) for grade in range(1, 5)),
+        cohort("high-quality-fake", high_quality, fake=True),
+    )
 
 
 @dataclass(frozen=True)

@@ -390,6 +390,7 @@ def grouped_records(candidate: CandidateRecord) -> list[CandidateRecord]:
             candidate_id="front",
             source_record_id="listing-front",
             raw_sha256="1" * 64,
+            derivative_sha256="4" * 64,
             phash="0123456789abcdef",
         ),
         replace(
@@ -397,6 +398,7 @@ def grouped_records(candidate: CandidateRecord) -> list[CandidateRecord]:
             candidate_id="repost",
             source_record_id="listing-repost",
             raw_sha256="2" * 64,
+            derivative_sha256="5" * 64,
             phash="0123456789abcdee",
         ),
         replace(
@@ -404,6 +406,7 @@ def grouped_records(candidate: CandidateRecord) -> list[CandidateRecord]:
             candidate_id="clasp",
             source_record_id="listing-clasp",
             raw_sha256="3" * 64,
+            derivative_sha256="6" * 64,
             phash="fedcba9876543210",
         ),
     ]
@@ -522,6 +525,7 @@ def valid_contract_bundle(candidate, rights, object_ref):
         review_decision_sha256s=("f" * 64,),
         decision_sha256="f" * 64,
     )
+    from dataset.angle_review import record_usability_review
     training = TrainingRecord(
         asset_id="asset-1",
         candidate_id=candidate.candidate_id,
@@ -548,6 +552,7 @@ def valid_contract_bundle(candidate, rights, object_ref):
         rights_record_id=rights.rights_record_id,
         image_sha256=object_ref.sha256,
         phash="fedcba9876543210",
+        usability_review=record_usability_review(candidate.candidate_id, object_ref.sha256, Angle.DIAL, True, True, "angle-reviewer", NOW),
     )
     return candidate, rights, evidence, training
 

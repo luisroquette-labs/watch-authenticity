@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import gc
 import http.client
 import io
 import json
@@ -8,6 +9,7 @@ import math
 import subprocess
 import sys
 import threading
+import weakref
 from http.server import HTTPServer
 from pathlib import Path
 from typing import Any, cast
@@ -23,6 +25,7 @@ from pilot.server import (
     MAX_BATCH_IMAGES,
     MAX_UPLOAD_BYTES,
     PilotService,
+    _VisualInspection,
     analyze_batch,
     checks_for_angle,
     decode_image,
@@ -37,6 +40,12 @@ from reference_intelligence.knowledge import load_knowledge
 def _jpeg(size: tuple[int, int] = (300, 300)) -> bytes:
     output = io.BytesIO()
     Image.new("RGB", size, "white").save(output, format="JPEG")
+    return output.getvalue()
+
+
+def _jpeg_variant(index: int) -> bytes:
+    output = io.BytesIO()
+    Image.new("RGB", (300, 300), (index, index * 3, index * 5)).save(output, format="JPEG")
     return output.getvalue()
 
 
@@ -98,6 +107,30 @@ def test_locator_ignores_face_outside_watch() -> None:
     assert region.face_score == .7
 
 
+def test_locator_keeps_face_with_small_detector_box_overhang() -> None:
+    # Real 1440px vendor photo: detector face extends ~5px beyond its watch box.
+    image = Image.new("RGB", (1440, 1440), "white")
+    region = choose_region(image, [
+        (.4671, 0, (417.1, 246.5, 888.2, 1162.4)),
+        (.4002, 1, (418.8, 262.3, 893.3, 793.3)),
+    ])
+
+    assert region is not None
+    assert region.face is not None
+    assert region.face_score == .4002
+
+
+def test_locator_rejects_face_with_large_detector_box_overhang() -> None:
+    image = Image.new("RGB", (500, 500), "white")
+    region = choose_region(image, [
+        (.9, 0, (100, 100, 400, 400)),
+        (.8, 1, (50, 150, 350, 350)),
+    ])
+
+    assert region is not None
+    assert region.face is None
+
+
 def test_locator_rejects_image_without_watch_or_face() -> None:
     assert choose_region(Image.new("RGB", (500, 500)), []) is None
 
@@ -120,6 +153,18 @@ def test_dial_without_visible_bezel_cannot_supply_bezel_color() -> None:
     ImageDraw.Draw(face).ellipse((5, 5, 295, 295), fill="#137746")
     assert bezel_color_hint(face) == "uncertain"
     assert reference_candidate("green", bezel_color_hint(face)) is None
+
+
+def test_partly_cropped_bezel_uses_dial_boundary_and_rejects_green_backdrop() -> None:
+    photo = Image.new("RGB", (360, 360), "#dadbd5")
+    draw = ImageDraw.Draw(photo)
+    draw.ellipse((6, 6, 354, 354), fill="#137746")
+    draw.ellipse((48, 48, 312, 312), fill="#263b31")
+    assert bezel_color_hint(photo.crop((0, 12, 360, 348))) == "green"
+
+    backdrop = Image.new("RGB", (360, 360), "#137746")
+    ImageDraw.Draw(backdrop).ellipse((48, 48, 312, 312), fill="#263b31")
+    assert bezel_color_hint(backdrop) == "uncertain"
 
 
 def test_bezel_analysis_downsamples_large_photo(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -220,9 +265,9 @@ def test_pilot_ci_is_bounded_and_does_not_build() -> None:
     preflight = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert not Path(".github/workflows/pilot-ci.yml").exists()
     for path in (
-        "pilot/**", "reference_intelligence/**", "config/references/**",
-        "tests/test_online_assessor.py", "tests/test_pilot_server.py",
-        "tests/test_predict.py", "tests/test_reference_intelligence.py",
+        "pilot/**", "reference_intelligence/**", "config/**", "training/**",
+        "evaluation/**", "dataset/**", "infra/**", "labeling/**",
+        "Containerfile.*", "requirements*.lock", "tests/**",
     ):
         assert f'"{path}"' in preflight
     assert "timeout-minutes: 10" in preflight
@@ -274,18 +319,115 @@ def _batch_item(angle: str = "dial", body: bytes | None = None) -> dict[str, str
 
 def test_batch_processes_each_image_sequentially_and_preserves_sources() -> None:
     service = _StubService(["inconclusivo", "sem_inconsistencia_visivel"])
+    first, second = _jpeg_variant(1), _jpeg_variant(2)
 
     result = analyze_batch(
         service,
-        {"images": [_batch_item("dial", b"first"), _batch_item("crown", b"second")]},
+        {"images": [_batch_item("dial", first), _batch_item("crown", second)]},
     )
 
-    assert [call[0] for call in service.calls] == [b"first", b"second"]
+    assert [call[0] for call in service.calls] == [first, second]
     assert [item["angle"] for item in result["results"]] == ["dial", "crown"]
     assert result["results"][0]["online_checks"][0]["url"].endswith("/dial")
     assert result["joint"]["verdict"] == "inconclusivo"
     assert result["joint"]["missing_angles"] == sorted(ANGLES - {"dial", "crown"})
     assert result["joint"]["model_checked_images"] == 2
+
+
+def test_batch_reuses_identical_photo_and_counts_evidence_once() -> None:
+    class CountingService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def predict(self, *_args: object) -> dict[str, object]:
+            self.calls += 1
+            return {
+                "verdict": "inconclusivo",
+                "model_invoked": True,
+                "detected_angle": "dial",
+                "observed_dial_color": "green",
+                "observed_bezel_color": "green",
+            }
+
+    service = CountingService()
+    batch = analyze_batch(service, {"images": [_batch_item() for _ in range(6)]})
+    assert service.calls == 1
+    assert batch["joint"]["submitted_photos"] == 6
+    assert batch["joint"]["unique_visual_contents"] == 1
+    assert batch["joint"]["reused_results"] == 5
+    assert batch["joint"]["model_checked_images"] == 1
+    assert batch["joint"]["visible_evidence"]["dial_color"]["supporting_photos"] == 1
+
+
+def test_batch_reuses_visual_inspection_across_angles_and_encodings(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = PilotService.__new__(PilotService)
+    service.claims = load_knowledge(Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln")
+    calls = []
+
+    def inspect(_image: Image.Image) -> _VisualInspection:
+        calls.append(True)
+        return _VisualInspection("inspected", "green", "green")
+
+    monkeypatch.setattr(service, "inspect", inspect)
+    png = io.BytesIO()
+    Image.new("RGB", (300, 300), "white").save(png, format="PNG")
+    result = analyze_batch(service, {"images": [
+        _batch_item("dial", _jpeg()),
+        {**_batch_item("clasp", png.getvalue()), "content_type": "image/png"},
+    ]})
+    assert len(calls) == 1
+    assert result["joint"]["unique_visual_contents"] == 1
+    assert result["joint"]["reused_results"] == 1
+    assert result["joint"]["model_checked_images"] == 1
+    assert result["results"][1]["angle_mismatch"] is True
+    assert result["results"][1]["detected_angle"] == "dial"
+    assert result["results"][1]["online_checks"] == result["results"][0]["online_checks"]
+
+
+def test_batch_releases_each_decoded_image_before_inspecting_next(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = PilotService.__new__(PilotService)
+    service.claims = load_knowledge(Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln")
+    prior_images: list[weakref.ReferenceType[Image.Image]] = []
+
+    def inspect(image: Image.Image) -> _VisualInspection:
+        gc.collect()
+        assert all(prior() is None for prior in prior_images)
+        prior_images.append(weakref.ref(image))
+        return _VisualInspection("inspected", "green", "green")
+
+    monkeypatch.setattr(service, "inspect", inspect)
+    result = analyze_batch(service, {"images": [
+        _batch_item(body=_jpeg_variant(1)),
+        _batch_item(body=_jpeg_variant(2)),
+    ]})
+    assert result["joint"]["unique_visual_contents"] == 2
+    assert len(prior_images) == 2
+
+
+def test_selected_clasp_does_not_claim_clasp_when_only_dial_is_located() -> None:
+    image = Image.new("RGB", (300, 300), "#164d30")
+    for x in range(0, 300, 10):
+        ImageDraw.Draw(image).line((x, 0, x, 300), fill="white", width=1)
+
+    class Locator:
+        def locate(self, photo: Image.Image) -> WatchRegion:
+            return WatchRegion(photo, photo, .9, .8)
+
+    class Assessor:
+        def dial_color(self, _photo: Image.Image) -> str:
+            return "green"
+
+    service = PilotService.__new__(PilotService)
+    service.claims = load_knowledge(Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln")
+    service.locator = cast(Any, Locator())
+    service.assessor = cast(Any, Assessor())
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    result = service.predict(output.getvalue(), "image/png", "clasp")
+    assert result["detected_angle"] == "dial"
+    assert result["angle_mismatch"] is True
+    checks = cast(list[dict[str, str]], result["online_checks"])
+    assert all(item["field"] != "clasp" for item in checks)
 
 
 def test_batch_reports_one_tentative_reference_from_multiple_photos() -> None:
@@ -302,10 +444,11 @@ def test_batch_reports_one_tentative_reference_from_multiple_photos() -> None:
                 "observed_bezel_color": "green" if self.calls < 3 else "uncertain",
             }
 
-    result = analyze_batch(GreenWatch(), {"images": [_batch_item() for _ in range(3)]})
+    result = analyze_batch(GreenWatch(), {"images": [_batch_item(body=_jpeg_variant(i + 1)) for i in range(3)]})
     joint = result["joint"]
     assert joint["verdict"] == "inconclusivo"
     assert joint["reference_candidate"]["reference"] == "116610LV"
+    assert joint["next_useful_angle"] is None
     assert joint["visible_evidence"]["dial_color"]["supporting_photos"] == 3
     assert joint["visible_evidence"]["bezel_color"]["supporting_photos"] == 2
     assert "não permitem autenticar" in joint["message"]
@@ -324,7 +467,7 @@ def test_conflicting_dial_colors_block_reference_candidate() -> None:
                 "observed_bezel_color": "green",
             }
 
-    joint = analyze_batch(ConflictingPhotos(), {"images": [_batch_item("crown"), _batch_item("crown")]})["joint"]
+    joint = analyze_batch(ConflictingPhotos(), {"images": [_batch_item("crown", _jpeg_variant(1)), _batch_item("crown", _jpeg_variant(2))]})["joint"]
     assert joint["reference_candidate"] is None
     assert joint["visible_evidence"]["dial_color"]["value"] == "uncertain"
     assert "crown" in joint["missing_angles"]
@@ -342,6 +485,46 @@ def test_submitted_but_unchecked_photos_are_reported_separately() -> None:
     assert "nenhuma foi enviada ao modelo" in result["joint"]["message"]
 
 
+def test_untrained_pilot_separates_seen_photos_uncertainty_and_fake_quality() -> None:
+    result = analyze_batch(
+        _StubService(["inconclusivo"]),
+        {"images": [_batch_item("dial", _jpeg_variant(1))]},
+    )
+    joint = result["joint"]
+    assert joint["used_photo_indices"] == [1]
+    assert joint["next_useful_angle"] == "dial"
+    assert joint["model_sha256"] is None
+    assert joint["calibrated_confidence"] is None
+    assert joint["quality_score_0_1000"] is None
+    assert joint["quality_assessment"] == "não avaliada"
+    assert joint["cited_reference_facts"] == []
+    page = _HTML.decode("utf-8")
+    assert "Fotos usadas:" in page
+    assert "confiança calibrada:" in page
+    assert "Qualidade da falsificação (somente após confirmação):" in page
+    assert "nenhuma foto adicional desta prévia comprova autenticidade" in page
+
+
+def test_rejected_photo_cannot_supply_cited_facts_or_fake_quality() -> None:
+    class UnsupportedClaim:
+        def predict(self, *_args: object) -> dict[str, object]:
+            return {
+                "verdict": "foto_invalida",
+                "model_invoked": False,
+                "online_checks": [{"field": "dial_color", "url": "https://www.rolex.com/x", "role": "official_spec"}],
+                "quality_score_0_1000": 1000,
+                "replica_probability": 0.99,
+            }
+
+    joint = analyze_batch(UnsupportedClaim(), {"images": [_batch_item()]})["joint"]
+
+    assert joint["used_photo_indices"] == []
+    assert joint["cited_reference_facts"] == []
+    assert joint["quality_score_0_1000"] is None
+    assert joint["calibrated_confidence"] is None
+    assert joint["next_useful_angle"] == "dial"
+
+
 @pytest.mark.parametrize(
     ("verdicts", "expected"),
     [
@@ -353,7 +536,7 @@ def test_submitted_but_unchecked_photos_are_reported_separately() -> None:
 def test_batch_joint_verdict_fails_closed(verdicts: list[str], expected: str) -> None:
     result = analyze_batch(
         _StubService(verdicts),
-        {"images": [_batch_item("dial"), _batch_item("rehaut")]},
+        {"images": [_batch_item("dial", _jpeg_variant(1)), _batch_item("rehaut", _jpeg_variant(2))]},
     )
 
     assert result["joint"]["verdict"] == expected
@@ -425,9 +608,14 @@ def test_individual_endpoint_remains_compatible() -> None:
 
 def test_html_supports_six_files_per_image_angles_and_recovers_after_error() -> None:
     html = _HTML.decode("utf-8")
+    assert "Prévia visual Rolex Submariner" in html
+    assert "Ainda não detecta falsificações" in html
+    assert "não há classificador de autenticidade treinado e validado" in html
 
-    assert "j.joint.message+'\\nFotos examinadas pelo modelo: '" in html
-    assert "j.joint.message+'\nFotos examinadas pelo modelo: '" not in html
+    assert "j.joint.message+'\\nFotos enviadas: '" in html
+    assert "j.joint.message+'\nFotos enviadas: '" not in html
+    assert "Conteúdos visuais distintos:" in html
+    assert "Resultados reaproveitados:" in html
     assert 'multiple' in html
     assert 'Máximo de 6 imagens' in html
     assert 'fetch("/predict/batch"' in html
