@@ -44,6 +44,9 @@ def test_patek_reference_is_research_only_without_admitted_head(catalog_fixture)
 
     assert entry.brand == "patek"
     assert entry.status == "pending"
+    assert tuple(angle.value for angle in entry.required_angles) == (
+        "dial", "crown", "clasp", "caseback"
+    )
     with pytest.raises(ReferenceNotAdmitted):
         catalog_fixture.catalog.head_for(entry.reference_id)
 

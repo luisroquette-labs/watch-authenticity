@@ -40,7 +40,7 @@
       "reference": "58111g001",
       "aliases": [],
       "identity_evidence_sha256": null,
-      "required_angles": ["dial", "cyclops", "rehaut", "crown", "clasp", "caseback"],
+      "required_angles": ["dial", "crown", "clasp", "caseback"],
       "gold_freeze_sha256": null,
       "holdout_freeze_sha256": null,
       "status": "pending",
