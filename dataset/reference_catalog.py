@@ -151,7 +151,7 @@ def parse_reference_catalog(
             aliases[alias] = entry.reference_id
     if baseline_reference_id not in entries:
         raise ReferenceCatalogError("baseline reference is absent")
-    _validate_catalog_invariants(entries, baseline_reference_id)
+    _validate_catalog_invariants(entries)
     if previous is not None:
         for reference_id, prior in previous.entries.items():
             if prior.status == "admitted" and entries.get(reference_id) != prior:
@@ -179,12 +179,8 @@ def admit_reference(
         return ReferenceAdmission(reference_id, False, ("reference is absent from catalog",), catalog.sha256)
     if entry.reference_id != reference_id or report.reference_id != entry.reference_id:
         reasons.append("readiness report belongs to another reference")
-    baseline = catalog.entries[catalog.baseline_reference_id]
-    if (
-        entry.reference_id != catalog.baseline_reference_id
-        and (baseline.status != "admitted" or baseline.head is None)
-    ):
-        reasons.append("trained baseline head is not admitted")
+    if report.required_angles != entry.required_angles:
+        reasons.append("readiness report uses different required angles")
     if not report.ready or report.reasons:
         reasons.append("readiness report failed")
     if entry.status != "admitted" or entry.head is None:
@@ -252,16 +248,7 @@ def _parse_entry(raw: object, generation: int) -> ReferenceEntry:
     )
 
 
-def _validate_catalog_invariants(
-    entries: dict[str, ReferenceEntry], baseline_reference_id: str
-) -> None:
-    baseline = entries[baseline_reference_id]
-    if any(
-        entry.reference_id != baseline_reference_id and entry.status == "admitted"
-        for entry in entries.values()
-    ) and (baseline.status != "admitted" or baseline.head is None):
-        raise ReferenceCatalogError("later reference requires an admitted baseline head")
-
+def _validate_catalog_invariants(entries: dict[str, ReferenceEntry]) -> None:
     owners: dict[str, tuple[str, str]] = {}
     for entry in entries.values():
         artifacts = {

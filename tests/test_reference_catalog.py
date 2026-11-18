@@ -4,6 +4,7 @@ import copy
 
 import pytest
 
+from acquisition.types import Angle
 from dataset.readiness import ReadinessReport
 from dataset.reference_catalog import (
     ReferenceCatalogError,
@@ -21,6 +22,7 @@ def test_photo_volume_cannot_bypass_reference_readiness(catalog_fixture):
         False,
         ("genuine: source one.example exceeds 40% of train entities",),
         (("genuine/dial", 50_000, 10_000),),
+        catalog_fixture.catalog.entry_for("rolex-datejust-126334").required_angles,
     )
 
     decision = admit_reference("rolex-datejust-126334", report, catalog_fixture.catalog)
@@ -52,7 +54,7 @@ def test_patek_reference_is_research_only_without_admitted_head(catalog_fixture)
 
 
 def test_admitted_submariner_returns_only_its_own_head(catalog_fixture):
-    report = ReadinessReport("rolex-submariner-126610ln", True, (), ())
+    report = ReadinessReport("rolex-submariner-126610ln", True, (), (), tuple(Angle))
 
     decision = admit_reference(
         "rolex-submariner-126610ln", report, catalog_fixture.admitted_catalog
@@ -79,14 +81,26 @@ def test_reference_catalog_refuses_incompatible_state(case, catalog_fixture):
         catalog_fixture.load(case)
 
 
-def test_later_reference_requires_an_admitted_baseline(catalog_fixture):
+def test_later_reference_can_be_admitted_without_baseline_head(catalog_fixture):
     document = copy.deepcopy(catalog_fixture.document)
     _admit_datejust(document)
 
-    with pytest.raises(ReferenceCatalogError, match="admitted baseline"):
-        parse_reference_catalog(
-            document, expected_sha256=catalog_document_sha256(document)
-        )
+    catalog = parse_reference_catalog(document, expected_sha256=catalog_document_sha256(document))
+    entry = catalog.entry_for("rolex-datejust-126334")
+    report = ReadinessReport(entry.reference_id, True, (), (), entry.required_angles)
+
+    assert admit_reference(entry.reference_id, report, catalog).allowed
+
+
+def test_admission_rejects_readiness_for_different_views(catalog_fixture):
+    document = copy.deepcopy(catalog_fixture.document)
+    _admit_datejust(document)
+    catalog = parse_reference_catalog(document, expected_sha256=catalog_document_sha256(document))
+    report = ReadinessReport("rolex-datejust-126334", True, (), (), (Angle.DIAL,))
+
+    assert "readiness report uses different required angles" in admit_reference(
+        report.reference_id, report, catalog
+    ).reasons
 
 
 def test_references_cannot_reuse_slices_or_heads(catalog_fixture):

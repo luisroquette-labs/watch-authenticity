@@ -38,7 +38,7 @@ _SPLITS = frozenset(
     {TRAIN, VAL, TEST, CROSS_SOURCE, FACTORY_HOLDOUT, TEMPORAL_HOLDOUT, GOLD}
 )
 _RIGHTS = frozenset({"owner", "licensed"})
-_REJECTION_SUBTYPES = frozenset({"no-watch", "non-submariner"})
+_REJECTION_SUBTYPES = frozenset({"no-watch", "non-submariner", "non-target-reference"})
 _PLACEHOLDER_DOMAINS = frozenset({"example.com", "example.net", "example.org"})
 _MAX_IMAGE_BYTES = 25 * 1024 * 1024
 _RECORD_FIELDS = frozenset(
@@ -554,6 +554,10 @@ def _parse_freeze(
             or source.get("label") != record.label.value
             or source.get("grade") != record.grade
             or source.get("angle") != record.angle
+            or source.get("rejection_subtype") != record.rejection_subtype
+            or (record.label is Label.REJECTION and record.rejection_subtype == "non-target-reference"
+                and (not source.get("rejection_reference_id")
+                     or source.get("rejection_reference_id") == source.get("reference_id")))
             or source.get("factory") != record.factory
             or source.get("evidence_tier") != record.evidence_tier
             or source.get("rights_record_id") != record.rights_record_id
