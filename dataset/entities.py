@@ -179,16 +179,12 @@ def build_content_clusters(records: Sequence[CandidateRecord]) -> dict[str, str]
     _validate_records(records)
     union = _UnionFind(record.candidate_id for record in records)
     by_raw: dict[str, str] = {}
-    by_phash: dict[str, str] = {}
+    by_derivative: dict[str, str] = {}
     for record in records:
         prior = by_raw.setdefault(record.raw_sha256, record.candidate_id)
         union.union(prior, record.candidate_id)
-        prior_phash = by_phash.setdefault(record.phash, record.candidate_id)
-        union.union(prior_phash, record.candidate_id)
-
-    unique_phashes = sorted(by_phash)
-    for left, right in find_near_duplicate_pairs(unique_phashes):
-        union.union(by_phash[unique_phashes[left]], by_phash[unique_phashes[right]])
+        prior_derivative = by_derivative.setdefault(record.derivative_sha256, record.candidate_id)
+        union.union(prior_derivative, record.candidate_id)
 
     groups = _groups(union, (record.candidate_id for record in records))
     ids = {
@@ -242,6 +238,9 @@ def assign_watch_entities(
     _union_shared_value(
         split_union, records, lambda record: content_clusters[record.candidate_id]
     )
+    # pHash is a leakage warning, not proof that two catalog photos show one image.
+    # Keep near matches in one split while counting distinct bytes separately.
+    _union_near_phashes(split_union, records)
     _union_shared_value(split_union, records, lambda record: record.acquisition_batch_id)
     _union_shared_value(
         split_union,
@@ -281,12 +280,15 @@ def detect_cluster_conflicts(
     _validate_records(records)
     _validate_mapping_keys(records, content_clusters, "content clusters")
     _validate_evidence(records, evidence)
+    similarity = _UnionFind(record.candidate_id for record in records)
+    _union_shared_value(similarity, records, lambda record: content_clusters[record.candidate_id])
+    _union_near_phashes(similarity, records)
     by_cluster: dict[str, list[CandidateRecord]] = defaultdict(list)
     for record in records:
-        by_cluster[content_clusters[record.candidate_id]].append(record)
+        by_cluster[similarity.find(record.candidate_id)].append(record)
 
     conflicts: dict[str, ClusterConflict] = {}
-    for cluster_id, members in by_cluster.items():
+    for members in by_cluster.values():
         labels: set[tuple[Label, int | None]] = set()
         conflict_candidates: list[str] = []
         conflict_evidence: list[str] = []
@@ -300,11 +302,23 @@ def detect_cluster_conflicts(
                 if item and item.evidence_record_id:
                     conflict_evidence.append(item.evidence_record_id)
         if len(labels) > 1:
-            conflicts[cluster_id] = ClusterConflict(
+            conflict = ClusterConflict(
                 candidate_ids=tuple(sorted(conflict_candidates)),
                 evidence_ids=tuple(sorted(set(conflict_evidence))),
             )
+            for record in members:
+                conflicts[content_clusters[record.candidate_id]] = conflict
     return conflicts
+
+
+def _union_near_phashes(union: _UnionFind, records: Sequence[CandidateRecord]) -> None:
+    by_phash: dict[str, str] = {}
+    for record in records:
+        prior = by_phash.setdefault(record.phash, record.candidate_id)
+        union.union(prior, record.candidate_id)
+    unique_phashes = sorted(by_phash)
+    for left, right in find_near_duplicate_pairs(unique_phashes):
+        union.union(by_phash[unique_phashes[left]], by_phash[unique_phashes[right]])
 
 
 def build_grouping_decision(

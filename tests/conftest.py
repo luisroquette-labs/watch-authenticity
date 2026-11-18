@@ -390,6 +390,7 @@ def grouped_records(candidate: CandidateRecord) -> list[CandidateRecord]:
             candidate_id="front",
             source_record_id="listing-front",
             raw_sha256="1" * 64,
+            derivative_sha256="4" * 64,
             phash="0123456789abcdef",
         ),
         replace(
@@ -397,6 +398,7 @@ def grouped_records(candidate: CandidateRecord) -> list[CandidateRecord]:
             candidate_id="repost",
             source_record_id="listing-repost",
             raw_sha256="2" * 64,
+            derivative_sha256="5" * 64,
             phash="0123456789abcdee",
         ),
         replace(
@@ -404,6 +406,7 @@ def grouped_records(candidate: CandidateRecord) -> list[CandidateRecord]:
             candidate_id="clasp",
             source_record_id="listing-clasp",
             raw_sha256="3" * 64,
+            derivative_sha256="6" * 64,
             phash="fedcba9876543210",
         ),
     ]

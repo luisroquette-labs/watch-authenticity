@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from datetime import timedelta
 
@@ -16,7 +17,12 @@ from dataset.freeze import (
     require_frozen_asset_read,
 )
 from dataset.readiness import evaluate_readiness
-from dataset.splits import TRAIN, DatasetSplits, build_splits
+from dataset.splits import (
+    TRAIN,
+    DatasetSplits,
+    assert_no_connected_component_crosses_splits,
+    build_splits,
+)
 from infra.ibm_types import ObjectRef
 from tests.conftest import NOW
 
@@ -59,7 +65,7 @@ def _record(
         evidence_record_id=f"evidence-{index}",
         rights_record_id=f"rights-{index}",
         image_sha256=digest,
-        phash=f"{index:016x}",
+        phash=hashlib.sha256(str(index).encode()).hexdigest()[:16],
         usability_review=None if label is Label.REJECTION else record_usability_review(f"candidate-{index}", digest, Angle(angle), True, True, "angle-reviewer", NOW),
     )
 
@@ -244,6 +250,19 @@ def test_grouped_splits_keep_transitive_relations_together():
     assert assigned[first.asset_id] == assigned[second.asset_id] == assigned[third.asset_id]
     assert assigned[fourth.asset_id] == "gold"
     assert splits.temporal_cutoff is not None
+
+
+def test_near_phash_cannot_cross_train_and_gold_splits():
+    first = replace(_record(1), phash="bed0d503522f2f54")
+    second = replace(_record(2, gold=True), phash="bed0d503522f2fd0")
+
+    splits = build_splits([first, second], seed=42, held_out_factories=set())
+
+    assert splits.split_by_asset[first.asset_id] == splits.split_by_asset[second.asset_id] == "gold"
+    with pytest.raises(ValueError, match="near-pHash group crosses dataset splits"):
+        assert_no_connected_component_crosses_splits(
+            [first, second], DatasetSplits(((first.asset_id, TRAIN), (second.asset_id, "gold")), NOW, 42)
+        )
 
 
 def test_grouped_splits_are_deterministic_for_input_order():
