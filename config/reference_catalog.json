@@ -45,6 +45,19 @@
       "holdout_freeze_sha256": null,
       "status": "pending",
       "head": null
+    },
+    {
+      "reference_id": "omega-seamaster-21030422001001",
+      "brand": "omega",
+      "family": "seamaster",
+      "reference": "21030422001001",
+      "aliases": [],
+      "identity_evidence_sha256": null,
+      "required_angles": ["dial", "crown", "clasp", "caseback"],
+      "gold_freeze_sha256": null,
+      "holdout_freeze_sha256": null,
+      "status": "pending",
+      "head": null
     }
   ]
 }

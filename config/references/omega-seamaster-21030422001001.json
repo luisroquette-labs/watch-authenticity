@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "reference_id": "omega-seamaster-21030422001001",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "210.30.42.20.01.001",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/21030422001001-en-gb.pdf",
+      "citation": "Product sheet > Reference",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "dial_color",
+      "value": "black",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/21030422001001-en-gb.pdf",
+      "citation": "Product sheet > Watch case & dial > Dial Colour",
+      "observed_at": "2026-11-18",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "dial_texture",
+      "value": "laser-engraved waves",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21030422001001",
+      "citation": "Description > polished black ceramic dial",
+      "observed_at": "2026-11-18",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "date_position",
+      "value": "6 o'clock",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21030422001001",
+      "citation": "Description > date window",
+      "observed_at": "2026-11-18",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "bezel_color",
+      "value": "black",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21030422001001",
+      "citation": "Description > black ceramic bezel",
+      "observed_at": "2026-11-18",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "bezel_scale_color",
+      "value": "white",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21030422001001",
+      "citation": "Description > white enamel diving scale",
+      "observed_at": "2026-11-18",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "helium_escape_valve_shape",
+      "value": "conical",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21030422001001",
+      "citation": "Description > helium escape valve",
+      "observed_at": "2026-11-18",
+      "applicable_angles": ["crown"]
+    },
+    {
+      "field": "caseback_type",
+      "value": "transparent sapphire-crystal",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21030422001001",
+      "citation": "Description > sapphire-crystal on the wave-edged caseback",
+      "observed_at": "2026-11-18",
+      "applicable_angles": ["caseback"]
+    },
+    {
+      "field": "clasp_type",
+      "value": "foldover with comfort setting and diver extension",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/21030422001001-en-gb.pdf",
+      "citation": "Product sheet > Bracelet > Type of Clasp",
+      "observed_at": "2026-11-18",
+      "applicable_angles": ["clasp"]
+    },
+    {
+      "field": "case_material",
+      "value": "steel",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/21030422001001-en-gb.pdf",
+      "citation": "Product sheet > Watch case & dial > Case",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "diameter_mm",
+      "value": "42",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/21030422001001-en-gb.pdf",
+      "citation": "Product sheet > Watch case & dial > Case Diameter",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "calibre",
+      "value": "Omega 8800",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/21030422001001-en-gb.pdf",
+      "citation": "Product sheet > Movement > Calibre",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "water_resistance",
+      "value": "30 bar (300 metres / 1000 feet)",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/21030422001001-en-gb.pdf",
+      "citation": "Product sheet > Water Resistance",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    }
+  ]
+}
