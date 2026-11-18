@@ -32,6 +32,19 @@
       "holdout_freeze_sha256": null,
       "status": "pending",
       "head": null
+    },
+    {
+      "reference_id": "patek-nautilus-58111g001",
+      "brand": "patek",
+      "family": "nautilus",
+      "reference": "58111g001",
+      "aliases": [],
+      "identity_evidence_sha256": null,
+      "required_angles": ["dial", "cyclops", "rehaut", "crown", "clasp", "caseback"],
+      "gold_freeze_sha256": null,
+      "holdout_freeze_sha256": null,
+      "status": "pending",
+      "head": null
     }
   ]
 }
