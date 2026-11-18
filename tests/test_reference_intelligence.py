@@ -36,6 +36,35 @@ def test_official_126610ln_knowledge_is_versioned_and_cited() -> None:
     assert all(claim.citation and claim.observed_at <= date.today() for claim in claims)
 
 
+def test_patek_5811_knowledge_is_cited_without_authenticity_coverage() -> None:
+    reference = "patek-nautilus-58111g001"
+    claims = load_knowledge(Path("config/references/patek-nautilus-58111g001.json"), reference)
+
+    assert len(claims) == 9
+    assert all(claim.source_class is SourceClass.OFFICIAL_BRAND for claim in claims)
+    assert all(claim.source_url == "https://www.patek.com/en/collection/nautilus/5811-1g-001" for claim in claims)
+    assert {claim.field for claim in claims if claim.applicable_angles} == {
+        "dial_color", "dial_texture", "date_position", "caseback_type", "clasp_type"
+    }
+    result = assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER)
+    assert result.status is AssessmentStatus.INCONCLUSIVE
+    assert not result.authenticates_watch
+
+
+def test_patek_official_claim_rejects_impersonated_domain() -> None:
+    with pytest.raises(ValueError, match="approved domain"):
+        TechnicalClaim(
+            reference_id="patek-nautilus-58111g001",
+            field="dial_color",
+            value="blue",
+            source_class=SourceClass.OFFICIAL_BRAND,
+            source_url="https://patek.com.evil.example/watch",
+            citation="False official claim",
+            observed_at=date.today(),
+            applicable_angles=(Angle.DIAL,),
+        )
+
+
 def test_all_visible_facts_must_match_to_be_consistent_but_never_authenticate() -> None:
     claims = load_knowledge(KNOWLEDGE, REFERENCE)
     result = assess_reference(
