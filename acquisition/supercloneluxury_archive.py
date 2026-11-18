@@ -270,6 +270,7 @@ def archive_catalog(
     started = time.monotonic()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     root.chmod(0o700)
+    (root / "census.json").unlink(missing_ok=True)
     result: dict[str, object] = {
         "source": HOST,
         "products": 0,
@@ -313,6 +314,15 @@ def archive_catalog(
         finished_at=datetime.now(timezone.utc).isoformat(),
     )
     _atomic_json(root / "status.json", result)
+    if result["state"] == "complete":
+        from acquisition.supercloneluxury_census import census_archive
+
+        try:
+            _atomic_json(root / "census.json", census_archive(root))
+        except Exception as exc:
+            result.update(state="census_failed", error_type=type(exc).__name__)
+            _atomic_json(root / "status.json", result)
+            raise
     return result
 
 

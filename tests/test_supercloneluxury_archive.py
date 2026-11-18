@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import stat
@@ -10,6 +11,7 @@ import requests
 from PIL import Image
 
 from acquisition import supercloneluxury_archive as archive
+from acquisition.supercloneluxury_census import census_archive
 
 
 class Response:
@@ -74,6 +76,7 @@ def test_archive_is_resumable_and_never_assigns_quality_from_sales_claim(
     assert catalog[0]["quality_score_0_1000"] is None
     assert catalog[0]["training_eligible"] is False
     assert catalog[0]["source_product"]["sku"] == "SCL-1"
+    assert json.loads((tmp_path / "census.json").read_text())["catalog_products"] == 1
     receipt = next((tmp_path / "receipts").glob("*.json"))
     stored_image = tmp_path / json.loads(receipt.read_text())["image_path"]
     assert stored_image.read_bytes() == output.getvalue()
@@ -92,6 +95,64 @@ def test_archive_is_resumable_and_never_assigns_quality_from_sales_claim(
 def test_external_image_host_is_rejected() -> None:
     with pytest.raises(archive.CatalogError, match="outside"):
         archive._image_url("https://example.com/wp-content/uploads/watch.webp")
+
+
+def test_census_links_exact_reposts_without_claiming_physical_watches(tmp_path) -> None:
+    urls = [f"https://supercloneluxury.com/wp-content/uploads/{index}.webp" for index in range(3)]
+    archive._atomic_json(tmp_path / "status.json", {"state": "complete"})
+    archive._atomic_json(tmp_path / "catalog.json", [
+        {"product_id": 1, "name": "Rolex watch", "image_urls": urls[:2], "training_eligible": False, "confirmed_fake": False},
+        {"product_id": 2, "name": "Rolex repost", "image_urls": [urls[2]], "training_eligible": False, "confirmed_fake": False},
+        {"product_id": 3, "name": "Omega watch", "image_urls": [], "training_eligible": False, "confirmed_fake": False},
+    ])
+    for url, digest in zip(urls, ("a", "b", "b")):
+        archive._atomic_json(tmp_path / "receipts" / f"{hashlib.sha256(url.encode()).hexdigest()}.json", {"image_url": url, "sha256": digest})
+
+    report = census_archive(tmp_path)
+
+    assert report["catalog_products"] == 3
+    assert report["image_urls"] == 3
+    assert report["unique_image_hashes"] == 2
+    assert report["exact_hash_linked_listing_groups"] == 2
+    assert report["listings_in_shared_hash_groups"] == 2
+    assert report["physical_watches_confirmed"] == 0
+    assert report["training_eligible_images"] == 0
+
+
+def test_census_refuses_incomplete_archive(tmp_path) -> None:
+    archive._atomic_json(tmp_path / "status.json", {"state": "partial"})
+    with pytest.raises(archive.CatalogError, match="not complete"):
+        census_archive(tmp_path)
+
+
+def test_census_accepts_valid_catalog_without_images(tmp_path) -> None:
+    archive._atomic_json(tmp_path / "status.json", {"state": "complete"})
+    archive._atomic_json(tmp_path / "catalog.json", [
+        {"product_id": 1, "name": "Watch", "image_urls": [], "training_eligible": False, "confirmed_fake": False}
+    ])
+
+    report = census_archive(tmp_path)
+
+    assert report["image_urls"] == 0
+    assert report["unique_image_hashes"] == 0
+    assert report["exact_hash_linked_listing_groups"] == 1
+    assert report["largest_shared_hash_group"] == 1
+
+
+def test_archive_records_census_failure_instead_of_claiming_complete(tmp_path, monkeypatch) -> None:
+    output = io.BytesIO()
+    Image.new("RGB", (20, 20), "green").save(output, format="WEBP")
+    monkeypatch.setattr(archive.requests, "Session", lambda: Session(output.getvalue()))
+    from acquisition import supercloneluxury_census
+
+    def fail(_root):
+        raise archive.CatalogError("census unavailable")
+
+    monkeypatch.setattr(supercloneluxury_census, "census_archive", fail)
+    with pytest.raises(archive.CatalogError, match="census unavailable"):
+        archive.archive_catalog(tmp_path, interval=0)
+    assert json.loads((tmp_path / "status.json").read_text())["state"] == "census_failed"
+    assert not (tmp_path / "census.json").exists()
 
 
 def test_product_without_replica_declaration_is_not_labeled_fake() -> None:
@@ -131,6 +192,7 @@ def test_refresh_failure_never_leaves_old_complete_status(
         archive.archive_catalog(tmp_path, interval=0, refresh=True)
     status = json.loads((tmp_path / "status.json").read_text())
     assert status["state"] == "failed"
+    assert not (tmp_path / "census.json").exists()
     assert status["images_archived"] == 0
     assert json.loads((tmp_path / "catalog.json").read_text())[0]["image_urls"] == [
         "https://supercloneluxury.com/wp-content/uploads/new.webp"
