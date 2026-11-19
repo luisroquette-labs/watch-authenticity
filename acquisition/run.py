@@ -439,19 +439,38 @@ def run_public_image_collection_once(
         "public-"
         + hashlib.sha256(f"{source}\0{cycle}\0{page.cursor or 'root'}".encode()).hexdigest()[:24]
     )
-    receipt = collect_batch(
-        candidates,
-        policy,
-        authorization,
-        access=access,
-        http_client=image_client,
-        cos_client=cos_client,
-        bucket=bucket,
-        batch_id=batch_id,
-        now=now,
-    )
+    accepted_candidate_ids: list[str] = []
+    rejected_images: list[dict[str, str]] = []
+    for candidate in candidates:
+        try:
+            receipt = collect_batch(
+                (candidate,), policy, authorization, access=access,
+                http_client=image_client, cos_client=cos_client, bucket=bucket,
+                batch_id=batch_id, now=now,
+            )
+        except UnsafeImage as exc:
+            rejected_images.append({
+                "source_record_id": candidate.source_record_id,
+                "image_url": candidate.image_url,
+                "reason": str(exc),
+            })
+            continue
+        accepted_candidate_ids.extend(receipt.accepted_candidate_ids)
+    rejection_key = None
+    if rejected_images:
+        rejection_record: dict[str, object] = {
+            "batch_id": batch_id, "cycle": cycle, "source": source,
+            "rejected_images": rejected_images,
+        }
+        rejection_digest = hashlib.sha256(_canonical(rejection_record)).hexdigest()
+        rejection_key = (
+            f"{collection_prefix}/rejections/{cycle}/{source}/"
+            f"{batch_id}-{rejection_digest}.json"
+        )
+        if _immutable_review_document(cos_client, bucket, rejection_key, rejection_record) != rejection_record:
+            raise RuntimeError("public image rejection readback differs")
     if on_collected is not None:
-        on_collected(tuple(receipt.accepted_candidate_ids), cycle, batch_id, len(candidates))
+        on_collected(tuple(accepted_candidate_ids), cycle, batch_id, len(candidates))
     commit = append_discovery_page(
         cos_client,
         bucket,
@@ -460,8 +479,10 @@ def run_public_image_collection_once(
         previous=previous,
     )
     status: dict[str, object] = {
-        "accepted_candidate_ids": sorted(receipt.accepted_candidate_ids),
-        "accepted_count": len(receipt.accepted_candidate_ids),
+        "accepted_candidate_ids": sorted(accepted_candidate_ids),
+        "accepted_count": len(accepted_candidate_ids),
+        "rejected_images": rejected_images,
+        "rejection_key": rejection_key,
         "commit_sha256": commit.sha256,
         "cycle": cycle,
         "next_cursor": commit.next_cursor,
