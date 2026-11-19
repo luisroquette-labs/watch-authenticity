@@ -76,7 +76,7 @@ def test_cloud_discovery_paginates_without_claiming_exact_reference_or_authentic
     assert all(record.declared_reference == "unverified" for record in page.records)
     assert dict(page.records[0].metadata)["classification"] == "vendor_declared_replica"
     assert first.urls == [
-        "https://supercloneluxury.com/wp-json/wc/store/v1/products?per_page=25&page=1"
+        "https://supercloneluxury.com/wp-json/wc/store/v1/products?per_page=25&page=1&order=asc"
     ]
     assert not policy.may_train
 
