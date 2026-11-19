@@ -135,9 +135,11 @@ def discover_cbp(
     last_url = after
     next_offset = 0
     image_count = 0
+    examined = 0
     for url in pending:
-        if len(records) >= _MAX_ARTICLES or image_count >= 10:
+        if examined >= _MAX_ARTICLES or image_count >= 10:
             break
+        examined += 1
         body = read.get_bytes(url, 2 * 1024 * 1024, "CBP article", deadline=deadline)
         text = body.decode("utf-8", errors="replace")
         if not _SEIZURE.search(text):

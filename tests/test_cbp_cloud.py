@@ -134,3 +134,21 @@ def test_cbp_scans_one_sitemap_page_per_run(monkeypatch):
     terminal = cbp.discover_cbp(object(), policy, access, now=NOW,
                                 previous=SimpleNamespace(next_cursor=second.next_cursor))
     assert terminal.records == () and terminal.next_cursor is None
+
+
+def test_cbp_advances_after_five_examined_articles_without_images(monkeypatch):
+    policy, access = _access()
+    urls = [f"https://www.cbp.gov/newsroom/local-media-release/fake-watch-{i}" for i in range(6)]
+    sitemap = "https://www.cbp.gov/sitemap.xml?page=1"
+    reader = _Read({cbp._INDEX: _xml("sitemapindex", [sitemap]),
+                    sitemap: _xml("urlset", urls),
+                    **dict.fromkeys(urls, b'<div class="field--name-body">Counterfeit watch</div>')})
+    monkeypatch.setattr(cbp, "PacedBoundedHTTP", lambda *_args: reader)
+    first = cbp.discover_cbp(object(), policy, access, now=NOW)
+    assert first.records == ()
+    assert json.loads(first.next_cursor) == {"page": 0, "after": urls[4], "offset": 0}
+    assert reader.urls == [cbp._INDEX, sitemap, *urls[:5]]
+    second = cbp.discover_cbp(object(), policy, access, now=NOW,
+                              previous=SimpleNamespace(next_cursor=first.next_cursor))
+    assert second.records == () and second.next_cursor is None
+    assert reader.urls[-3:] == [cbp._INDEX, sitemap, urls[5]]
