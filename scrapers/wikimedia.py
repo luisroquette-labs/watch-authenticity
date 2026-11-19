@@ -31,7 +31,7 @@ _FAMILY_SEARCHES = (
     ("Seiko Prospex watch", "seiko", "prospex"),
     ("Cartier Santos wristwatch", "cartier", "santos"),
     ("Omega Seamaster watch", "omega", "seamaster"),
-    ("Patek Philippe Nautilus wristwatch", "patek philippe", "nautilus"),
+    ("Patek Philippe Nautilus", "patek philippe", "nautilus"),
     ("Rolex Submariner wristwatch", "rolex", "submariner"),
 )
 _CLASSIFICATION = "brand_family_candidate_unverified"
@@ -212,13 +212,13 @@ def _parse_page(
     metadata = info.get("extmetadata")
     if not isinstance(metadata, Mapping):
         raise WikimediaAPIError("image metadata is missing")
-    searchable = " ".join(
+    searchable = re.sub(r"[-_]+", " ", " ".join(
         (
             title,
             _optional_metadata_text(metadata, "ObjectName"),
             _optional_metadata_text(metadata, "ImageDescription"),
         )
-    )
+    ))
     if any(re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", searchable, re.I) is None
            for word in (brand, family)):
         return None
