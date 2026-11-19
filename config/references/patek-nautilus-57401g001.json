@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "reference_id": "patek-nautilus-57401g001",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "5740/1G-001",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/nautilus/5740-1g-001",
+      "citation": "Nautilus 5740/1G-001 > Technical characteristics",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "dial_color",
+      "value": "sunburst blue",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/nautilus/5740-1g-001",
+      "citation": "Technical characteristics > Dial",
+      "observed_at": "2026-11-19",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "dial_texture",
+      "value": "horizontally embossed",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/nautilus/5740-1g-001",
+      "citation": "Technical characteristics > Dial",
+      "observed_at": "2026-11-19",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "case_material",
+      "value": "white gold",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/nautilus/5740-1g-001",
+      "citation": "Technical characteristics > Case",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "diameter_mm",
+      "value": "40",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/nautilus/5740-1g-001",
+      "citation": "Technical characteristics > Case > Diameter (10-4 o'clock)",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "caseback_type",
+      "value": "sapphire crystal",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/nautilus/5740-1g-001",
+      "citation": "Technical characteristics > Case",
+      "observed_at": "2026-11-19",
+      "applicable_angles": ["caseback"]
+    },
+    {
+      "field": "clasp_type",
+      "value": "patented fold-over clasp with lockable adjustment system",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/nautilus/5740-1g-001",
+      "citation": "Technical characteristics > Bracelet",
+      "observed_at": "2026-11-19",
+      "applicable_angles": ["clasp"]
+    },
+    {
+      "field": "calibre",
+      "value": "240 Q",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/nautilus/5740-1g-001",
+      "citation": "Technical characteristics > Movement",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "calendar_indications",
+      "value": "day, date, month, leap year and 24-hour indication by hands; moon phases",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/nautilus/5740-1g-001",
+      "citation": "Technical characteristics > Movement",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    }
+  ]
+}

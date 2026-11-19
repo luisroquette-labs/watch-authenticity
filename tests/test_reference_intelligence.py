@@ -67,6 +67,22 @@ def test_patek_5811_knowledge_is_cited_without_authenticity_coverage() -> None:
     assert not result.authenticates_watch
 
 
+def test_patek_5740_perpetual_calendar_stays_research_only() -> None:
+    reference = "patek-nautilus-57401g001"
+    claims = load_knowledge(Path(f"config/references/{reference}.json"), reference)
+
+    assert len(claims) == 9
+    assert all(claim.source_class is SourceClass.OFFICIAL_BRAND for claim in claims)
+    assert all(claim.source_url == "https://www.patek.com/en/collection/nautilus/5740-1g-001" for claim in claims)
+    assert {claim.field for claim in claims if claim.applicable_angles} == {
+        "dial_color", "dial_texture", "caseback_type", "clasp_type"
+    }
+    assert not next(claim for claim in claims if claim.field == "calibre").applicable_angles
+    result = assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER)
+    assert result.status is AssessmentStatus.INCONCLUSIVE
+    assert not result.authenticates_watch
+
+
 def test_patek_official_claim_rejects_impersonated_domain() -> None:
     with pytest.raises(ValueError, match="approved domain"):
         TechnicalClaim(
