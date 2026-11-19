@@ -95,8 +95,12 @@ class PinnedRequestsClient:
             self._next_request_at = self._clock() + self._minimum_interval
 
         hostname = parsed.hostname.encode("idna").decode("ascii")
-        pool = urllib3.HTTPSConnectionPool(
+        preferred_address = next(
+            (address for address in addresses if ipaddress.ip_address(address).version == 4),
             addresses[0],
+        )
+        pool = urllib3.HTTPSConnectionPool(
+            preferred_address,
             port=443,
             maxsize=1,
             block=True,

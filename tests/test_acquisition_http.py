@@ -53,6 +53,25 @@ def test_pinned_client_connects_to_ip_and_validates_original_hostname(monkeypatc
     pool.close.assert_called_once_with()
 
 
+def test_pinned_client_prefers_validated_ipv4_when_ipv6_is_unroutable(monkeypatch):
+    pool = MagicMock()
+    pool.urlopen.return_value = MagicMock(status=200, headers={})
+    create_pool = MagicMock(return_value=pool)
+    monkeypatch.setattr("acquisition.http.urllib3.HTTPSConnectionPool", create_pool)
+
+    result = _client().get_pinned(
+        "https://www.cbp.gov/watch.jpg",
+        resolved_addresses=("2a02:26f0:7000:190::1955", "23.53.122.209"),
+        stream=True,
+        timeout=(10, 30),
+        allow_redirects=False,
+    )
+
+    assert create_pool.call_args.args == ("23.53.122.209",)
+    assert create_pool.call_args.kwargs["server_hostname"] == "www.cbp.gov"
+    result.close()
+
+
 @pytest.mark.parametrize(
     "url,addresses,redirects",
     [
