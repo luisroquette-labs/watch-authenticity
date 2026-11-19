@@ -155,6 +155,15 @@ def build_training_record(
     domain = urlsplit(candidate.source_url).hostname
     if domain is None:
         raise ValueError("candidate source domain is missing")
+    reviewed_factories = {
+        review.proposed_factory
+        for review in reviews
+        if review.proposed_factory is not None
+        and review.proposed_label is evidence.accepted_label
+        and review.proposed_grade == evidence.accepted_grade
+    }
+    if len(reviewed_factories) > 1:
+        raise NotTrainingEligible("reviewers disagree on factory identity")
     asset_digest = hashlib.sha256(
         f"{candidate.candidate_id}\0{object_ref.sha256}\0{angle.value}".encode()
     ).hexdigest()
@@ -178,7 +187,7 @@ def build_training_record(
         capture_style=capture_style,
         label=evidence.accepted_label,
         grade=evidence.accepted_grade,
-        factory=candidate.factory if evidence.accepted_label is Label.FAKE else None,
+        factory=next(iter(reviewed_factories), None),
         evidence_tier=evidence.tier,
         evidence_record_id=evidence.evidence_record_id,
         rights_record_id=rights.rights_record_id,
