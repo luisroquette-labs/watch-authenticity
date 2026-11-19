@@ -45,6 +45,17 @@ class PacedBoundedHTTP:
         *,
         deadline: float | None = None,
     ) -> bytes:
+        body, _headers = self.get_response(url, limit, surface, deadline=deadline)
+        return body
+
+    def get_response(
+        self,
+        url: str,
+        limit: int,
+        surface: str,
+        *,
+        deadline: float | None = None,
+    ) -> tuple[bytes, dict[str, str]]:
         delay = self._next_request_at - self._clock()
         if delay > 0:
             self._sleeper(delay)
@@ -86,7 +97,7 @@ class PacedBoundedHTTP:
             body = b"".join(chunks)
             if not body:
                 raise self._error_type(f"{surface} body is missing")
-            return body
+            return body, dict(headers)
         finally:
             self._next_request_at = self._clock() + self._minimum_interval
             close = getattr(response, "close", None)
