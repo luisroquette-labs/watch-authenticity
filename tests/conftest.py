@@ -158,6 +158,7 @@ class _CollectorCOS:
             "ContentLength": len(self.bodies[Key]),
             "Metadata": self.metadata[Key],
             "ETag": f'"etag-{hashlib.sha256(self.bodies[Key]).hexdigest()}"',
+            "VersionId": f"version:{Key}",
         }
 
     def get_object(self, *, Bucket: str, Key: str):
@@ -224,8 +225,9 @@ class _CollectorCOS:
         self.bodies[Key] = self.bodies[source]
         self.metadata[Key] = self.metadata[source]
 
-    def delete_object(self, *, Bucket: str, Key: str):
+    def delete_object(self, *, Bucket: str, Key: str, VersionId: str):
         del Bucket
+        assert VersionId == f"version:{Key}"
         self.bodies.pop(Key, None)
         self.metadata.pop(Key, None)
 

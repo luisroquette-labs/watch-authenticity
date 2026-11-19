@@ -47,6 +47,7 @@ class FakeCOS:
         self.corrupt_final_head = False
         self.corrupt_download = False
         self.upload_calls = 0
+        self.deleted_versions: list[tuple[str, str]] = []
         self._watch_auth_bucket = bucket
         self._watch_auth_prefix = prefix
         self._watch_auth_configuration_verified = True
@@ -123,6 +124,7 @@ class FakeCOS:
             "Metadata": metadata,
             "ContentLength": len(body),
             "ETag": f'"etag-{len(body)}"',
+            "VersionId": f"version:{Key}",
         }
 
     def upload_file(
@@ -151,8 +153,10 @@ class FakeCOS:
         del Bucket, MetadataDirective
         self.objects[Key] = self.objects[CopySource["Key"]]
 
-    def delete_object(self, *, Bucket: str, Key: str) -> None:
+    def delete_object(self, *, Bucket: str, Key: str, VersionId: str) -> None:
         del Bucket
+        assert VersionId == f"version:{Key}"
+        self.deleted_versions.append((Key, VersionId))
         self.objects.pop(Key, None)
 
     def download_file(self, bucket: str, key: str, filename: str) -> None:
@@ -383,6 +387,37 @@ def test_upload_uses_digest_key_and_verifies_remote_object(tmp_path: Path):
     assert all(".upload-" not in key for key in cos.objects)
 
 
+def test_versioned_upload_deletes_exact_temporary_version(tmp_path: Path):
+    source = tmp_path / "watch.jpg"
+    source.write_bytes(b"verified image bytes")
+    digest = _sha256(source)
+    cos = FakeCOS()
+
+    ref = upload_verified(cos, source, "private", "runs/abc/objects/watch", digest)
+
+    assert list(cos.objects) == [ref.key]
+    assert cos.upload_calls == 1
+    assert len(cos.deleted_versions) == 1
+    assert cos.deleted_versions[0][0].startswith(ref.key + ".upload-")
+
+
+def test_mutated_source_does_not_publish_final_object(tmp_path: Path):
+    class MutatingCOS(FakeCOS):
+        def upload_file(self, filename, bucket, key, ExtraArgs):
+            Path(filename).write_bytes(b"changed during upload")
+            super().upload_file(filename, bucket, key, ExtraArgs)
+
+    source = tmp_path / "watch.jpg"
+    source.write_bytes(b"verified image bytes")
+    digest = _sha256(source)
+    cos = MutatingCOS()
+
+    with pytest.raises(IntegrityError, match="temporary object"):
+        upload_verified(cos, source, "private", "runs/abc/objects/watch", digest)
+    assert not cos.objects
+    assert len(cos.deleted_versions) == 1
+
+
 def test_upload_preserves_explicit_content_addressed_json_key(tmp_path: Path):
     source = tmp_path / "review.json"
     source.write_bytes(b'{"review":"accepted"}')
@@ -483,7 +518,7 @@ def test_upload_rejects_remote_bytes_that_lie_through_metadata(tmp_path: Path):
         upload_verified(cos, source, "private", "runs/abc/objects/artifact", digest)
 
 
-def test_interrupted_upload_removes_temporary_object_and_has_no_final(tmp_path: Path):
+def test_interrupted_upload_has_no_final_object(tmp_path: Path):
     source = tmp_path / "artifact.bin"
     source.write_bytes(b"artifact")
     cos = FakeCOS()
