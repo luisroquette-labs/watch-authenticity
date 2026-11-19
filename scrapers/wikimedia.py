@@ -1,4 +1,4 @@
-"""Licensed Wikimedia Commons discovery for unverified Submariner candidates."""
+"""Licensed Wikimedia Commons discovery for unverified watch-family candidates."""
 
 from __future__ import annotations
 
@@ -27,8 +27,16 @@ from acquisition.types import (
 )
 
 _API_URL = "https://commons.wikimedia.org/w/api.php"
-_CATEGORY = "Category:Rolex Submariner"
-_CLASSIFICATION = "original_candidate_unverified"
+_FAMILY_SEARCHES = (
+    ("Seiko Prospex watch", "seiko", "prospex"),
+    ("Cartier Santos wristwatch", "cartier", "santos"),
+    ("Omega Seamaster watch", "omega", "seamaster"),
+    ("Patek Philippe Nautilus wristwatch", "patek philippe", "nautilus"),
+    ("Rolex Submariner wristwatch", "rolex", "submariner"),
+)
+_CLASSIFICATION = "brand_family_candidate_unverified"
+_CURSOR = re.compile(r"^q:(\d+):(\d+)$")
+_IMAGE_MIMES = frozenset({"image/jpeg", "image/png", "image/webp"})
 _ALLOWED_LICENSES = frozenset(
     {
         "CC0",
@@ -39,7 +47,6 @@ _ALLOWED_LICENSES = frozenset(
     }
 )
 _TAG = re.compile(r"<[^>]*>")
-_REFERENCE = re.compile(r"^[a-z0-9]+$")
 
 
 class WikimediaAPIError(RuntimeError):
@@ -71,7 +78,6 @@ def discover_wikimedia(
     *,
     now: datetime,
     previous: DiscoveryCommit | None = None,
-    reference_id: str = "rolex-submariner-126610ln",
 ) -> WikimediaDiscovery:
     """Return one validated page; the caller commits it after collecting every file."""
     decision = authorize_discovery(policy, access, now=now)
@@ -85,22 +91,33 @@ def discover_wikimedia(
     cursor = previous.next_cursor if previous is not None else None
     if previous is not None and cursor is None:
         raise WikimediaAPIError("Wikimedia discovery ledger is already complete")
+    if cursor is not None and not cursor.startswith("q:"):
+        # An older categorymembers checkpoint must be closed without losing its chain.
+        return WikimediaDiscovery(
+            page=DiscoveryPage(
+                source="wikimedia", access_record_id=access.access_record_id,
+                cursor=cursor, next_cursor="q:0:0", observed_at=now, records=(),
+            ),
+            candidates=(),
+        )
+    query_index, offset = _parse_cursor(cursor)
+    query, brand, family = _FAMILY_SEARCHES[query_index]
     params: dict[str, object] = {
         "action": "query",
         "format": "json",
         "formatversion": 2,
-        "generator": "categorymembers",
-        "gcmtitle": _CATEGORY,
-        "gcmtype": "file",
+        "generator": "search",
+        "gsrsearch": query,
+        "gsrnamespace": 6,
         # One API request plus up to three bounded attempts per image stays below the source cap.
-        "gcmlimit": max(1, min(50, (access.requests_per_minute - 1) // 3)),
+        "gsrlimit": max(1, min(50, (access.requests_per_minute - 1) // 3)),
         "prop": "imageinfo|info",
         "inprop": "url",
-        "iiprop": "url|sha1|timestamp|extmetadata",
+        "iiprop": "url|sha1|timestamp|mime|extmetadata",
         "iiurlwidth": 1280,
     }
-    if cursor is not None:
-        params["gcmcontinue"] = cursor
+    if offset:
+        params["gsroffset"] = offset
     response = http_client.get(
         _API_URL,
         params=params,
@@ -109,14 +126,15 @@ def discover_wikimedia(
         allow_redirects=False,
     )
     payload = _json_response(response)
-    pages = payload.get("query", {}).get("pages") if isinstance(payload.get("query"), Mapping) else None
-    if not isinstance(pages, list) or not pages:
+    query_data = payload.get("query")
+    pages = query_data.get("pages", []) if isinstance(query_data, Mapping) else [] if query_data is None else None
+    if not isinstance(pages, list):
         raise WikimediaAPIError("Wikimedia payload has no file pages")
 
     records: list[DiscoveryRecord] = []
     candidates: list[WikimediaCandidate] = []
     for page in pages:
-        parsed = _parse_page(page, access, now, reference_id)
+        parsed = _parse_page(page, access, now, brand, family, query_index)
         if parsed is None:
             continue
         record, candidate = parsed
@@ -125,9 +143,16 @@ def discover_wikimedia(
     continuation = payload.get("continue")
     if continuation is not None and not isinstance(continuation, Mapping):
         raise WikimediaAPIError("Wikimedia continuation must be an object")
-    next_cursor = continuation.get("gcmcontinue") if continuation else None
-    if next_cursor is not None and not isinstance(next_cursor, str):
-        raise WikimediaAPIError("Wikimedia continuation cursor must be a string")
+    next_offset = continuation.get("gsroffset") if continuation else None
+    if next_offset is not None and (
+        isinstance(next_offset, bool) or not isinstance(next_offset, int) or next_offset <= offset
+    ):
+        raise WikimediaAPIError("Wikimedia continuation offset is invalid")
+    next_cursor = (
+        f"q:{query_index}:{next_offset}" if next_offset is not None
+        else f"q:{query_index + 1}:0" if query_index + 1 < len(_FAMILY_SEARCHES)
+        else None
+    )
     discovery_page = DiscoveryPage(
         source="wikimedia",
         access_record_id=access.access_record_id,
@@ -137,6 +162,15 @@ def discover_wikimedia(
         records=tuple(records),
     )
     return WikimediaDiscovery(page=discovery_page, candidates=tuple(candidates))
+
+
+def _parse_cursor(cursor: str | None) -> tuple[int, int]:
+    if cursor is None:
+        return 0, 0
+    match = _CURSOR.fullmatch(cursor)
+    if match is None or int(match[1]) >= len(_FAMILY_SEARCHES):
+        raise WikimediaAPIError("Wikimedia continuation cursor is invalid")
+    return int(match[1]), int(match[2])
 
 
 def _json_response(response: Any) -> Mapping[str, Any]:
@@ -158,7 +192,9 @@ def _parse_page(
     page: object,
     access: SourceAccessRecord,
     now: datetime,
-    reference_id: str,
+    brand: str,
+    family: str,
+    query_index: int,
 ) -> tuple[DiscoveryRecord, WikimediaCandidate] | None:
     if not isinstance(page, Mapping):
         raise WikimediaAPIError("Wikimedia file page must be an object")
@@ -171,15 +207,11 @@ def _parse_page(
     if not isinstance(imageinfo, list) or len(imageinfo) != 1 or not isinstance(imageinfo[0], Mapping):
         raise WikimediaAPIError("page.imageinfo must contain one object")
     info = imageinfo[0]
+    if info.get("mime") not in _IMAGE_MIMES:
+        return None
     metadata = info.get("extmetadata")
     if not isinstance(metadata, Mapping):
         raise WikimediaAPIError("image metadata is missing")
-    reference = reference_id.rsplit("-", 1)[-1].lower()
-    if _REFERENCE.fullmatch(reference) is None:
-        raise WikimediaAPIError("reference_id must end with an alphanumeric reference")
-    reference_token = re.compile(
-        rf"(?<![a-z0-9]){re.escape(reference)}(?![a-z0-9])", re.IGNORECASE
-    )
     searchable = " ".join(
         (
             title,
@@ -187,7 +219,8 @@ def _parse_page(
             _optional_metadata_text(metadata, "ImageDescription"),
         )
     )
-    if reference_token.search(searchable) is None:
+    if any(re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", searchable, re.I) is None
+           for word in (brand, family)):
         return None
     license_name = _metadata_value(metadata, "LicenseShortName")
     if license_name not in _ALLOWED_LICENSES:
@@ -230,20 +263,22 @@ def _parse_page(
         evidence_sha256=rights_sha256,
         status=RightsStatus.ACTIVE,
     )
-    record_id = str(page_id)
+    record_id = f"q{query_index}:{page_id}"
     record = DiscoveryRecord(
         source="wikimedia",
         source_record_id=record_id,
         source_version=f"{revision}|{sha1}",
         source_url=source_url,
         seller_group_id=author,
-        declared_reference=reference_id,
+        declared_reference="unverified",
         image_ids=(sha1,),
         image_urls=(image_url,),
         metadata=(
             ("author", author),
+            ("brand_claim_from_text", brand),
             ("classification", _CLASSIFICATION),
             ("evidence_tier", EvidenceTier.INCONCLUSIVE.value),
+            ("family_claim_from_text", family),
             ("image_timestamp", revision),
             ("license", license_name),
             ("license_url", license_url),
@@ -255,7 +290,7 @@ def _parse_page(
             source_record_id=record_id,
             source_url=source_url,
             image_url=image_url,
-            declared_reference=reference_id,
+            declared_reference="unverified",
             listing_text=_CLASSIFICATION,
         ),
         rights=rights,
