@@ -61,18 +61,20 @@ def dedup_filter(images: list[Any]) -> list[Any]:
 
 
 def classify_capture_style(image: Any, metadata: Mapping[str, object]) -> str:
-    """Classify photographic style without using the source or assigning a label."""
+    """Detect white-backdrop studio photos; other styles require review."""
     del metadata
     pixels = np.asarray(image.convert("RGB"), dtype=np.uint8)
     border_pixels = _border_ring(pixels, _BORDER_MARGIN_FRACTION)
     near_white = np.all(border_pixels >= STUDIO_WHITE_RGB_FLOOR, axis=-1)
-    return "studio" if near_white.mean() >= STUDIO_BORDER_WHITE_FRACTION else "casual"
+    return "studio" if near_white.mean() >= STUDIO_BORDER_WHITE_FRACTION else "unknown"
 
 
 def route_capture(style: str, metadata: Mapping[str, object]) -> str:
     """Route catalog-like captures without discarding confirmed studio replicas."""
-    if style not in {"studio", "casual"}:
+    if style not in {"studio", "casual", "unknown"}:
         raise ValueError("unknown capture style")
+    if style == "unknown":
+        return "review"
     if style == "casual":
         return "eligible"
     if (

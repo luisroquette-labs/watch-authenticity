@@ -93,8 +93,16 @@ def test_studio_photo_is_classified_without_using_source_domain():
     assert classify_capture_style(image, {"source_domain": "dealer.example"}) == "studio"
 
 
-def test_textured_photo_is_classified_as_casual():
-    assert classify_capture_style(_textured_photo_fixture(seed=1), {}) == "casual"
+def test_nonwhite_photo_does_not_prove_casual_capture():
+    assert classify_capture_style(_textured_photo_fixture(seed=1), {}) == "unknown"
+
+
+def test_gray_studio_background_does_not_prove_casual_capture():
+    gray_studio = Image.new("RGB", (64, 64), (225, 225, 225))
+    ImageDraw.Draw(gray_studio).rectangle((20, 20, 44, 44), fill=(20, 20, 20))
+
+    assert classify_capture_style(gray_studio, {}) == "unknown"
+    assert route_capture("unknown", {"rights_cleared": True}) == "review"
 
 
 def test_confirmed_rights_cleared_studio_replica_is_retained_for_cross_source_evaluation():
