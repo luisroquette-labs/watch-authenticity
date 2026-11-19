@@ -470,59 +470,46 @@ def upload_verified(
     temporary_key = f"{final_key}.upload-{uuid4()}"
     metadata = {"sha256": expected_sha256, "length": str(local_length)}
     try:
-        client.upload_file(
-            str(path),
-            bucket,
-            temporary_key,
-            ExtraArgs={"Metadata": metadata},
-        )
+        client.upload_file(str(path), bucket, temporary_key, ExtraArgs={"Metadata": metadata})
         temporary_head = _head(client, bucket, temporary_key)
         if temporary_head is None:
             raise IntegrityError("temporary upload is missing")
+        version_id = temporary_head.get("VersionId")
+        if not isinstance(version_id, str) or not version_id:
+            raise IntegrityError("temporary upload version is unavailable")
         _object_ref(
-            bucket,
-            temporary_key,
-            temporary_head,
-            expected_sha256,
-            local_length,
+            bucket, temporary_key, temporary_head, expected_sha256, local_length,
             context="temporary object",
         )
         _verify_remote_bytes(
-            client,
-            bucket,
-            temporary_key,
-            expected_sha256,
-            local_length,
+            client, bucket, temporary_key, expected_sha256, local_length,
             context="temporary object bytes",
         )
         client.copy_object(
             Bucket=bucket,
             Key=final_key,
-            CopySource={"Bucket": bucket, "Key": temporary_key},
+            CopySource={"Bucket": bucket, "Key": temporary_key, "VersionId": version_id},
             MetadataDirective="COPY",
         )
         final_head = _head(client, bucket, final_key)
         if final_head is None:
             raise IntegrityError("final object is missing after copy")
         ref = _object_ref(
-            bucket,
-            final_key,
-            final_head,
-            expected_sha256,
-            local_length,
+            bucket, final_key, final_head, expected_sha256, local_length,
             context="remote object metadata",
         )
         _verify_remote_bytes(
-            client,
-            bucket,
-            final_key,
-            expected_sha256,
-            local_length,
+            client, bucket, final_key, expected_sha256, local_length,
             context="remote object bytes",
         )
         return ref
     finally:
-        client.delete_object(Bucket=bucket, Key=temporary_key)
+        temporary_head = _head(client, bucket, temporary_key)
+        if temporary_head is not None:
+            version_id = temporary_head.get("VersionId")
+            if not isinstance(version_id, str) or not version_id:
+                raise IntegrityError("temporary upload version is unavailable for cleanup")
+            client.delete_object(Bucket=bucket, Key=temporary_key, VersionId=version_id)
 
 
 def download_verified(
