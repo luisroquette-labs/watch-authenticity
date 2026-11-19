@@ -935,7 +935,7 @@ def test_planned_wave_selects_viable_source_and_persists_reviewed_yield(
     from acquisition.planner import AcquisitionTarget
     from acquisition.run import run_planned_public_collection_once
     target = AcquisitionTarget(
-        "genuine", "dial", 500, 100, "partner", "seller", 0, True, 20, 11, None
+        "rolex-submariner-126610ln", "genuine", "dial", 500, 100, "partner", "seller", 0, True, 20, 11, None
     )
     row = _planned_row()
     calls = []
@@ -1001,13 +1001,50 @@ def test_first_planned_wave_can_admit_one_reviewed_watch(cos, monkeypatch):
     assert status["eligible_source_capacity"] == 1
 
 
+@pytest.mark.parametrize("matching", [False, True])
+def test_planned_wave_binds_admission_to_target_reference(cos, monkeypatch, matching):
+    from dataclasses import replace
+
+    from acquisition.planner import AcquisitionTarget
+    from acquisition.run import run_planned_public_collection_once
+
+    target = AcquisitionTarget(
+        "omega-seamaster-21030422001001", "genuine", "dial", 500, 100,
+        "partner", "seller", 0, True, 20, 1, None,
+    )
+    policy, access, authorization = _planned_source()
+
+    def collect(*args, **kwargs):
+        kwargs["on_collected"](("candidate",), "2026-11-10", "wrong-reference", 1)
+        return {"state": "complete"}
+
+    monkeypatch.setattr("acquisition.run.run_public_image_collection_once", collect)
+    row = _planned_row()
+    if matching:
+        row = replace(row, reference_id=target.reference_id)
+
+    def run():
+        return run_planned_public_collection_once(
+            cos, "private", "datasets", (target,), policies={"partner": policy},
+            accesses={"partner": access}, authorizations={"partner": authorization},
+            discoveries={"partner": lambda previous: None}, now=NOW,
+            image_client=object(), known_entity_ids=frozenset(),
+            review=lambda target, ids, batch_id: ({"candidate": "watch-1"}, (row,)),
+        )
+    if matching:
+        assert run()["eligible_yield"] == [1, 1]
+    else:
+        with pytest.raises(ValueError, match="reviewed planned cell"):
+            run()
+
+
 def test_planned_wave_skips_unavailable_sources_without_collection(cos, monkeypatch):
     from acquisition.planner import AcquisitionTarget
     from acquisition.run import run_planned_public_collection_once
     from acquisition.types import SourceAccessStatus
 
     target = AcquisitionTarget(
-        "genuine", "dial", 500, 100, "partner", "seller", 0, True, 20, 11, None
+        "rolex-submariner-126610ln", "genuine", "dial", 500, 100, "partner", "seller", 0, True, 20, 11, None
     )
     monkeypatch.setattr(
         "acquisition.run.run_public_image_collection_once",
@@ -1101,7 +1138,7 @@ def test_planned_wave_denied_first_source_falls_through_without_discovery(cos, m
     from acquisition.planner import AcquisitionTarget
     from acquisition.run import run_planned_public_collection_once
 
-    first = AcquisitionTarget("genuine", "dial", 500, 100, "denied", "seller", 0, True, 20, 11, None)
+    first = AcquisitionTarget("rolex-submariner-126610ln", "genuine", "dial", 500, 100, "denied", "seller", 0, True, 20, 11, None)
     second = replace(first, source="partner")
     denied = _planned_source("denied", may_download=rejection != "download")
     if rejection == "method":
@@ -1139,7 +1176,7 @@ def test_review_result_reused_after_cursor_write_failure(cos, monkeypatch):
     from acquisition.run import run_planned_public_collection_once
 
     policy, access, authorization = _planned_source()
-    target = AcquisitionTarget("genuine", "dial", 500, 100, "partner", "seller", 0, True, 20, 11, None)
+    target = AcquisitionTarget("rolex-submariner-126610ln", "genuine", "dial", 500, 100, "partner", "seller", 0, True, 20, 11, None)
     row = _planned_row()
     from acquisition.discovery import append_discovery_page
 
@@ -1179,7 +1216,7 @@ def test_admission_is_idempotent_when_review_result_write_fails(cos, monkeypatch
     from acquisition.run import run_planned_public_collection_once
 
     policy, access, authorization = _planned_source()
-    target = AcquisitionTarget("genuine", "dial", 500, 100, "partner", "seller", 0, True, 20, 11, None)
+    target = AcquisitionTarget("rolex-submariner-126610ln", "genuine", "dial", 500, 100, "partner", "seller", 0, True, 20, 11, None)
     row = _planned_row()
     admissions = []
     saved_decisions = {}
