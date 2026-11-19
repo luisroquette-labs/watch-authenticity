@@ -96,6 +96,38 @@ def test_omega_official_claim_rejects_impersonated_domain() -> None:
         )
 
 
+def test_cartier_wssa0061_knowledge_separates_visible_facts_from_physical_specs() -> None:
+    reference = "cartier-santos-wssa0061"
+    claims = load_knowledge(Path("config/references/cartier-santos-wssa0061.json"), reference)
+
+    assert len(claims) == 12
+    assert all(claim.source_class is SourceClass.OFFICIAL_BRAND for claim in claims)
+    assert all(claim.source_url.startswith("https://www.cartier.com/") for claim in claims)
+    assert {claim.field for claim in claims if claim.applicable_angles} == {
+        "dial_color", "hand_shape", "crown_shape", "crown_stone_color",
+    }
+    assert not next(claim for claim in claims if claim.field == "calibre").applicable_angles
+    assert not next(claim for claim in claims if claim.field == "crown_stone_material").applicable_angles
+    assert not next(claim for claim in claims if claim.field == "hand_material").applicable_angles
+    result = assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER)
+    assert result.status is AssessmentStatus.INCONCLUSIVE
+    assert not result.authenticates_watch
+
+
+def test_cartier_official_claim_rejects_impersonated_domain() -> None:
+    with pytest.raises(ValueError, match="approved domain"):
+        TechnicalClaim(
+            reference_id="cartier-santos-wssa0061",
+            field="dial_color",
+            value="green",
+            source_class=SourceClass.OFFICIAL_BRAND,
+            source_url="https://cartier.com.evil.example/watch",
+            citation="False official claim",
+            observed_at=date.today(),
+            applicable_angles=(Angle.DIAL,),
+        )
+
+
 def test_all_visible_facts_must_match_to_be_consistent_but_never_authenticate() -> None:
     claims = load_knowledge(KNOWLEDGE, REFERENCE)
     result = assess_reference(
