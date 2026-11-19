@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "reference_id": "rolex-datejust-126334",
+  "claims": [
+    {
+      "field": "diameter_mm",
+      "value": "41",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/datejust/m126334-0010",
+      "citation": "More Datejust technical details > Model case > Diameter",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "case_material",
+      "value": "Oystersteel and white gold",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/datejust/m126334-0010",
+      "citation": "More Datejust technical details > Model case > Material",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "bezel_type",
+      "value": "fluted",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/datejust/m126334-0010",
+      "citation": "More Datejust technical details > Model case > Bezel",
+      "observed_at": "2026-11-19",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "date_magnifier",
+      "value": "Cyclops",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/datejust/m126334-0010",
+      "citation": "More Datejust technical details > Model case > Crystal",
+      "observed_at": "2026-11-19",
+      "applicable_angles": ["cyclops"]
+    },
+    {
+      "field": "calibre",
+      "value": "3235",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/datejust/m126334-0010",
+      "citation": "More Datejust technical details > Movement > Calibre",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "water_resistance_m",
+      "value": "100",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/datejust/m126334-0010",
+      "citation": "More Datejust technical details > Model case > Water resistance",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    }
+  ]
+}
