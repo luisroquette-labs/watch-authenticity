@@ -75,25 +75,32 @@ expected_env = {
     "WATCH_AUTH_IAM_READER_POLICY_ID": os.environ["WATCH_AUTH_IAM_READER_POLICY_ID"],
     "WATCH_AUTH_ACQUISITION_PREFIX": "datasets",
 }
-variables = job.get("run_env_variables", []) if isinstance(job, dict) else []
+spec = job.get("spec", {}) if isinstance(job, dict) else {}
+template = spec.get("template", {}) if isinstance(spec, dict) else {}
+containers = template.get("containers", []) if isinstance(template, dict) else []
+container = containers[0] if isinstance(containers, list) and len(containers) == 1 else {}
+resources = container.get("resources", {}).get("requests", {}) if isinstance(container, dict) else {}
+variables = container.get("env", []) if isinstance(container, dict) else []
 observed_env = {item.get("name"): item.get("value") for item in variables if isinstance(item, dict)}
 args = ["-m", "acquisition.run"] + (["--source", source] if source else [])
 valid = (isinstance(job, dict)
-    and job.get("image_reference") == os.environ["WATCH_AUTH_ACQUISITION_IMAGE_DIGEST"]
-    and job.get("image_secret") == os.environ["WATCH_AUTH_REGISTRY_SECRET"]
-    and job.get("run_service_account") == "none"
-    and job.get("run_compute_resource_token_enabled") is True
-    and job.get("run_commands") == ["python"]
-    and job.get("run_arguments") == args
-    and job.get("scale_array_spec") == "0"
-    and job.get("scale_cpu_limit") == "0.25"
-    and job.get("scale_max_execution_time") == 600
-    and job.get("scale_memory_limit") == "1G"
-    and job.get("scale_retry_limit") == 0
-    and len(variables) == len(expected_env)
-    and len(observed_env) == len(expected_env)
-    and observed_env == expected_env
-    and all(item.get("type") == "literal" for item in variables if isinstance(item, dict)))
+    and isinstance(spec, dict) and isinstance(template, dict) and isinstance(container, dict)
+    and container.get("image") == os.environ["WATCH_AUTH_ACQUISITION_IMAGE_DIGEST"]
+    and template.get("imagePullSecrets") == [{"name": os.environ["WATCH_AUTH_REGISTRY_SECRET"]}]
+    and isinstance(job.get("metadata"), dict)
+    and isinstance(job["metadata"].get("namespace"), str)
+    and template.get("serviceAccountName") == job["metadata"]["namespace"] + "-none"
+    and template.get("mountComputeResourceToken") is True
+    and container.get("command") == ["python"]
+    and container.get("args") == args
+    and spec.get("arraySpec") == "0"
+    and resources == {"cpu": "250m", "ephemeral-storage": "400M", "memory": "1G"}
+    and spec.get("maxExecutionTime") == 600
+    and spec.get("retryLimit") == 0
+    and spec.get("mode") == "task"
+    and isinstance(variables, list) and len(variables) == len(observed_env)
+    and all(observed_env.get(name) == value for name, value in expected_env.items())
+    and set(observed_env) == set(expected_env) | {"CE_API_BASE_URL", "CE_PROJECT_ID", "CE_REGION"})
 raise SystemExit(0 if valid else 2)
 ' "${source_name}" || { echo "staged job readback differs" >&2; exit 2; }
 }
