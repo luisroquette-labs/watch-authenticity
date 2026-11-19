@@ -39,7 +39,7 @@ def discover_supercloneluxury(
         raise CatalogError("invalid WooCommerce page cursor") from exc
     if not 1 <= page <= 1000 or (cursor is not None and str(page) != cursor):
         raise CatalogError("invalid WooCommerce page cursor")
-    url = API + "?" + urlencode({"per_page": _PAGE_SIZE, "page": page})
+    url = API + "?" + urlencode({"per_page": _PAGE_SIZE, "page": page, "order": "asc"})
     body, headers = PacedBoundedHTTP(
         http_client, access.requests_per_minute, CatalogError
     ).get_response(url, _MAX_PAGE_BYTES, "WooCommerce product page", deadline=deadline)
