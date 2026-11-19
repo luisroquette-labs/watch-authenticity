@@ -84,6 +84,11 @@ valid = (isinstance(job, dict)
     and job.get("run_compute_resource_token_enabled") is True
     and job.get("run_commands") == ["python"]
     and job.get("run_arguments") == args
+    and job.get("scale_array_spec") == "0"
+    and job.get("scale_cpu_limit") == "0.25"
+    and job.get("scale_max_execution_time") == 600
+    and job.get("scale_memory_limit") == "1G"
+    and job.get("scale_retry_limit") == 0
     and len(variables) == len(expected_env)
     and len(observed_env) == len(expected_env)
     and observed_env == expected_env

@@ -610,8 +610,9 @@ case "$*" in
     if [[ "$5" == watch-auth-supercloneluxury-* ]]; then args='["-m","acquisition.run","--source","supercloneluxury"]'; fi
     if [[ "$5" == watch-auth-cbp-* ]]; then args='["-m","acquisition.run","--source","cbp"]'; fi
     image="$WATCH_AUTH_ACQUISITION_IMAGE_DIGEST"
-    if [[ "${DRIFTED_JOB:-0}" == 1 && "$5" == watch-auth-cbp-* ]]; then image='different-image'; fi
-    printf '{"image_reference":"%s","image_secret":"%s","run_service_account":"none","run_compute_resource_token_enabled":true,"run_commands":["python"],"run_arguments":%s,"run_env_variables":[' "$image" "$WATCH_AUTH_REGISTRY_SECRET" "$args"
+    cpu='0.25'
+    if [[ "${DRIFTED_JOB:-0}" == 1 && "$5" == watch-auth-cbp-* ]]; then cpu='1'; fi
+    printf '{"image_reference":"%s","image_secret":"%s","run_service_account":"none","run_compute_resource_token_enabled":true,"run_commands":["python"],"run_arguments":%s,"scale_array_spec":"0","scale_cpu_limit":"%s","scale_max_execution_time":600,"scale_memory_limit":"1G","scale_retry_limit":0,"run_env_variables":[' "$image" "$WATCH_AUTH_REGISTRY_SECRET" "$args" "$cpu"
     printf '{"name":"WATCH_AUTH_COS_BUCKET","type":"literal","value":"%s"},' "$WATCH_AUTH_COS_BUCKET"
     printf '{"name":"WATCH_AUTH_COS_ENDPOINT","type":"literal","value":"%s"},' "$WATCH_AUTH_COS_ENDPOINT"
     printf '{"name":"WATCH_AUTH_COS_SERVICE_INSTANCE_ID","type":"literal","value":"%s"},' "$WATCH_AUTH_COS_SERVICE_INSTANCE_ID"
