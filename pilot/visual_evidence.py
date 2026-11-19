@@ -8,15 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-EXPERT_SOURCE = "https://www.bobswatches.com/rolex-blog/editorial/rolex-hulk-vs-starbucks.html"
 INSPECTION_SOURCE = "https://www.bobswatches.com/rolex-blog/editorial/authentication-process.html"
-OFFICIAL_126610LN = "https://www.rolex.com/en-us/watches/submariner/m126610ln-0001"
-
-REFERENCE_PATTERNS = {
-    ("green", "green"): ("116610LV", "Hulk", EXPERT_SOURCE, "fonte especializada"),
-    ("black", "green"): ("126610LV", "Starbucks", EXPERT_SOURCE, "fonte especializada"),
-    ("black", "black"): ("126610LN", "Submariner Date", OFFICIAL_126610LN, "fabricante"),
-}
 
 
 def bezel_color_hint(face: Image.Image) -> str:
@@ -75,17 +67,3 @@ def consensus(values: list[str]) -> tuple[str, int]:
         return "uncertain", 0
     value, count = known.most_common(1)[0]
     return value, count
-
-
-def reference_candidate(dial: str, bezel: str) -> dict[str, str] | None:
-    candidate = REFERENCE_PATTERNS.get((dial, bezel))
-    if candidate is None:
-        return None
-    reference, name, source_url, source_type = candidate
-    return {
-        "reference": reference,
-        "name": name,
-        "source_url": source_url,
-        "source_type": source_type,
-        "certainty": "configuracao compativel; referencia nao confirmada",
-    }

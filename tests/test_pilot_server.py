@@ -32,7 +32,7 @@ from pilot.server import (
     handler,
     pilot_photo_quality,
 )
-from pilot.visual_evidence import bezel_color_hint, consensus, reference_candidate
+from pilot.visual_evidence import bezel_color_hint, consensus
 from pilot.watch_locator import WatchRegion, choose_region
 from reference_intelligence.knowledge import load_knowledge
 
@@ -185,7 +185,6 @@ def test_dial_without_visible_bezel_cannot_supply_bezel_color() -> None:
     face = Image.new("RGB", (300, 300), "white")
     ImageDraw.Draw(face).ellipse((5, 5, 295, 295), fill="#137746")
     assert bezel_color_hint(face) == "uncertain"
-    assert reference_candidate("green", bezel_color_hint(face)) is None
 
 
 def test_partly_cropped_bezel_uses_dial_boundary_and_rejects_green_backdrop() -> None:
@@ -213,18 +212,14 @@ def test_bezel_analysis_downsamples_large_photo(monkeypatch: pytest.MonkeyPatch)
     assert shapes and all(max(shape[:2]) <= 512 for shape in shapes)
 
 
-def test_reference_routing_requires_consistent_separate_dial_and_bezel_clues() -> None:
+def test_color_consensus_requires_consistent_clues() -> None:
     assert consensus(["green", "green", "uncertain"]) == ("green", 2)
     assert consensus(["green"]) == ("green", 1)
     assert consensus(["green", "black", "green"]) == ("uncertain", 0)
-    candidate = reference_candidate("green", "green")
-    assert candidate is not None and candidate["reference"] == "116610LV"
-    assert candidate["source_type"] == "fonte especializada"
-    assert reference_candidate("green", "uncertain") is None
 
 
-@pytest.mark.parametrize("color,mismatch", [("green", True), ("black", False)])
-def test_pilot_analyzes_detected_dial_without_claiming_authenticity(color: str, mismatch: bool) -> None:
+@pytest.mark.parametrize("color", ["green", "black"])
+def test_pilot_analyzes_detected_dial_without_claiming_authenticity(color: str) -> None:
     image = Image.new("RGB", (300, 300), "#164d30")
     draw = ImageDraw.Draw(image)
     for x in range(0, 300, 10):
@@ -249,7 +244,8 @@ def test_pilot_analyzes_detected_dial_without_claiming_authenticity(color: str, 
     assert result["verdict"] == "inconclusivo"
     assert result["replica_probability"] is None
     assert result["detected_angle"] == "dial"
-    assert result["possible_reference_mismatch"] is mismatch
+    assert result["possible_reference_mismatch"] is False
+    assert result["online_checks"] == []
     assert result["model_invoked"] is True
 
 
@@ -463,7 +459,7 @@ def test_selected_clasp_does_not_claim_clasp_when_only_dial_is_located() -> None
     assert all(item["field"] != "clasp" for item in checks)
 
 
-def test_batch_reports_one_tentative_reference_from_multiple_photos() -> None:
+def test_batch_does_not_infer_reference_from_colors_without_brand_identification() -> None:
     class GreenWatch:
         def __init__(self) -> None:
             self.calls = 0
@@ -480,11 +476,27 @@ def test_batch_reports_one_tentative_reference_from_multiple_photos() -> None:
     result = analyze_batch(GreenWatch(), {"images": [_batch_item(body=_jpeg_variant(i + 1)) for i in range(3)]})
     joint = result["joint"]
     assert joint["verdict"] == "inconclusivo"
-    assert joint["reference_candidate"]["reference"] == "116610LV"
-    assert joint["next_useful_angle"] is None
+    assert joint["reference_candidate"] is None
+    assert joint["next_useful_angle"] == "dial"
     assert joint["visible_evidence"]["dial_color"]["supporting_photos"] == 3
     assert joint["visible_evidence"]["bezel_color"]["supporting_photos"] == 2
-    assert "não permitem autenticar" in joint["message"]
+    assert "marca, referência e autenticidade inconclusivas" in joint["message"]
+
+
+def test_black_dial_and_bezel_on_non_target_watch_never_suggest_rolex() -> None:
+    class NonTargetWatch:
+        def predict(self, *_args: object) -> dict[str, object]:
+            return {
+                "verdict": "inconclusivo",
+                "model_invoked": True,
+                "observed_dial_color": "black",
+                "observed_bezel_color": "black",
+            }
+
+    joint = analyze_batch(NonTargetWatch(), {"images": [_batch_item(body=_jpeg_variant(1))]})["joint"]
+    assert joint["reference_candidate"] is None
+    assert joint["source_urls"] == []
+    assert "Rolex" not in joint["message"]
 
 
 def test_conflicting_dial_colors_block_reference_candidate() -> None:
@@ -641,7 +653,8 @@ def test_individual_endpoint_remains_compatible() -> None:
 
 def test_html_supports_six_files_per_image_angles_and_recovers_after_error() -> None:
     html = _HTML.decode("utf-8")
-    assert "Prévia visual Rolex Submariner" in html
+    assert "Prévia visual de relógios" in html
+    assert "Referência comparada: nenhuma; marca não identificada." in html
     assert "Ainda não detecta falsificações" in html
     assert "não há classificador de autenticidade treinado e validado" in html
 
