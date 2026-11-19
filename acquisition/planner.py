@@ -140,11 +140,10 @@ def _least_used_eligible(counts: Mapping[str, int], maximum_percent: int) -> str
         for name, count in counts.items()
     ):
         raise ValueError("entity counts must be non-negative and keyed by name")
-    total = sum(counts.values())
     eligible = [
         name
-        for name, count in counts.items()
-        if total == 0 or (count + 1) * 100 <= (total + 1) * maximum_percent
+        for name in counts
+        if _additional_capacity(counts, name, maximum_percent) > 0
     ]
     return min(eligible, key=lambda name: (counts[name], name)) if eligible else None
 
@@ -152,6 +151,9 @@ def _least_used_eligible(counts: Mapping[str, int], maximum_percent: int) -> str
 def _additional_capacity(counts: Mapping[str, int], name: str, maximum_percent: int) -> int:
     total = sum(counts.values())
     current = counts[name]
+    # Seed one new group until percentage limits can be met; readiness still enforces them.
+    if current == 0 and sum(value > 0 for value in counts.values()) < ceil(100 / maximum_percent):
+        return 1
     capacity = 0
     while (current + capacity + 1) * 100 <= (total + capacity + 1) * maximum_percent:
         capacity += 1

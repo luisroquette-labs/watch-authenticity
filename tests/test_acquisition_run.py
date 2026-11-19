@@ -971,6 +971,36 @@ def test_planned_wave_selects_viable_source_and_persists_reviewed_yield(
     assert any("eligible-yields/batches/" in key for key in cos.bodies)
 
 
+def test_first_planned_wave_can_admit_one_reviewed_watch(cos, monkeypatch):
+    from acquisition.planner import plan_acquisition
+    from acquisition.run import run_planned_public_collection_once
+    from acquisition.types import Angle
+    from dataset.readiness import ReadinessReport
+
+    report = ReadinessReport("rolex-submariner-126610ln", False, (),
+                             (("genuine/dial", 0, 0),), (Angle.DIAL,))
+    targets = plan_acquisition(
+        report, (), source_entity_counts={"partner": 0, "z-source": 0},
+        seller_entity_counts={"seller": 0, "z-seller": 0},
+        eligible_yield_by_source={}, candidate_consumption_by_source={},
+    )
+    def collect(*args, **kwargs):
+        kwargs["on_collected"](("candidate",), "2026-11-10", "first-batch", 1)
+        return {"state": "complete"}
+    monkeypatch.setattr("acquisition.run.run_public_image_collection_once", collect)
+    policy, access, authorization = _planned_source()
+    status = run_planned_public_collection_once(
+        cos, "private", "datasets", targets,
+        policies={"partner": policy}, accesses={"partner": access},
+        authorizations={"partner": authorization},
+        discoveries={"partner": lambda previous: None}, now=NOW,
+        image_client=object(), known_entity_ids=frozenset(),
+        review=lambda target, ids, batch_id: ({"candidate": "watch-1"}, (_planned_row(),)),
+    )
+    assert status["eligible_yield"] == [1, 1]
+    assert status["eligible_source_capacity"] == 1
+
+
 def test_planned_wave_skips_unavailable_sources_without_collection(cos, monkeypatch):
     from acquisition.planner import AcquisitionTarget
     from acquisition.run import run_planned_public_collection_once

@@ -89,6 +89,41 @@ def test_unknown_source_gets_one_bounded_unknown_wave():
     assert targets[0].planned_new_entities == 0
 
 
+def test_first_exploration_with_no_admitted_entities_is_bounded():
+    targets = plan_acquisition(
+        _report(("genuine/dial", 0, 0)),
+        (),
+        source_entity_counts={"source-a": 0, "source-b": 0},
+        seller_entity_counts={"seller-a": 0, "seller-b": 0},
+        eligible_yield_by_source={},
+        candidate_consumption_by_source={},
+    )
+
+    assert len(targets) == 1
+    assert targets[0].source == "source-a"
+    assert targets[0].seller_group_id == "seller-a"
+    assert targets[0].exploratory
+    assert targets[0].candidate_limit == 20
+    assert targets[0].eligible_source_capacity == 1
+    assert targets[0].planned_new_entities == 0
+
+
+def test_bootstrap_moves_to_new_groups_after_first_admission():
+    targets = plan_acquisition(
+        _report(("genuine/dial", 0, 0)),
+        (),
+        source_entity_counts={"source-a": 1, "source-b": 0, "source-c": 0},
+        seller_entity_counts={"seller-a": 1, "seller-b": 0, "seller-c": 0},
+        eligible_yield_by_source={"source-a": (1, 1)},
+        candidate_consumption_by_source={"source-a": 1},
+    )
+
+    assert len(targets) == 1
+    assert targets[0].source == "source-b"
+    assert targets[0].seller_group_id == "seller-b"
+    assert targets[0].eligible_source_capacity == 1
+
+
 def test_measured_zero_yield_is_not_retried():
     assert (
         _plan(
