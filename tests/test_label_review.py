@@ -408,6 +408,30 @@ def test_build_training_record_uses_only_accepted_evidence(
     assert record.evidence_record_id == evidence.evidence_record_id
 
 
+def test_unverified_capture_style_cannot_enter_training(
+    candidate, make_review, reviewer_registry, grouping, rights, object_ref
+):
+    review = make_review(label=Label.FAKE, grade=3)
+    evidence = adjudicate(candidate, [review], reviewer_registry)
+    kwargs = dict(
+        object_ref=object_ref,
+        angle=Angle.DIAL,
+        usability_review=record_usability_review(
+            candidate.candidate_id, candidate.derivative_sha256, Angle.DIAL,
+            True, True, "angle-reviewer", candidate.collected_at,
+        ),
+        now=candidate.collected_at,
+        reviews=[review],
+        reviewer_registry=reviewer_registry,
+    )
+
+    with pytest.raises(NotTrainingEligible, match="capture style"):
+        build_training_record(candidate, evidence, grouping, rights, capture_style="unknown", **kwargs)
+    accepted = build_training_record(candidate, evidence, grouping, rights, capture_style="studio", **kwargs)
+    with pytest.raises(ValueError, match="capture_style"):
+        replace(accepted, capture_style="unknown")
+
+
 def test_build_training_record_rejects_grouping_from_another_candidate(
     candidate, make_review, reviewer_registry, grouping, rights, object_ref
 ):

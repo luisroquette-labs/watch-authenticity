@@ -445,6 +445,8 @@ class TrainingRecord:
             ("rights_record_id", self.rights_record_id),
         ):
             _nonempty(value, field)
+        if self.capture_style not in {"studio", "casual"}:
+            raise ValueError("capture_style must be reviewed as studio or casual")
         if not isinstance(self.object_ref, ObjectRef):
             raise ValueError("object_ref must be ObjectRef")
         _aware(self.collected_at, "collected_at")
