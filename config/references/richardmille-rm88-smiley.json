@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "reference_id": "richardmille-rm88-smiley",
+  "claims": [
+    {
+      "field": "target_model_designation",
+      "value": "RM 88 Automatic Winding Tourbillon Smiley",
+      "source_class": "government_seizure_report",
+      "source_url": "https://www.cbp.gov/newsroom/local-media-release/37-million-dollar-fake-richard-mille-watch-seized-cincinnati-cbp",
+      "citation": "CBP release, 2023-11-21: names the genuine model targeted by the seized look-alike; does not certify the seized watch as that exact reference",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "limited_edition_quantity",
+      "value": 50,
+      "source_class": "government_seizure_report",
+      "source_url": "https://www.cbp.gov/newsroom/local-media-release/37-million-dollar-fake-richard-mille-watch-seized-cincinnati-cbp",
+      "citation": "CBP release, 2023-11-21: limited edition was produced only 50 times",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    }
+  ]
+}
