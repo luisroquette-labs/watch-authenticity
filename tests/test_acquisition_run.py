@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +22,23 @@ from scrapers.replica_sitemap import ReplicaSitemapError
 from scrapers.wikimedia import WikimediaAPIError, WikimediaCandidate, WikimediaDiscovery
 
 NOW = datetime(2026, 11, 10, 19, 0, tzinfo=timezone.utc)
+
+
+def test_acquisition_runtime_import_does_not_require_training_dataset():
+    script = """
+import importlib.abc
+import sys
+class DenyDataset(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "dataset" or fullname.startswith("dataset."):
+            raise ImportError("training dataset unavailable in acquisition image")
+sys.meta_path.insert(0, DenyDataset())
+import acquisition.run
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _result(*, cursor=None, next_cursor=None) -> WikimediaDiscovery:

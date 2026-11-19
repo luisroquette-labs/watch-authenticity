@@ -11,7 +11,7 @@ import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 import requests
 
@@ -24,7 +24,6 @@ from acquisition.collect import (
 from acquisition.cos import AtomicCOSClient
 from acquisition.discovery import DiscoveryCommit, DiscoveryPage, append_discovery_page
 from acquisition.http import PinnedRequestsClient
-from acquisition.planner import AcquisitionTarget
 from acquisition.source_policy import (
     authorize_candidate,
     authorize_discovery,
@@ -60,6 +59,9 @@ from scrapers.watchesofswitzerland import (
     discover_watchesofswitzerland,
 )
 from scrapers.wikimedia import WikimediaAPIError, WikimediaDiscovery, discover_wikimedia
+
+if TYPE_CHECKING:
+    from acquisition.planner import AcquisitionTarget
 
 _LOG = logging.getLogger(__name__)
 _RATE_LIMITED = "Wikimedia rate limited; resume later"
