@@ -240,7 +240,7 @@ def test_pilot_analyzes_detected_dial_without_claiming_authenticity(color: str) 
     service.assessor = cast(Any, Assessor())
     output = io.BytesIO()
     image.save(output, format="PNG")
-    result = service.predict(output.getvalue(), "image/png", "crown")
+    result = service.predict(output.getvalue(), "image/png", "dial")
     assert result["verdict"] == "inconclusivo"
     assert result["replica_probability"] is None
     assert result["detected_angle"] == "dial"
@@ -388,7 +388,7 @@ def test_batch_reuses_identical_photo_and_counts_evidence_once() -> None:
     assert batch["joint"]["visible_evidence"]["dial_color"]["supporting_photos"] == 1
 
 
-def test_batch_reuses_visual_inspection_across_angles_and_encodings(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_batch_does_not_claim_other_angle_from_reused_dial_photo(monkeypatch: pytest.MonkeyPatch) -> None:
     service = PilotService.__new__(PilotService)
     service.claims = load_knowledge(Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln")
     calls = []
@@ -406,11 +406,33 @@ def test_batch_reuses_visual_inspection_across_angles_and_encodings(monkeypatch:
     ]})
     assert len(calls) == 1
     assert result["joint"]["unique_visual_contents"] == 1
-    assert result["joint"]["reused_results"] == 1
+    assert result["joint"]["reused_results"] == 0
     assert result["joint"]["model_checked_images"] == 1
-    assert result["results"][1]["angle_mismatch"] is True
-    assert result["results"][1]["detected_angle"] == "dial"
-    assert result["results"][1]["online_checks"] == result["results"][0]["online_checks"]
+    assert result["results"][1]["model_invoked"] is False
+    assert "detected_angle" not in result["results"][1]
+    assert result["results"][1]["online_checks"] == []
+
+
+def test_batch_caseback_before_dial_only_uses_dial(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = PilotService.__new__(PilotService)
+    service.claims = load_knowledge(Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln")
+    calls = []
+
+    def inspect(_image: Image.Image) -> _VisualInspection:
+        calls.append(True)
+        return _VisualInspection("inspected", "black", "black")
+
+    monkeypatch.setattr(service, "inspect", inspect)
+    result = analyze_batch(service, {"images": [
+        _batch_item("caseback", _jpeg_variant(1)),
+        _batch_item("dial", _jpeg_variant(2)),
+    ]})
+
+    assert len(calls) == 1
+    assert result["joint"]["used_photo_indices"] == [2]
+    assert result["joint"]["model_checked_images"] == 1
+    assert result["results"][0]["model_invoked"] is False
+    assert "detected_angle" not in result["results"][0]
 
 
 def test_batch_releases_each_decoded_image_before_inspecting_next(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -453,10 +475,31 @@ def test_selected_clasp_does_not_claim_clasp_when_only_dial_is_located() -> None
     output = io.BytesIO()
     image.save(output, format="PNG")
     result = service.predict(output.getvalue(), "image/png", "clasp")
-    assert result["detected_angle"] == "dial"
-    assert result["angle_mismatch"] is True
+    assert result["model_invoked"] is False
+    assert "detected_angle" not in result
     checks = cast(list[dict[str, str]], result["online_checks"])
     assert all(item["field"] != "clasp" for item in checks)
+
+
+def test_caseback_selection_never_counts_a_false_face_as_examined() -> None:
+    class Locator:
+        def locate(self, photo: Image.Image) -> WatchRegion:
+            return WatchRegion(photo, photo, .9, .8)
+
+    class Assessor:
+        def dial_color(self, _photo: Image.Image) -> str:
+            raise AssertionError("dial-only model must not run on a selected caseback")
+
+    service = PilotService.__new__(PilotService)
+    service.claims = load_knowledge(Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln")
+    service.locator = cast(Any, Locator())
+    service.assessor = cast(Any, Assessor())
+    result = service.predict(_jpeg(), "image/jpeg", "caseback")
+
+    assert result["verdict"] == "inconclusivo"
+    assert result["model_invoked"] is False
+    assert "detected_angle" not in result
+    assert result["online_checks"] == []
 
 
 def test_batch_does_not_infer_reference_from_colors_without_brand_identification() -> None:

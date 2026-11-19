@@ -32,7 +32,7 @@ MAX_BATCH_ENCODED_BYTES = ((MAX_BATCH_DECODED_BYTES + 2) // 3) * 4
 MAX_BATCH_REQUEST_BYTES = MAX_BATCH_ENCODED_BYTES + 16_384
 ALLOWED_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 ANGLES = frozenset({"dial", "cyclops", "rehaut", "crown", "clasp", "caseback"})
-_HTML = r"""<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Prévia visual de relógios</title><style>body{font:16px system-ui;max-width:680px;margin:40px auto;padding:0 18px;background:#101214;color:#f5f5f5}main{background:#1a1e21;padding:24px;border-radius:16px}button,input,select{font:inherit;margin:8px 0;padding:10px}button{cursor:pointer}.item{border:1px solid #444;padding:8px;margin:8px 0}#r{white-space:pre-wrap;padding:16px;background:#0b0d0e;border-radius:10px}.warn{color:#ffcc66}</style><main><h1>Prévia visual de relógios</h1><p class="warn">Ainda não detecta falsificações: não há classificador de autenticidade treinado e validado neste serviço. Esta prévia descreve apenas cores visíveis; não identifica marca ou referência nem confirma autenticidade.</p><label>Fotos (1 a 6, até 15 MB cada)<br><input id="f" type="file" multiple accept="image/jpeg,image/png,image/webp"></label><div id="angles"></div><button id="b">Analisar</button><div id="r">Escolha fotos nítidas.</div></main><script>
+_HTML = r"""<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Prévia visual de relógios</title><style>body{font:16px system-ui;max-width:680px;margin:40px auto;padding:0 18px;background:#101214;color:#f5f5f5}main{background:#1a1e21;padding:24px;border-radius:16px}button,input,select{font:inherit;margin:8px 0;padding:10px}button{cursor:pointer}.item{border:1px solid #444;padding:8px;margin:8px 0}#r{white-space:pre-wrap;padding:16px;background:#0b0d0e;border-radius:10px}.warn{color:#ffcc66}</style><main><h1>Prévia visual de relógios</h1><p class="warn">Ainda não detecta falsificações: não há classificador de autenticidade treinado e validado neste serviço. Esta prévia descreve cores do mostrador e aro somente quando a vista informada é mostrador; outras vistas são recebidas, mas não examinadas. Não identifica marca ou referência nem confirma autenticidade.</p><label>Fotos (1 a 6, até 15 MB cada)<br><input id="f" type="file" multiple accept="image/jpeg,image/png,image/webp"></label><div id="angles"></div><button id="b">Analisar</button><div id="r">Escolha fotos nítidas.</div></main><script>
 const labels={dial:'Mostrador',cyclops:'Data/lupa',rehaut:'Aro interno',crown:'Coroa/lateral',clasp:'Fecho',caseback:'Traseira'};
 f.onchange=()=>{angles.replaceChildren();if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}[...f.files].forEach((file,i)=>{let row=document.createElement('div');row.className='item';let text=document.createElement('span');text.textContent=file.name+' — Vista informada (esta prévia verifica mostrador e aro): ';let select=document.createElement('select');select.dataset.index=i;Object.entries(labels).forEach(([value,label])=>select.add(new Option(label,value)));row.append(text,select);angles.append(row)})};
 const encode=file=>new Promise((resolve,reject)=>{let reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(new Error('Não foi possível ler a imagem.'));reader.readAsDataURL(file)});
@@ -61,10 +61,16 @@ class PilotService:
         self.locator = LocalWatchLocator()
 
     def predict(self, body: bytes, content_type: str, angle: str) -> dict[str, object]:
-        image = decode_image(body, content_type)
         if angle not in ANGLES:
             raise ValueError("angulo invalido")
-        return self.render(self.inspect(image), angle)
+        image = decode_image(body, content_type)
+        if angle != "dial":
+            image.close()
+            return self.render(_VisualInspection("unsupported"), angle)
+        try:
+            return self.render(self.inspect(image), angle)
+        finally:
+            image.close()
 
     def inspect(self, image: Image.Image) -> _VisualInspection:
         region = self.locator.locate(image)
@@ -81,6 +87,15 @@ class PilotService:
     def render(self, visual: _VisualInspection, angle: str) -> dict[str, object]:
         if angle not in ANGLES:
             raise ValueError("angulo invalido")
+        if angle != "dial":
+            return {
+                "verdict": "inconclusivo",
+                "replica_probability": None,
+                "message": "Vista recebida, mas esta prévia ainda não examina este ângulo.",
+                "next_photo": "Envie uma foto do mostrador de frente e em foco.",
+                "model_invoked": False,
+                "online_checks": [],
+            }
         checks = checks_for_angle(self.claims, angle)
         if visual.status == "no_face":
             return {
@@ -106,20 +121,14 @@ class PilotService:
         dial_label = labels.get(color, "cor indefinida")
         bezel_label = labels.get(bezel_color, "cor não verificável")
         message = f"Mostrador: {dial_label}. Aro: {bezel_label}. Esta foto não comprova autenticidade."
-        angle_mismatch = angle != "dial"
-        if angle_mismatch:
-            message += " Só localizei o mostrador; a vista informada não foi verificada."
         return {
             "verdict": "inconclusivo",
             "replica_probability": None,
             "message": message,
-            "next_photo": (
-                f"Envie uma foto nítida de {angle}." if angle_mismatch else
-                "Mostrador de frente e em foco, com a marca legível."
-            ),
+            "next_photo": "Mostrador de frente e em foco, com a marca legível.",
             "model_invoked": True,
             "detected_angle": "dial",
-            "angle_mismatch": angle_mismatch,
+            "angle_mismatch": False,
             "observed_dial_color": color,
             "observed_bezel_color": bezel_color,
             "possible_reference_mismatch": False,
@@ -229,15 +238,18 @@ def analyze_batch(
             f"{image.width}x{image.height}:".encode() + image.tobytes()
         ).hexdigest()
         if isinstance(service, PilotService):
-            if digest in visual_cache:
-                visual = visual_cache[digest]
-                reused_results += 1
+            if angle != "dial":
+                result = service.render(_VisualInspection("unsupported"), angle)
             else:
-                visual = service.inspect(image)
-                visual_cache[digest] = visual
-                if visual.status == "inspected":
-                    model_checked_images += 1
-            result = service.render(visual, angle)
+                if digest in visual_cache:
+                    visual = visual_cache[digest]
+                    reused_results += 1
+                else:
+                    visual = service.inspect(image)
+                    visual_cache[digest] = visual
+                    if visual.status == "inspected":
+                        model_checked_images += 1
+                result = service.render(visual, angle)
         else:
             key = (digest, content_type, angle)
             if key in cache:
