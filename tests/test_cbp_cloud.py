@@ -116,24 +116,36 @@ def test_cbp_splits_large_image_batch_without_losing_articles(monkeypatch):
     )
 
 
-def test_cbp_scans_one_sitemap_page_per_run(monkeypatch):
+def test_cbp_skips_empty_sitemap_pages_and_reaches_first_candidate(monkeypatch):
     policy, access = _access()
     pages = [f"https://www.cbp.gov/sitemap.xml?page={i}" for i in range(1, 4)]
+    article_url = "https://www.cbp.gov/newsroom/local-media-release/fake-watch-seized"
+    reader = _Read({cbp._INDEX: _xml("sitemapindex", pages),
+                    pages[0]: _xml("urlset", []),
+                    pages[1]: _xml("urlset", []),
+                    pages[2]: _xml("urlset", [article_url]),
+                    article_url: b'<div class="field--name-body">Counterfeit watch<img src="/sites/default/files/watch.jpg"></div>'})
+    monkeypatch.setattr(cbp, "PacedBoundedHTTP", lambda *_args: reader)
+    first = cbp.discover_cbp(object(), policy, access, now=NOW)
+    assert len(first.records) == 1 and first.next_cursor is None
+    assert first.records[0].source_url == article_url
+    assert reader.urls == [cbp._INDEX, *pages, article_url]
+
+
+def test_cbp_caps_empty_sitemap_scan_and_resumes_at_next_page(monkeypatch):
+    policy, access = _access()
+    pages = [f"https://www.cbp.gov/sitemap.xml?page={i}" for i in range(1, 10)]
     reader = _Read({cbp._INDEX: _xml("sitemapindex", pages),
                     **{page: _xml("urlset", []) for page in pages}})
     monkeypatch.setattr(cbp, "PacedBoundedHTTP", lambda *_args: reader)
     first = cbp.discover_cbp(object(), policy, access, now=NOW)
-    assert json.loads(first.next_cursor)["page"] == 1
-    assert reader.urls == [cbp._INDEX, pages[0]]
+    assert first.records == ()
+    assert json.loads(first.next_cursor) == {"page": 8, "after": "", "offset": 0}
+    assert reader.urls == [cbp._INDEX, *pages[:8]]
     second = cbp.discover_cbp(object(), policy, access, now=NOW,
                               previous=SimpleNamespace(next_cursor=first.next_cursor))
-    assert json.loads(second.next_cursor)["page"] == 2
-    assert reader.urls[-2:] == [cbp._INDEX, pages[1]]
-    shrunk = _Read({cbp._INDEX: _xml("sitemapindex", pages[:1])})
-    monkeypatch.setattr(cbp, "PacedBoundedHTTP", lambda *_args: shrunk)
-    terminal = cbp.discover_cbp(object(), policy, access, now=NOW,
-                                previous=SimpleNamespace(next_cursor=second.next_cursor))
-    assert terminal.records == () and terminal.next_cursor is None
+    assert second.records == () and second.next_cursor is None
+    assert reader.urls[-2:] == [cbp._INDEX, pages[8]]
 
 
 def test_cbp_advances_after_five_examined_articles_without_images(monkeypatch):

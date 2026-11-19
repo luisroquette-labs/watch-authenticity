@@ -18,6 +18,7 @@ from scrapers.metadata_http import PacedBoundedHTTP
 _HOST = "www.cbp.gov"
 _INDEX = "https://www.cbp.gov/sitemap.xml"
 _MAX_ARTICLES = 5
+_MAX_EMPTY_SITEMAP_PAGES = 8
 _WATCH = re.compile(r"watch|rolex", re.I)
 _SEIZURE = re.compile(r"counterfeit|fake|knockoff|seiz", re.I)
 
@@ -120,17 +121,28 @@ def discover_cbp(
     page_index = position["page"]
     after = position["after"]
     offset = position["offset"]
-    if page_index >= len(index):
-        return DiscoveryPage("cbp", access.access_record_id, cursor, None, now, ())
-    urls = sorted({url for url in _xml_locations(
-        read.get_bytes(index[page_index], 2 * 1024 * 1024, "CBP sitemap page", deadline=deadline),
-        "urlset",
-    ) if (
-        re.fullmatch(r"https://www\.cbp\.gov/newsroom/[a-z0-9/_-]+", url)
-        and _WATCH.search(url)
-        and _SEIZURE.search(url)
-    )})
-    pending = [url for url in urls if url > after or (offset and url == after)]
+    pending: list[str] = []
+    empty_pages = 0
+    while page_index < len(index) and empty_pages < _MAX_EMPTY_SITEMAP_PAGES:
+        urls = sorted({url for url in _xml_locations(
+            read.get_bytes(index[page_index], 2 * 1024 * 1024, "CBP sitemap page", deadline=deadline),
+            "urlset",
+        ) if (
+            re.fullmatch(r"https://www\.cbp\.gov/newsroom/[a-z0-9/_-]+", url)
+            and _WATCH.search(url)
+            and _SEIZURE.search(url)
+        )})
+        pending = [url for url in urls if url > after or (offset and url == after)]
+        if pending:
+            break
+        page_index += 1
+        after = ""
+        offset = 0
+        empty_pages += 1
+    if not pending:
+        next_cursor = (json.dumps({"page": page_index, "after": "", "offset": 0}, separators=(",", ":"))
+                       if page_index < len(index) else None)
+        return DiscoveryPage("cbp", access.access_record_id, cursor, next_cursor, now, ())
     records: list[DiscoveryRecord] = []
     last_url = after
     next_offset = 0
