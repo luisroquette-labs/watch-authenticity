@@ -147,7 +147,7 @@ def _source_record(record: dict[str, object], spec: RunSpec) -> dict[str, object
         "rejection_subtype": subtype,
         "rejection_reference_id": "other-watch" if subtype == "non-submariner" else None,
         "source_domain": record["source_domain"],
-        "capture_style": "casual",
+        "capture_style": "studio" if record["angle"] in tuple(ANGLE_CROP_FRACTIONS)[:3] else "casual",
         "label": label,
         "grade": record["grade"],
         "factory": record["factory"],
@@ -173,6 +173,7 @@ def _source_splits(splits: dict[str, object]) -> dict[str, object]:
             for asset_id in asset_ids
         ),
         "held_out_factories": [],
+        "held_out_sources": ["unseen-fake.com", "unseen-genuine.com"],
         "seed": 42,
         "temporal_cutoff": None,
     }
@@ -260,6 +261,20 @@ def _valid_payloads(spec: RunSpec) -> tuple[dict[str, object], dict[str, object]
         validation_records.append(validation_record)
         images[str(validation_record["object_key"])] = validation
     records.extend(validation_records)
+    cross_records: list[dict[str, object]] = []
+    for label in ("genuine", "fake"):
+        image = _png(index)
+        index += 1
+        source = next(record for record in train_records if record["label"] == label)
+        cross = _record(
+            spec, f"cross-{label}", image, label=label,
+            grade=source["grade"] if isinstance(source["grade"], int) else None,
+            angle=str(source["angle"]), source_domain=f"unseen-{label}.com",
+            subject_id=f"cross-watch-{label}", provenance_id=f"cross-proof-{label}",
+        )
+        cross_records.append(cross)
+        images[str(cross["object_key"])] = image
+    records.extend(cross_records)
 
     splits = {
         "schema_version": 1,
@@ -267,7 +282,7 @@ def _valid_payloads(spec: RunSpec) -> tuple[dict[str, object], dict[str, object]
             "train": [str(record["asset_id"]) for record in train_records],
             "val": [str(record["asset_id"]) for record in validation_records],
             "test": [],
-            "cross_source": [],
+            "cross_source": [str(record["asset_id"]) for record in cross_records],
             "factory_holdout": [],
             "temporal_holdout": [],
             "gold": [],
@@ -363,6 +378,30 @@ def test_loader_accepts_complete_content_addressed_freeze(training_fixture):
     assert bundle.manifest_sha256 == spec.manifest_sha256
     assert bundle.splits_sha256 == spec.splits_sha256
     assert bundle.freeze.split_sha256 == _sha256(_canonical(manifest["source_splits"]))
+
+
+def test_loader_refuses_style_shortcut_even_with_rehashed_freeze(training_fixture):
+    _cos, spec, manifest, splits, images = training_fixture
+    source_records = manifest["source_records"]
+    train_ids = set(splits["splits"]["train"])
+    for row in source_records:
+        if row["asset_id"] in train_ids and row["label"] in {"genuine", "fake"}:
+            row["capture_style"] = "studio" if row["label"] == "genuine" else "casual"
+    manifest["freeze"]["manifest_sha256"] = _sha256(_canonical(source_records))
+    cos, spec = _seed(manifest, splits, images, refresh_freeze=False)
+
+    with pytest.raises(TrainingDataRefused, match="training requires studio and casual"):
+        load_training_data(cos, spec)
+
+
+def test_loader_refuses_reserved_source_in_validation(training_fixture):
+    _cos, spec, manifest, splits, images = training_fixture
+    validation_id = splits["splits"]["val"][0]
+    next(row for row in manifest["records"] if row["asset_id"] == validation_id)["source_domain"] = "unseen-genuine.com"
+    cos, spec = _seed(manifest, splits, images)
+
+    with pytest.raises(TrainingDataRefused, match="cross-source domain appears"):
+        load_training_data(cos, spec)
 
 
 def test_loader_refuses_missing_or_blocked_dataset_freeze(training_fixture):

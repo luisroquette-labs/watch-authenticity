@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from acquisition.types import Angle, EvidenceTier, TrainingRecord
 from core.types import Label
-from dataset.splits import TRAIN, DatasetSplits
+from dataset.splits import CROSS_SOURCE, TRAIN, DatasetSplits
 
 MIN_CELL_IMAGES = 500
 MIN_CELL_ENTITIES = 100
@@ -128,10 +128,23 @@ def evaluate_readiness(
 
     train_ids = set(splits.asset_ids(TRAIN))
     train = [record for record in scoped if record.asset_id in train_ids]
+    cross_ids = set(splits.asset_ids(CROSS_SOURCE))
+    cross = [record for record in scoped if record.asset_id in cross_ids]
     if not train:
         reasons.append("train split is empty")
     else:
         _append_dominance_reasons(train, components, reasons)
+    for name, label in (("genuine", Label.GENUINE), ("fake", Label.FAKE)):
+        train_label = [record for record in train if record.label is label and not record.is_augmented]
+        if {record.capture_style for record in train_label} != {"studio", "casual"}:
+            reasons.append(f"train/{name}: requires studio and casual examples")
+        if len({record.source_domain for record in train_label}) < 2:
+            reasons.append(f"train/{name}: requires two independent source domains")
+        cross_label = [record for record in cross if record.label is label and not record.is_augmented]
+        if not cross_label:
+            reasons.append(f"cross-source/{name}: requires an unseen source")
+    if {record.source_domain for record in train} & {record.source_domain for record in cross}:
+        reasons.append("cross-source: source also appears in train")
     return ReadinessReport(
         reference_id=reference_id,
         ready=not reasons,

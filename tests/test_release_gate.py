@@ -48,7 +48,8 @@ def release_bundle():
                 label="fake" if is_factory else "genuine",
                 grade=4 if is_factory else None,
                 angle="dial",
-                source_domain=f"evaluation-{split_index}.example.co.za",
+                source_domain=("unseen-genuine.com" if split == CROSS_SOURCE
+                               else f"evaluation-{split_index}.example.co.za"),
                 subject_id=f"evaluation-watch-{split_index}",
                 provenance_id=f"evaluation-proof-{index}",
                 factory="vsf" if is_factory else None,
@@ -221,8 +222,8 @@ def test_high_average_cannot_hide_false_reassurance_on_confirmed_quality_fake(re
         release_bundle, fake_answer="no_visible_inconsistency", genuine_answer="fake_likely"
     )
     high_quality = evaluate_entity_safety(release_bundle, safety)[-1]
-    assert high_quality.total == 1
-    assert high_quality.false_reassurance == 1
+    assert high_quality.total == 2
+    assert high_quality.false_reassurance == 2
     assert high_quality.false_reassurance_upper95 == 1.0
     report = EvaluationReport(
         release_bundle.freeze_sha256, MODEL_SHA, 0.03, 0.8,
@@ -236,7 +237,7 @@ def test_high_average_cannot_hide_false_reassurance_on_confirmed_quality_fake(re
     assert decision.provisional_entity_cohorts[-1].conclusion_counts == (
         ("fake_likely", 0),
         ("inconclusive", 0),
-        ("no_visible_inconsistency", 1),
+        ("no_visible_inconsistency", 2),
         ("rejection", 0),
     )
 
@@ -289,7 +290,7 @@ def test_quality_digest_alone_does_not_make_a_fake_high_quality(release_bundle):
     fields = asdict(forged)
     fields.pop("assessment_sha256")
     forged = replace(forged, assessment_sha256=_digest(fields))
-    tampered = replace(safety, quality_assessments=(forged,))
+    tampered = replace(safety, quality_assessments=(forged, *safety.quality_assessments[1:]))
 
     with pytest.raises(ValueError, match="not bound"):
         evaluate_entity_safety(release_bundle, tampered)
