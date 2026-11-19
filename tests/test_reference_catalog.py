@@ -78,6 +78,16 @@ def test_omega_reference_is_research_only_without_admitted_head(catalog_fixture)
         catalog_fixture.catalog.head_for(entry.reference_id)
 
 
+def test_omega_007_variant_is_catalogued_but_not_released(catalog_fixture):
+    entry = catalog_fixture.catalog.entry_for("omega-seamaster-21090422001001")
+
+    assert entry.brand == "omega"
+    assert entry.reference == "21090422001001"
+    assert entry.status == "pending"
+    with pytest.raises(ReferenceNotAdmitted):
+        catalog_fixture.catalog.head_for(entry.reference_id)
+
+
 def test_seiko_spb453j1_is_research_only_without_admitted_head(catalog_fixture):
     entry = catalog_fixture.catalog.entry_for("seiko-prospex-spb453j1")
 

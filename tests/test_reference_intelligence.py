@@ -98,6 +98,30 @@ def test_omega_seamaster_knowledge_cites_official_sources_without_authenticity_c
     assert not result.authenticates_watch
 
 
+def test_omega_007_official_identity_is_distinct_from_standard_seamaster() -> None:
+    edition = "omega-seamaster-21090422001001"
+    claims = load_knowledge(Path(f"config/references/{edition}.json"), edition)
+    standard = load_knowledge(
+        Path("config/references/omega-seamaster-21030422001001.json"),
+        "omega-seamaster-21030422001001",
+    )
+
+    assert len(claims) == 12
+    assert all(claim.source_class is SourceClass.OFFICIAL_BRAND for claim in claims)
+    assert {claim.value for claim in claims if claim.field == "reference_designation"} == {
+        "210.90.42.20.01.001"
+    }
+    assert next(claim.value for claim in claims if claim.field == "dial_color") != next(
+        claim.value for claim in standard if claim.field == "dial_color"
+    )
+    assert not next(claim for claim in claims if claim.field == "calibre").applicable_angles
+    assert not next(claim for claim in claims if claim.field == "bezel_material").applicable_angles
+    assert not next(claim for claim in claims if claim.field == "bracelet_material").applicable_angles
+    result = assess_reference(edition, claims, (), minimum_source_date=FRESH_AFTER)
+    assert result.status is AssessmentStatus.INCONCLUSIVE
+    assert not result.authenticates_watch
+
+
 def test_omega_official_claim_rejects_impersonated_domain() -> None:
     with pytest.raises(ValueError, match="approved domain"):
         TechnicalClaim(
