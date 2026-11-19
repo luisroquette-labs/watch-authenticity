@@ -12,6 +12,7 @@ from evaluation.evaluate import CollectionWave, collection_decision
 
 @dataclass(frozen=True)
 class AcquisitionTarget:
+    reference_id: str
     output: str
     angle: str
     missing_images: int
@@ -111,6 +112,7 @@ def plan_acquisition(
         remaining_capacity -= planned
         targets.append(
             AcquisitionTarget(
+                report.reference_id,
                 output,
                 angle,
                 missing_images,

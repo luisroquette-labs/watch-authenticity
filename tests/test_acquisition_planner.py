@@ -34,6 +34,14 @@ def test_missing_entity_and_angle_deficits_rank_before_raw_volume():
     assert targets[0].output == "fake-4"
     assert targets[0].angle == "caseback"
     assert targets[0].missing_entities == 100
+    assert targets[0].reference_id == "rolex-submariner-126610ln"
+
+
+def test_plan_preserves_a_non_rolex_reference():
+    report = ReadinessReport("omega-seamaster-21030422001001", False, (),
+                             (("genuine/dial", 0, 0),), (Angle.DIAL,))
+
+    assert _plan(report)[0].reference_id == report.reference_id
 
 
 def test_plan_uses_one_low_share_source_and_seller_for_every_target():

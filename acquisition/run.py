@@ -548,7 +548,8 @@ def run_planned_public_collection_once(
     def on_collected(candidate_ids: tuple[str, ...], cycle: str, batch_id: str, consumed: int) -> None:
         nonlocal reviewed_status
         root = f"{prefix.strip('/')}/eligible-yields/batches/{batch_id}"
-        context = {"source": source, "output": target.output, "angle": target.angle,
+        context = {"source": source, "reference_id": target.reference_id,
+                   "output": target.output, "angle": target.angle,
                    "seller_group_id": target.seller_group_id,
                    "candidate_ids": sorted(candidate_ids), "collection_batch_id": batch_id,
                    "candidate_consumption": consumed}
@@ -576,7 +577,7 @@ def run_planned_public_collection_once(
             if (
                 row.candidate_id not in bindings
                 or row.watch_entity_id != bindings[row.candidate_id]
-                or row.reference_id != "rolex-submariner-126610ln"
+                or row.reference_id != target.reference_id
                 or row.source_domain != source
                 or row.seller_group_id != target.seller_group_id
                 or row.angle is None
