@@ -53,6 +53,19 @@ def test_patek_reference_is_research_only_without_admitted_head(catalog_fixture)
         catalog_fixture.catalog.head_for(entry.reference_id)
 
 
+def test_cartier_santos_knowledge_is_catalogued_but_not_released(catalog_fixture):
+    entry = catalog_fixture.catalog.entry_for("cartier-santos-wssa0061")
+
+    assert entry.brand == "cartier"
+    assert entry.family == "santos"
+    assert entry.status == "pending"
+    assert tuple(angle.value for angle in entry.required_angles) == (
+        "dial", "crown", "clasp", "caseback"
+    )
+    with pytest.raises(ReferenceNotAdmitted):
+        catalog_fixture.catalog.head_for(entry.reference_id)
+
+
 def test_omega_reference_is_research_only_without_admitted_head(catalog_fixture):
     entry = catalog_fixture.catalog.entry_for("omega-seamaster-21030422001001")
 
