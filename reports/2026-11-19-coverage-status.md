@@ -26,13 +26,13 @@ O arquivo local tem **654 JPGs distintos por SHA256**, todos triados no nível d
 
 | Vista principal triada | Fotos | Limite |
 | --- | ---: | --- |
-| Frente, mostrador ou no pulso | 258 | Identificação visual provisória |
-| Traseira ou movimento visível | 33 | Sem autenticação do movimento |
-| Pulseira, fecho ou tira | 25 | Pode reaparecer em outra peça ou montagem |
-| Lateral ou coroa | 22 | Detalhes ainda sem comparação independente |
-| Contexto ou vários relógios | 15 | Não equivalem a 15 peças individuais |
+| Frente, mostrador ou no pulso | 320 | Identificação visual provisória |
+| Traseira ou movimento visível | 48 | Sem autenticação do movimento |
+| Pulseira, fecho ou tira | 36 | Pode reaparecer em outra peça ou montagem |
+| Lateral ou coroa | 33 | Detalhes ainda sem comparação independente |
+| Contexto ou vários relógios | 19 | Não equivalem a 19 peças individuais |
 | Outro detalhe rotulado | 1 | Caixa/aro |
-| Ângulo ainda sem rótulo por arquivo | 300 | Não sustenta cobertura por vista |
+| Ângulo ainda sem rótulo por arquivo | 197 | Não sustenta cobertura por vista |
 
 As categorias usam uma vista principal por foto, somam 654 arquivos e não representam relógios físicos distintos por ângulo. Não há distribuição por referência exata porque nenhuma referência foi confirmada. O detalhamento por arquivo, hash e revisão está no acervo privado; esta publicação contém somente agregados.
 
@@ -40,4 +40,4 @@ As categorias usam uma vista principal por foto, somam 654 arquivos e não repre
 
 Uma referência só poderá mudar de `pending` após revisão de direitos, identificação de peças físicas distintas, rótulos fundamentados para ambas as classes, vistas utilizáveis, separação por peça e fonte, treino, teste independente congelado e aprovação do gate de segurança. O fluxo público foto → análise → relatório também precisa de prova real no ambiente final. Até lá, a resposta correta para autenticidade é **inconclusivo**, com a menor foto ou verificação física útil.
 
-**Base verificável:** `config/reference_catalog.json`, `pilot/server.py`, censo privado CPO `reference_126610ln_view_coverage_20261119.json`, manifesto privado CPO `manifest.json`, censo privado Super Clone Luxury `census.json` e registros privados Aurum `photo_census_reconciliation_20261119_v6.json`, `physical_watch_identity_delta_20261119.json` e `aurum_angle_coverage_20261119.json`, observados em 19/11/2026. As contagens de pesquisa podem mudar com nova coleta; os zeros de admissão refletem estes artefatos, não uma auditoria universal de toda a internet.
+**Base verificável:** `config/reference_catalog.json`, `pilot/server.py`, censo privado CPO `reference_126610ln_view_coverage_20261119.json`, manifesto privado CPO `manifest.json`, censo privado Super Clone Luxury `census.json` e registros privados Aurum `photo_census_reconciliation_20261119_v6.json`, `physical_watch_identity_delta_20261119.json` e `aurum_angle_coverage_20261119_v5.json`, observados em 19/11/2026. As contagens de pesquisa podem mudar com nova coleta; os zeros de admissão refletem estes artefatos, não uma auditoria universal de toda a internet.
