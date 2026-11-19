@@ -1,7 +1,7 @@
 """Tests for `dataset/dedup.py`.
 
 Covers this step's Success Criteria and the CK-11 Test Cases to Cover:
-`dedup_filter` drops a near-duplicate, capture style is classified without
+`dedup_filter` drops pixel-identical images, capture style is classified without
 deleting confirmed evaluation photos, and `hash_distance` is symmetric.
 """
 
@@ -53,14 +53,28 @@ def _studio_catalog_fixture(size: int = 64, product_box: int = 20) -> Image.Imag
     return Image.fromarray(canvas, mode="RGB")
 
 
-def test_dedup_filter_drops_near_duplicate_photo():
+def test_dedup_filter_keeps_recompressed_photo_for_review():
     original = _textured_photo_fixture(seed=1)
     near_duplicate = _jpeg_recompress(original, quality=60)
 
     deduped = dedup_filter([original, near_duplicate])
 
-    assert len(deduped) == 1
-    assert deduped[0] is original
+    assert deduped == [original, near_duplicate]
+
+
+def test_dedup_filter_drops_pixel_identical_photo():
+    original = _textured_photo_fixture(seed=1)
+
+    assert dedup_filter([original, original.copy()]) == [original]
+
+
+def test_dedup_filter_keeps_distinct_pixels_even_with_identical_phash():
+    original = _textured_photo_fixture(seed=1)
+    changed = original.copy()
+    changed.putpixel((0, 0), (0, 0, 0))
+
+    assert hash_distance(original, changed) == 0
+    assert dedup_filter([original, changed]) == [original, changed]
 
 
 def test_dedup_filter_keeps_two_genuinely_different_photos():
