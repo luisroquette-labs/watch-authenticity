@@ -71,6 +71,19 @@
       "holdout_freeze_sha256": null,
       "status": "pending",
       "head": null
+    },
+    {
+      "reference_id": "richardmille-rm88-smiley",
+      "brand": "richardmille",
+      "family": "rm88",
+      "reference": "smiley",
+      "aliases": [],
+      "identity_evidence_sha256": null,
+      "required_angles": ["dial", "crown", "caseback"],
+      "gold_freeze_sha256": null,
+      "holdout_freeze_sha256": null,
+      "status": "pending",
+      "head": null
     }
   ]
 }
