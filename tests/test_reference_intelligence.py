@@ -36,6 +36,22 @@ def test_official_126610ln_knowledge_is_versioned_and_cited() -> None:
     assert all(claim.citation and claim.observed_at <= date.today() for claim in claims)
 
 
+def test_datejust_126334_knowledge_does_not_universalize_variant_features() -> None:
+    reference = "rolex-datejust-126334"
+    claims = load_knowledge(Path("config/references/rolex-datejust-126334.json"), reference)
+
+    assert len(claims) == 6
+    assert all(claim.source_class is SourceClass.OFFICIAL_BRAND for claim in claims)
+    assert {claim.field for claim in claims if claim.applicable_angles} == {
+        "bezel_type", "date_magnifier"
+    }
+    assert not {"dial_color", "bracelet_type"} & {claim.field for claim in claims}
+    assert not next(claim for claim in claims if claim.field == "calibre").applicable_angles
+    result = assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER)
+    assert result.status is AssessmentStatus.INCONCLUSIVE
+    assert not result.authenticates_watch
+
+
 def test_patek_5811_knowledge_is_cited_without_authenticity_coverage() -> None:
     reference = "patek-nautilus-58111g001"
     claims = load_knowledge(Path("config/references/patek-nautilus-58111g001.json"), reference)
