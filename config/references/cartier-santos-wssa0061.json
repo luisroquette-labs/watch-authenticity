@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "reference_id": "cartier-santos-wssa0061",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "WSSA0061",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0061.html",
+      "citation": "Product page > Ref. WSSA0061",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "model_size",
+      "value": "medium",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0061.html",
+      "citation": "Product Description > Medium model",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "dial_color",
+      "value": "graduated green",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0061.html",
+      "citation": "Product Description > Graduated green dial",
+      "observed_at": "2026-11-18",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "hand_shape",
+      "value": "sword-shaped",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0061.html",
+      "citation": "Product Description > Polished steel sword-shaped hands",
+      "observed_at": "2026-11-18",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "hand_material",
+      "value": "polished steel with luminescent material",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0061.html",
+      "citation": "Product Description > Polished steel sword-shaped hands",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "crown_shape",
+      "value": "7-sided",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0061.html",
+      "citation": "Product Description > 7-sided crown with synthetic faceted blue spinel",
+      "observed_at": "2026-11-18",
+      "applicable_angles": [
+        "crown"
+      ]
+    },
+    {
+      "field": "crown_stone_color",
+      "value": "blue",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0061.html",
+      "citation": "Product Description > 7-sided crown with synthetic faceted blue spinel",
+      "observed_at": "2026-11-18",
+      "applicable_angles": [
+        "crown"
+      ]
+    },
+    {
+      "field": "crown_stone_material",
+      "value": "synthetic faceted blue spinel",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0061.html",
+      "citation": "Product Description > 7-sided crown with synthetic faceted blue spinel",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "case_material",
+      "value": "steel",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0061.html",
+      "citation": "Product Description > Steel case",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "case_width_mm",
+      "value": "35.1",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0061.html",
+      "citation": "Product Description > Case width",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "calibre",
+      "value": "1847 MC",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0061.html",
+      "citation": "Product Description > Mechanical movement with automatic winding 1847 Mc",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "water_resistance",
+      "value": "10 bar (approximately 100 meters)",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0061.html",
+      "citation": "Product Description > Water-resistant up to 10 bar",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    }
+  ]
+}
