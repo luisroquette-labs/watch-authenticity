@@ -609,6 +609,7 @@ case "$*" in
     args='["-m","acquisition.run"]'
     if [[ "$5" == watch-auth-supercloneluxury-* ]]; then args='["-m","acquisition.run","--source","supercloneluxury"]'; fi
     if [[ "$5" == watch-auth-cbp-* ]]; then args='["-m","acquisition.run","--source","cbp"]'; fi
+    if [[ "$5" == watch-auth-goldsmiths-* ]]; then args='["-m","acquisition.run","--source","goldsmiths"]'; fi
     image="$WATCH_AUTH_ACQUISITION_IMAGE_DIGEST"
     cpu='0.25'
     if [[ "${DRIFTED_JOB:-0}" == 1 && "$5" == watch-auth-cbp-* ]]; then cpu='1'; fi
@@ -623,6 +624,9 @@ case "$*" in
     ;;
   "ce job create"*) printf '%s\n' "$5" >> "$JOB_STATE" ;;
   "ce sub cron get"*) [[ "$EXISTING_CRON" == 1 ]] ;;
+  "ce sub cron create"*|"ce sub cron update"*)
+    if [[ "${FAIL_GOLDSMITHS_CRON:-0}" == 1 && "$*" == *watch-auth-goldsmiths-daily* ]]; then exit 2; fi
+    ;;
   "iam trusted-profile-links"*)
     printf '['
     first=1
@@ -666,6 +670,19 @@ esac
         "WATCH_AUTH_IAM_READER_POLICY_ID": "11111111-1111-4111-8111-111111111111",
     }
 
+    failed = subprocess.run(
+        ["bash", str(root / "scripts/deploy_ibm_acquisition.sh")],
+        capture_output=True,
+        text=True,
+        env={**env, "FAIL_GOLDSMITHS_CRON": "1"},
+        timeout=10,
+    )
+    assert failed.returncode == 2
+    assert "watch-auth-acquisition-daily" not in log.read_text()
+    log.write_text("")
+    (tmp_path / "jobs").unlink(missing_ok=True)
+    (tmp_path / "linked").unlink(missing_ok=True)
+
     result = subprocess.run(
         ["bash", str(root / "scripts/deploy_ibm_acquisition.sh")],
         capture_output=True,
@@ -677,8 +694,8 @@ esac
     assert result.returncode == 0, result.stderr
     calls = log.read_text()
     assert "ce job create" in calls
-    assert calls.count("iam trusted-profile-links") == 6
-    assert calls.count("iam trusted-profile-link-create") == 3
+    assert calls.count("iam trusted-profile-links") == 8
+    assert calls.count("iam trusted-profile-link-create") == 4
     assert "ce job create --name watch-auth-supercloneluxury-" in calls
     assert "--arg=--source --arg=supercloneluxury" in calls
     cron_action = "update" if existing_cron else "create"
@@ -686,6 +703,12 @@ esac
     assert "ce job create --name watch-auth-cbp-" in calls
     assert "--arg=--source --arg=cbp" in calls
     assert f"ce sub cron {cron_action} --name watch-auth-cbp-daily" in calls
+    assert "ce job create --name watch-auth-goldsmiths-" in calls
+    assert "--arg=--source --arg=goldsmiths" in calls
+    assert f"ce sub cron {cron_action} --name watch-auth-goldsmiths-daily" in calls
+    assert calls.index(f"ce sub cron {cron_action} --name watch-auth-goldsmiths-daily") < calls.index(
+        f"ce sub cron {cron_action} --name watch-auth-acquisition-daily"
+    )
     assert calls.index("--link-component-name watch-auth-cbp-") < calls.index(
         f"ce sub cron {cron_action} --name watch-auth-acquisition-daily"
     )
@@ -758,14 +781,17 @@ esac
     assert "ce sub cron" not in log.read_text()
 
 
-def test_bounded_metadata_sources_run_before_unbounded_wos():
+def test_goldsmiths_has_its_own_deadline_and_is_absent_from_daily_job():
     source = Path("acquisition/run.py").read_text(encoding="utf-8")
 
-    precision = source.index('"precisionwatches",', source.index("def main"))
-    goldsmiths = source.index('"goldsmiths",', precision)
-    watches_of_switzerland = source.index('"watchesofswitzerland",', goldsmiths)
+    main = source[source.index("def main"):]
+    dedicated = main.index('if source == "goldsmiths":')
+    daily = main.index('image_requests_per_minute =', dedicated)
+    precision = main.index('"precisionwatches",', daily)
+    watches_of_switzerland = main.index('"watchesofswitzerland",', precision)
 
-    assert precision < goldsmiths < watches_of_switzerland
+    assert dedicated < daily < precision < watches_of_switzerland
+    assert '"goldsmiths",' not in main[daily:]
 
 
 def test_github_fallback_runs_preflight_without_building_images():

@@ -753,7 +753,7 @@ def main(source: str = "all") -> None:
     root = Path(__file__).resolve().parents[1]
     policies = load_source_policies(root / "config/source_policies.json")
     access_registry = load_source_access_registry(root / "config/source_access.json")
-    if source not in {"all", "supercloneluxury", "cbp"}:
+    if source not in {"all", "supercloneluxury", "cbp", "goldsmiths"}:
         raise ValueError("unsupported acquisition source")
     logging.basicConfig(level=logging.INFO)
     now = datetime.now(timezone.utc)
@@ -792,6 +792,25 @@ def main(source: str = "all") -> None:
                 requests.Session(),
                 cbp_policy,
                 cbp_access,
+                now=now,
+                previous=previous,
+                deadline=job_deadline,
+            ),
+        )
+        return
+    if source == "goldsmiths":
+        goldsmiths_policy = get_source_policy(policies, source)
+        goldsmiths_access = access_registry[source]
+        run_metadata_discovery_resilient(
+            cos,
+            bucket,
+            prefix,
+            source,
+            now=now,
+            discover=lambda previous: discover_goldsmiths(
+                requests.Session(),
+                goldsmiths_policy,
+                goldsmiths_access,
                 now=now,
                 previous=previous,
                 deadline=job_deadline,
@@ -899,23 +918,6 @@ def main(source: str = "all") -> None:
             deadline=job_deadline,
         ),
     )
-    goldsmiths_policy = get_source_policy(policies, "goldsmiths")
-    goldsmiths_access = access_registry["goldsmiths"]
-    run_metadata_discovery_resilient(
-        cos,
-        bucket,
-        prefix,
-        "goldsmiths",
-        now=now,
-        discover=lambda previous: discover_goldsmiths(
-            requests.Session(),
-            goldsmiths_policy,
-            goldsmiths_access,
-            now=now,
-            previous=previous,
-            deadline=job_deadline,
-        ),
-    )
     wos_policy = get_source_policy(policies, "watchesofswitzerland")
     wos_access = access_registry["watchesofswitzerland"]
     run_metadata_discovery_resilient(
@@ -936,5 +938,5 @@ def main(source: str = "all") -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", choices=("all", "supercloneluxury", "cbp"), default="all")
+    parser.add_argument("--source", choices=("all", "supercloneluxury", "cbp", "goldsmiths"), default="all")
     main(parser.parse_args().source)
