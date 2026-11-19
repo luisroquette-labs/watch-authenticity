@@ -53,11 +53,13 @@ def plan_acquisition(
     seller = _least_used_eligible(seller_entity_counts, 10)
     if seller is None:
         return ()
+    first_exploration = not any(source_entity_counts.values()) and not any(seller_entity_counts.values())
     seller_capacity = _additional_capacity(seller_entity_counts, seller, 10)
     viable = [
         name
         for name in source_entity_counts
-        if _additional_capacity(source_entity_counts, name, 40) > 0
+        if (_additional_capacity(source_entity_counts, name, 40) > 0
+            or (first_exploration and name not in eligible_yield_by_source))
         and (name not in eligible_yield_by_source or eligible_yield_by_source[name][1] > 0)
     ]
 
@@ -105,7 +107,7 @@ def plan_acquisition(
     observed_candidates = candidate_consumption_by_source[source] if observed is not None else None
     expected = 0 if observed is None or observed_candidates is None else ceil(candidate_limit * observed[1] / observed_candidates)
     for output, angle, missing_images, missing_entities in ordered:
-        if remaining_capacity <= 0:
+        if remaining_capacity <= 0 and not (first_exploration and exploratory):
             break
         planned = min(missing_entities, remaining_capacity, expected)
         remaining_capacity -= planned
