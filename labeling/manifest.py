@@ -109,6 +109,8 @@ def build_training_record(
     rejection_reference_id: str | None = None,
 ) -> TrainingRecord:
     """Build a training row only from accepted evidence, never price guesses."""
+    if capture_style not in {"studio", "casual"}:
+        raise NotTrainingEligible("capture style requires review before training")
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("now must be timezone-aware")
     if (
