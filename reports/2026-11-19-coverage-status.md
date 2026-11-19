@@ -20,8 +20,24 @@ Para a alegação de Submariner 126610LN, há 51 fotos CPO de 24 IDs de estoque:
 
 O catálogo Super Clone Luxury contém 3.672 URLs de imagens de 1.057 produtos e 3.661 hashes únicos no arquivo local. A declaração do vendedor é de réplica; produto e arquivo não equivalem a relógio físico confirmado, referência exata confirmada ou autorização automática para treino. O arquivo não fornece um coorte independente de originais da mesma referência.
 
+### Grupo Aurum Time VIP 4: declaração de réplica
+
+O arquivo local tem **654 JPGs distintos por SHA256**, todos triados no nível de arquivo. O censo conservador registra **79 relógios físicos prováveis** de uma única fonte, incluindo cinco grupos novos comparados visualmente com os 74 anteriores. Esse total é provisório: há repostagens e vistas de vitrines cuja identidade física ainda não foi resolvida. A declaração de réplica vem do grupo/vendedor; **zero peças têm falsificação confirmada independentemente**, zero têm referência exata confirmada e zero fotos foram admitidas para treino ou teste de autenticidade. Fotos de conversas e peças promocionais permanecem apenas como contexto.
+
+| Vista principal triada | Fotos | Limite |
+| --- | ---: | --- |
+| Frente, mostrador ou no pulso | 258 | Identificação visual provisória |
+| Traseira ou movimento visível | 33 | Sem autenticação do movimento |
+| Pulseira, fecho ou tira | 25 | Pode reaparecer em outra peça ou montagem |
+| Lateral ou coroa | 22 | Detalhes ainda sem comparação independente |
+| Contexto ou vários relógios | 15 | Não equivalem a 15 peças individuais |
+| Outro detalhe rotulado | 1 | Caixa/aro |
+| Ângulo ainda sem rótulo por arquivo | 300 | Não sustenta cobertura por vista |
+
+As categorias usam uma vista principal por foto, somam 654 arquivos e não representam relógios físicos distintos por ângulo. Não há distribuição por referência exata porque nenhuma referência foi confirmada. O detalhamento por arquivo, hash e revisão está no acervo privado; esta publicação contém somente agregados.
+
 ## Próximo critério de liberação
 
 Uma referência só poderá mudar de `pending` após revisão de direitos, identificação de peças físicas distintas, rótulos fundamentados para ambas as classes, vistas utilizáveis, separação por peça e fonte, treino, teste independente congelado e aprovação do gate de segurança. O fluxo público foto → análise → relatório também precisa de prova real no ambiente final. Até lá, a resposta correta para autenticidade é **inconclusivo**, com a menor foto ou verificação física útil.
 
-**Base verificável:** `config/reference_catalog.json`, `pilot/server.py`, censo privado CPO `reference_126610ln_view_coverage_20261119.json`, manifesto privado CPO `manifest.json` e censo privado Super Clone Luxury `census.json`, observados em 19/11/2026. As contagens de pesquisa podem mudar com nova coleta; os zeros de admissão refletem estes artefatos, não uma auditoria universal de toda a internet.
+**Base verificável:** `config/reference_catalog.json`, `pilot/server.py`, censo privado CPO `reference_126610ln_view_coverage_20261119.json`, manifesto privado CPO `manifest.json`, censo privado Super Clone Luxury `census.json` e registros privados Aurum `photo_census_reconciliation_20261119_v6.json`, `physical_watch_identity_delta_20261119.json` e `aurum_angle_coverage_20261119.json`, observados em 19/11/2026. As contagens de pesquisa podem mudar com nova coleta; os zeros de admissão refletem estes artefatos, não uma auditoria universal de toda a internet.
