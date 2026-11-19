@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "reference_id": "omega-seamaster-21090422001001",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "210.90.42.20.01.001",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/pt/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21090422001001",
+      "citation": "Technical data > Reference",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "edition",
+      "value": "007 Edition",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/pt/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21090422001001",
+      "citation": "Product heading > 007 Edition",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "dial_color",
+      "value": "tropical brown",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/pt/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21090422001001",
+      "citation": "Description > tropical brown dial; Technical data > Dial colour",
+      "observed_at": "2026-11-19",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "bezel_color",
+      "value": "tropical brown",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/pt/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21090422001001",
+      "citation": "Description > tropical brown aluminium bezel",
+      "observed_at": "2026-11-19",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "bezel_material",
+      "value": "aluminium",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/pt/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21090422001001",
+      "citation": "Description > dial and bezel in tropical brown aluminium",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "case_material",
+      "value": "grade 2 titanium",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/pt/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21090422001001",
+      "citation": "Description > 42 mm Grade 2 Titanium case",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "bracelet_style",
+      "value": "mesh",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/pt/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21090422001001",
+      "citation": "Description > Grade 2 Titanium mesh bracelet",
+      "observed_at": "2026-11-19",
+      "applicable_angles": [
+        "clasp"
+      ]
+    },
+    {
+      "field": "bracelet_material",
+      "value": "grade 2 titanium",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/pt/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21090422001001",
+      "citation": "Description > Grade 2 Titanium mesh bracelet",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "clasp",
+      "value": "adjustable buckle",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/pt/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21090422001001",
+      "citation": "Description > innovative adjustable buckle",
+      "observed_at": "2026-11-19",
+      "applicable_angles": [
+        "clasp"
+      ]
+    },
+    {
+      "field": "diameter_mm",
+      "value": "42",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/pt/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21090422001001",
+      "citation": "Technical data > Case diameter",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "calibre",
+      "value": "Omega 8806",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/pt/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21090422001001",
+      "citation": "Technical data > Calibre",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    },
+    {
+      "field": "water_resistance",
+      "value": "30 bar (300 metres / 1000 feet)",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/pt/watch-omega-seamaster-diver-300m-co-axial-master-chronometer-42-mm-21090422001001",
+      "citation": "Technical data > Water resistance",
+      "observed_at": "2026-11-19",
+      "applicable_angles": []
+    }
+  ]
+}
