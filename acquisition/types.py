@@ -333,6 +333,7 @@ class ReviewDecision:
     proposed_reference_id: str
     reviewer_registry_sha256: str
     adjudicator: bool
+    proposed_factory: str | None = None
 
     def __post_init__(self) -> None:
         _nonempty(self.candidate_id, "candidate_id")
@@ -352,6 +353,10 @@ class ReviewDecision:
         _sha256(self.reviewer_registry_sha256, "reviewer_registry_sha256")
         if not isinstance(self.adjudicator, bool):
             raise ValueError("adjudicator must be bool")
+        if self.proposed_factory is not None:
+            _nonempty(self.proposed_factory, "proposed_factory")
+            if self.evidence_type != "factory_record" or self.proposed_label is not Label.FAKE:
+                raise ValueError("factory identity requires fake factory-record evidence")
 
 
 @dataclass(frozen=True)

@@ -408,6 +408,65 @@ def test_build_training_record_uses_only_accepted_evidence(
     assert record.evidence_record_id == evidence.evidence_record_id
 
 
+def test_seller_declared_factory_does_not_become_training_provenance(
+    candidate, reviewer, reviewer_registry, grouping, rights, object_ref
+):
+    declared = replace(candidate, factory="seller-claimed-factory")
+    review = submit_review(
+        declared, reviewer,
+        proposed_label=Label.FAKE, proposed_grade=3,
+        proposed_tier=EvidenceTier.B, evidence_type="replica_transaction",
+        supporting_artifact_hashes=("a" * 64,), reviewed_at=declared.collected_at,
+    )
+    evidence = adjudicate(declared, [review], reviewer_registry)
+    record = build_training_record(
+        declared, evidence, grouping, rights,
+        object_ref=object_ref,
+        angle=Angle.DIAL,
+        usability_review=record_usability_review(
+            declared.candidate_id, declared.derivative_sha256, Angle.DIAL,
+            True, True, "angle-reviewer", declared.collected_at,
+        ),
+        capture_style="studio",
+        now=declared.collected_at,
+        reviews=[review],
+        reviewer_registry=reviewer_registry,
+    )
+    assert record.factory is None
+
+
+def test_factory_record_attests_named_factory_for_holdout(
+    candidate, reviewer, grouping, rights, object_ref
+):
+    declared = replace(candidate, factory="verified-factory")
+    qualified = replace(reviewer, allowed_evidence_types=("factory_record",))
+    with pytest.raises(ReviewerConflict, match="factory identity"):
+        submit_review(
+            declared, qualified, proposed_label=Label.FAKE, proposed_grade=3,
+            proposed_tier=EvidenceTier.B, evidence_type="factory_record",
+            supporting_artifact_hashes=("a" * 64,),
+            reviewed_at=declared.collected_at, proposed_factory="another-factory",
+        )
+    review = submit_review(
+        declared, qualified, proposed_label=Label.FAKE, proposed_grade=3,
+        proposed_tier=EvidenceTier.B, evidence_type="factory_record",
+        supporting_artifact_hashes=("a" * 64,),
+        reviewed_at=declared.collected_at, proposed_factory="verified-factory",
+    )
+    evidence = adjudicate(declared, [review], {qualified.reviewer_id: qualified})
+    record = build_training_record(
+        declared, evidence, grouping, rights, object_ref=object_ref,
+        angle=Angle.DIAL,
+        usability_review=record_usability_review(
+            declared.candidate_id, declared.derivative_sha256, Angle.DIAL,
+            True, True, "angle-reviewer", declared.collected_at,
+        ),
+        capture_style="studio", now=declared.collected_at,
+        reviews=[review], reviewer_registry={qualified.reviewer_id: qualified},
+    )
+    assert record.factory == "verified-factory"
+
+
 def test_unverified_capture_style_cannot_enter_training(
     candidate, make_review, reviewer_registry, grouping, rights, object_ref
 ):

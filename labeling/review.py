@@ -149,6 +149,7 @@ def submit_review(
     evidence_type: str,
     supporting_artifact_hashes: tuple[str, ...],
     reviewed_at: datetime,
+    proposed_factory: str | None = None,
 ) -> ReviewDecision:
     del proposed_tier
     if not reviewer.effective_at <= reviewed_at < reviewer.expires_at:
@@ -161,6 +162,12 @@ def submit_review(
         raise ReviewerConflict("reviewer cannot approve own contributor or source group")
     tier = evidence_tier_for(evidence_type)
     validate_evidence_proposal(evidence_type, proposed_label, proposed_grade)
+    if proposed_factory is not None and (
+        evidence_type != "factory_record"
+        or proposed_label is not Label.FAKE
+        or proposed_factory != candidate.factory
+    ):
+        raise ReviewerConflict("factory identity requires matching factory-record evidence")
     candidate_sha256 = candidate_digest(candidate)
     registry_sha256 = reviewer_digest(reviewer)
     payload = {
@@ -177,6 +184,8 @@ def submit_review(
         "reviewer_registry_sha256": registry_sha256,
         "adjudicator": reviewer.adjudicator,
     }
+    if proposed_factory is not None:
+        payload["proposed_factory"] = proposed_factory
     digest = hashlib.sha256(_canonical(payload)).hexdigest()
     return ReviewDecision(
         candidate_id=candidate.candidate_id,
@@ -192,6 +201,7 @@ def submit_review(
         proposed_reference_id=candidate.declared_reference,
         reviewer_registry_sha256=registry_sha256,
         adjudicator=reviewer.adjudicator,
+        proposed_factory=proposed_factory,
     )
 
 
@@ -212,6 +222,8 @@ def verify_decision(decision: ReviewDecision) -> None:
         "reviewer_registry_sha256": decision.reviewer_registry_sha256,
         "adjudicator": decision.adjudicator,
     }
+    if decision.proposed_factory is not None:
+        payload["proposed_factory"] = decision.proposed_factory
     if hashlib.sha256(_canonical(payload)).hexdigest() != decision.decision_sha256:
         raise ValueError("review decision hash differs from content")
 
@@ -264,6 +276,8 @@ def persist_review(
 def _decision_json(decision: ReviewDecision) -> dict[str, object]:
     raw = asdict(decision)
     raw.pop("decision_sha256")
+    if decision.proposed_factory is None:
+        raw.pop("proposed_factory")
     raw["proposed_label"] = (
         None if decision.proposed_label is None else decision.proposed_label.value
     )
@@ -327,6 +341,7 @@ def _decision_from_json(raw: object, decision_sha256: str) -> ReviewDecision:
         proposed_reference_id=raw["proposed_reference_id"],
         reviewer_registry_sha256=raw["reviewer_registry_sha256"],
         adjudicator=raw["adjudicator"],
+        proposed_factory=raw.get("proposed_factory"),
     )
 
 
