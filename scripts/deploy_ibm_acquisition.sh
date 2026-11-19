@@ -91,11 +91,7 @@ cron_args=(
   --schedule '17 3 * * *'
   --time-zone UTC
 )
-if ibmcloud ce sub cron get --name watch-auth-acquisition-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${cron_args[@]}"
-fi
+
 
 luxury_job_args=("${job_args[@]}")
 luxury_job_args[1]=watch-auth-supercloneluxury
@@ -128,11 +124,7 @@ luxury_cron_args=("${cron_args[@]}")
 luxury_cron_args[1]=watch-auth-supercloneluxury-daily
 luxury_cron_args[5]=watch-auth-supercloneluxury
 luxury_cron_args[7]='37 3 * * *'
-if ibmcloud ce sub cron get --name watch-auth-supercloneluxury-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${luxury_cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${luxury_cron_args[@]}"
-fi
+
 
 cbp_job_args=("${job_args[@]}")
 cbp_job_args[1]=watch-auth-cbp
@@ -165,6 +157,19 @@ cbp_cron_args=("${cron_args[@]}")
 cbp_cron_args[1]=watch-auth-cbp-daily
 cbp_cron_args[5]=watch-auth-cbp
 cbp_cron_args[7]='57 3 * * *'
+
+if ibmcloud ce sub cron get --name watch-auth-acquisition-daily --output json >/dev/null 2>&1; then
+  ibmcloud ce sub cron update "${cron_args[@]}"
+else
+  ibmcloud ce sub cron create "${cron_args[@]}"
+fi
+
+if ibmcloud ce sub cron get --name watch-auth-supercloneluxury-daily --output json >/dev/null 2>&1; then
+  ibmcloud ce sub cron update "${luxury_cron_args[@]}"
+else
+  ibmcloud ce sub cron create "${luxury_cron_args[@]}"
+fi
+
 if ibmcloud ce sub cron get --name watch-auth-cbp-daily --output json >/dev/null 2>&1; then
   ibmcloud ce sub cron update "${cbp_cron_args[@]}"
 else

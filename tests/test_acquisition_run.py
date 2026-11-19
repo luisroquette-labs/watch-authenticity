@@ -669,6 +669,9 @@ esac
     assert "ce job create --name watch-auth-cbp" in calls
     assert "--arg=--source --arg=cbp" in calls
     assert "ce sub cron create --name watch-auth-cbp-daily" in calls
+    assert calls.index("--name watch-auth-cbp --cr-type CE") < calls.index(
+        "ce sub cron create --name watch-auth-acquisition-daily"
+    )
 
 
 def test_deploy_fails_closed_when_link_inventory_is_unavailable(tmp_path):
