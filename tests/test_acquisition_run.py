@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from acquisition.collect import DownloadRateLimited
+from acquisition.collect import DownloadRateLimited, UnsafeImage
 from acquisition.discovery import DiscoveryPage, DiscoveryRecord
 from acquisition.run import (
     run_metadata_discovery_once,
@@ -218,13 +218,85 @@ def test_public_collection_downloads_every_discovered_image_before_committing(
         discover=lambda _previous: page,
     )
 
-    assert len(calls) == 1
-    assert [record.image_url for record in calls[0]] == list(page.records[0].image_urls)
-    assert all(record.listing_text == "replica" for record in calls[0])
-    assert all(record.factory == "RICH Factory" for record in calls[0])
+    assert len(calls) == 3
+    assert [record.image_url for call in calls for record in call] == list(page.records[0].image_urls)
+    assert all(record.listing_text == "replica" for call in calls for record in call)
+    assert all(record.factory == "RICH Factory" for call in calls for record in call)
     assert result["accepted_count"] == 3
+    assert result["rejected_images"] == []
+    assert result["rejection_key"] is None
     assert result["state"] == "complete"
     assert any("/public-downloads/discovery/" in key for key in cos.bodies)
+
+
+def test_public_wave_records_unsafe_image_and_commits_remaining_candidates(cos, monkeypatch):
+    from dataclasses import replace
+
+    record = replace(
+        _result().page.records[0],
+        image_ids=("bad", "good"),
+        image_urls=("https://upload.wikimedia.org/bad.png", "https://upload.wikimedia.org/good.jpg"),
+    )
+    page = replace(_result().page, records=(record,))
+
+    def collect(records, *_args, **_kwargs):
+        candidate = records[0]
+        if candidate.image_url.endswith("bad.png"):
+            raise UnsafeImage("content type does not match image magic")
+        return SimpleNamespace(accepted_candidate_ids=("candidate-good",))
+
+    monkeypatch.setattr("acquisition.run.collect_batch", collect)
+    result = run_public_image_collection_once(
+        cos, "private", "datasets", SimpleNamespace(source="wikimedia"),
+        SimpleNamespace(), SimpleNamespace(), now=NOW, image_client=object(),
+        discover=lambda _previous: page,
+    )
+
+    assert result["state"] == "complete"
+    assert result["accepted_candidate_ids"] == ["candidate-good"]
+    assert result["rejected_images"] == [{
+        "source_record_id": "123#image-1-bad",
+        "image_url": "https://upload.wikimedia.org/bad.png",
+        "reason": "content type does not match image magic",
+    }]
+    assert result["rejection_key"] in cos.bodies
+    assert cos.bodies[result["rejection_key"]]
+    assert any("/public-downloads/discovery/" in key for key in cos.bodies)
+
+
+def test_public_rejection_survives_status_write_failure_after_cursor_commit(cos, monkeypatch):
+    from dataclasses import replace
+
+    record = replace(
+        _result().page.records[0], image_ids=("bad",),
+        image_urls=("https://upload.wikimedia.org/bad.png",),
+    )
+    page = replace(_result().page, records=(record,))
+    monkeypatch.setattr(
+        "acquisition.run.collect_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(UnsafeImage("invalid image")),
+    )
+    monkeypatch.setattr(
+        "acquisition.run._persist_status",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("status unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="status unavailable"):
+        run_public_image_collection_once(
+            cos, "private", "datasets", SimpleNamespace(source="wikimedia"),
+            SimpleNamespace(), SimpleNamespace(), now=NOW, image_client=object(),
+            discover=lambda _previous: page,
+        )
+
+    rejection_keys = [key for key in cos.bodies if "/public-downloads/rejections/" in key]
+    assert len(rejection_keys) == 1
+    assert b'"source_record_id":"123#image-1-bad"' in cos.bodies[rejection_keys[0]]
+    assert any("/public-downloads/discovery/" in key for key in cos.bodies)
+    assert run_public_image_collection_once(
+        cos, "private", "datasets", SimpleNamespace(source="wikimedia"),
+        SimpleNamespace(), SimpleNamespace(), now=NOW, image_client=object(),
+        discover=lambda _previous: pytest.fail("completed page should not be rediscovered"),
+    )["state"] == "already_complete"
 
 
 def test_public_image_failure_is_recorded_without_advancing_checkpoint(
