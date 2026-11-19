@@ -133,3 +133,40 @@ if ibmcloud ce sub cron get --name watch-auth-supercloneluxury-daily --output js
 else
   ibmcloud ce sub cron create "${luxury_cron_args[@]}"
 fi
+
+cbp_job_args=("${job_args[@]}")
+cbp_job_args[1]=watch-auth-cbp
+cbp_job_args+=(--arg=--source --arg=cbp)
+if ibmcloud ce job get --name watch-auth-cbp --output json >/dev/null 2>&1; then
+  ibmcloud ce job update "${cbp_job_args[@]}"
+else
+  ibmcloud ce job create "${cbp_job_args[@]}"
+fi
+
+if link_exists watch-auth-cbp; then
+  :
+else
+  link_state=$?
+  [[ "${link_state}" -eq 1 ]] || {
+    echo "trusted-profile link inventory failed" >&2
+    exit 2
+  }
+  ibmcloud iam trusted-profile-link-create "${WATCH_AUTH_TRUSTED_PROFILE_ID}" \
+    --name watch-auth-cbp \
+    --cr-type CE \
+    --link-crn "${WATCH_AUTH_CE_PROJECT_CRN}" \
+    --link-component-type job \
+    --link-component-name watch-auth-cbp \
+    --output json >/dev/null
+  link_exists watch-auth-cbp || { echo "trusted-profile link readback failed" >&2; exit 2; }
+fi
+
+cbp_cron_args=("${cron_args[@]}")
+cbp_cron_args[1]=watch-auth-cbp-daily
+cbp_cron_args[5]=watch-auth-cbp
+cbp_cron_args[7]='57 3 * * *'
+if ibmcloud ce sub cron get --name watch-auth-cbp-daily --output json >/dev/null 2>&1; then
+  ibmcloud ce sub cron update "${cbp_cron_args[@]}"
+else
+  ibmcloud ce sub cron create "${cbp_cron_args[@]}"
+fi

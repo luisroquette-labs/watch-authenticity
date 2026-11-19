@@ -611,6 +611,9 @@ case "$*" in
       if grep -q watch-auth-supercloneluxury "$LINK_STATE"; then
         printf ',{"cr_type":"CE","link":{"crn":"%s","component_type":"job","component_name":"watch-auth-supercloneluxury"}}' "$WATCH_AUTH_CE_PROJECT_CRN"
       fi
+      if grep -q watch-auth-cbp "$LINK_STATE"; then
+        printf ',{"cr_type":"CE","link":{"crn":"%s","component_type":"job","component_name":"watch-auth-cbp"}}' "$WATCH_AUTH_CE_PROJECT_CRN"
+      fi
       printf ']'
     else
       printf '[]'
@@ -619,6 +622,8 @@ case "$*" in
   "iam trusted-profile-link-create"*)
     if [[ "$*" == *watch-auth-supercloneluxury* ]]; then
       printf 'watch-auth-supercloneluxury\n' >> "$LINK_STATE"
+    elif [[ "$*" == *watch-auth-cbp* ]]; then
+      printf 'watch-auth-cbp\n' >> "$LINK_STATE"
     else
       touch "$LINK_STATE"
     fi
@@ -656,11 +661,14 @@ esac
     assert result.returncode == 0, result.stderr
     calls = log.read_text()
     assert "ce job create" in calls
-    assert calls.count("iam trusted-profile-links") == 4
-    assert calls.count("iam trusted-profile-link-create") == 2
+    assert calls.count("iam trusted-profile-links") == 6
+    assert calls.count("iam trusted-profile-link-create") == 3
     assert "ce job create --name watch-auth-supercloneluxury" in calls
     assert "--arg=--source --arg=supercloneluxury" in calls
     assert "ce sub cron create --name watch-auth-supercloneluxury-daily" in calls
+    assert "ce job create --name watch-auth-cbp" in calls
+    assert "--arg=--source --arg=cbp" in calls
+    assert "ce sub cron create --name watch-auth-cbp-daily" in calls
 
 
 def test_deploy_fails_closed_when_link_inventory_is_unavailable(tmp_path):
