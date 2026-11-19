@@ -1,11 +1,11 @@
-"""Perceptual-hash near-duplicate removal and studio/catalog-photo filtering.
+"""Exact-pixel removal and studio/catalog-photo filtering.
 
 Dataset op (Expected Changes: `dataset/dedup.py`). Removes two confounds
 before any photo reaches a split (Requirements items 5 and 13; CK-11):
 
-1. Near-duplicates: the same physical photo reposted across multiple
-   listings would let one real watch dominate a class through pure
-   repetition instead of genuine diversity.
+1. Identical images: remove repeated pixels without discarding distinct
+   photos that collide on perceptual hash. Near matches remain available
+   for split-family grouping and review.
 2. Studio/catalog photos (near-perfect white backdrop, repeated across
    listings): a photographic-style tell that lets the model learn "which
    marketplace this came from" instead of "is this watch fake" — the
@@ -14,25 +14,18 @@ before any photo reaches a split (Requirements items 5 and 13; CK-11):
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from typing import Any
 
 import imagehash
 import numpy as np
 
-# ponytail: no literature-backed universal constant exists for a pHash
-# Hamming-distance dedup threshold (SKILL.md: "tune empirically on this
-# dataset"). 10 is a first-pass value measured against this module's own
-# fixtures: a JPEG-recompressed or resize-roundtripped copy of the same
-# photo lands at distance ~2-8, while two genuinely different photos land
-# around 30 (64-bit pHash). Re-tune once real repost pairs from the scraped
-# dataset are available.
+# pHash proposes split-family review pairs. It does not prove image identity:
+# distinct archived watch photos have been observed with distance zero.
 HAMMING_DEDUP_THRESHOLD = 10
 
-# ponytail: same empirically-tuned, not-universal caveat as above. A studio
-# backdrop is "near-perfect white," not literally (255,255,255) — JPEG
-# compression and studio lighting add noise. These two values are a
-# first-pass estimate; re-tune against real scraped catalog-photo samples.
+# Studio thresholds are provisional; calibrate them against reviewed photos.
 STUDIO_WHITE_RGB_FLOOR = 235
 STUDIO_BORDER_WHITE_FRACTION = 0.8
 
@@ -54,18 +47,16 @@ def hash_distance(image_a: Any, image_b: Any) -> int:
 
 
 def dedup_filter(images: list[Any]) -> list[Any]:
-    """Drop near-duplicate photos, keeping the first occurrence of each.
-
-    A photo counts as a near-duplicate of an already-kept photo when their
-    pHash distance is below `HAMMING_DEDUP_THRESHOLD` (CK-11).
-    """
+    """Drop pixel-identical images; retain near matches for entity review."""
     kept: list[Any] = []
+    seen: set[bytes] = set()
     for image in images:
-        is_near_duplicate = any(
-            hash_distance(image, kept_image) < HAMMING_DEDUP_THRESHOLD for kept_image in kept
-        )
-        if not is_near_duplicate:
-            kept.append(image)
+        rgba = image.convert("RGBA")
+        digest = hashlib.sha256(f"{rgba.size}:".encode() + rgba.tobytes()).digest()
+        if digest in seen:
+            continue
+        seen.add(digest)
+        kept.append(image)
     return kept
 
 
