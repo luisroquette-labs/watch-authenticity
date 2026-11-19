@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "reference_id": "seiko-prospex-spb453j1",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "SPB453J1",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/products/prospex/spb453j1",
+      "citation": "Product page > model title",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "family",
+      "value": "Prospex Sea 1965 Heritage Diver’s Watch",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/products/prospex/spb453j1",
+      "citation": "Product page > family title",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "calibre",
+      "value": "6R55",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/products/prospex/spb453j1",
+      "citation": "Specifications > Movement > Caliber Number",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "movement_type",
+      "value": "automatic with manual winding",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/products/prospex/spb453j1",
+      "citation": "Specifications > Movement > Movement Type",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "power_reserve",
+      "value": "approximately 72 hours",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/products/prospex/spb453j1",
+      "citation": "Specifications > Movement > Power reserve",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "case_material",
+      "value": "stainless steel",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/products/prospex/spb453j1",
+      "citation": "Specifications > Case/Band > Case Material",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "case_diameter_mm",
+      "value": "40.0",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/products/prospex/spb453j1",
+      "citation": "Specifications > Case/Band > Case Size",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "crystal_material",
+      "value": "curved sapphire crystal",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/products/prospex/spb453j1",
+      "citation": "Specifications > Case/Band > Crystal",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "water_resistance",
+      "value": "300m / 1000ft diver’s",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/products/prospex/spb453j1",
+      "citation": "Specifications > Other Details > Water Resistance",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "bezel_rotation",
+      "value": "unidirectional",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/products/prospex/spb453j1",
+      "citation": "Specifications > Other Details > Features",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "crown_mechanism",
+      "value": "screw-down",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/products/prospex/spb453j1",
+      "citation": "Specifications > Other Details > Features",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "caseback_mechanism",
+      "value": "screw",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/products/prospex/spb453j1",
+      "citation": "Specifications > Other Details > Features",
+      "observed_at": "2026-11-18",
+      "applicable_angles": []
+    },
+    {
+      "field": "clasp_type",
+      "value": "three-fold with secure lock",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/products/prospex/spb453j1",
+      "citation": "Specifications > Case/Band > Clasp",
+      "observed_at": "2026-11-18",
+      "applicable_angles": [
+        "clasp"
+      ]
+    },
+    {
+      "field": "dial_color",
+      "value": "black",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/-/media/Images/Product--Image/All/Seiko/2024/02/26/21/15/SPB453J1/SPB453J1.png?mh=1200&mw=1200",
+      "citation": "Product gallery > SPB453J1 front image",
+      "observed_at": "2026-11-18",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "bezel_color",
+      "value": "black",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/-/media/Images/Product--Image/All/Seiko/2024/02/26/21/15/SPB453J1/SPB453J1.png?mh=1200&mw=1200",
+      "citation": "Product gallery > SPB453J1 front image",
+      "observed_at": "2026-11-18",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "date_position",
+      "value": "between 4 and 5 o’clock",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/global-en/-/media/Images/Product--Image/All/Seiko/2024/02/26/21/15/SPB453J1/SPB453J1.png?mh=1200&mw=1200",
+      "citation": "Product gallery > SPB453J1 front image",
+      "observed_at": "2026-11-18",
+      "applicable_angles": [
+        "dial"
+      ]
+    }
+  ]
+}

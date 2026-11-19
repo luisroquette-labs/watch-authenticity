@@ -128,6 +128,35 @@ def test_cartier_official_claim_rejects_impersonated_domain() -> None:
         )
 
 
+def test_seiko_spb453j1_official_knowledge_is_research_only() -> None:
+    reference = "seiko-prospex-spb453j1"
+    claims = load_knowledge(Path("config/references/seiko-prospex-spb453j1.json"), reference)
+
+    assert all(claim.source_class is SourceClass.OFFICIAL_BRAND for claim in claims)
+    assert all(claim.source_url.startswith("https://www.seikowatches.com/") for claim in claims)
+    assert {claim.field for claim in claims if claim.applicable_angles} == {
+        "clasp_type", "dial_color", "bezel_color", "date_position",
+    }
+    assert not next(claim for claim in claims if claim.field == "calibre").applicable_angles
+    assert not next(claim for claim in claims if claim.field == "water_resistance").applicable_angles
+    result = assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER)
+    assert result.status is AssessmentStatus.INCONCLUSIVE
+    assert not result.authenticates_watch
+
+
+def test_seiko_official_claim_rejects_impersonated_domain() -> None:
+    with pytest.raises(ValueError, match="approved domain"):
+        TechnicalClaim(
+            reference_id="seiko-prospex-spb453j1",
+            field="calibre",
+            value="6R55",
+            source_class=SourceClass.OFFICIAL_BRAND,
+            source_url="https://seikowatches.com.evil.example/watch",
+            citation="False official claim",
+            observed_at=date.today(),
+        )
+
+
 def test_all_visible_facts_must_match_to_be_consistent_but_never_authenticate() -> None:
     claims = load_knowledge(KNOWLEDGE, REFERENCE)
     result = assess_reference(

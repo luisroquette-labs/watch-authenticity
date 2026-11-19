@@ -65,6 +65,18 @@ def test_omega_reference_is_research_only_without_admitted_head(catalog_fixture)
         catalog_fixture.catalog.head_for(entry.reference_id)
 
 
+def test_seiko_spb453j1_is_research_only_without_admitted_head(catalog_fixture):
+    entry = catalog_fixture.catalog.entry_for("seiko-prospex-spb453j1")
+
+    assert entry.brand == "seiko"
+    assert entry.status == "pending"
+    assert tuple(angle.value for angle in entry.required_angles) == (
+        "dial", "crown", "clasp", "caseback"
+    )
+    with pytest.raises(ReferenceNotAdmitted):
+        catalog_fixture.catalog.head_for(entry.reference_id)
+
+
 def test_admitted_submariner_returns_only_its_own_head(catalog_fixture):
     report = ReadinessReport("rolex-submariner-126610ln", True, (), (), tuple(Angle))
 
