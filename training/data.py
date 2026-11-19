@@ -353,6 +353,20 @@ def load_training_data(cos: Any, spec: RunSpec) -> TrainingBundle:
         domains = {record.source_domain for record in train_records if record.label is label}
         if len(domains) < 2:
             raise TrainingDataRefused(f"{label.value} training requires at least two source domains")
+    source_by_asset = {row["asset_id"]: row for row in manifest_raw["source_records"]}
+    for label in (Label.GENUINE, Label.FAKE):
+        styles = {source_by_asset[record.asset_id]["capture_style"] for record in train_records if record.label is label}
+        if styles != {"studio", "casual"}:
+            raise TrainingDataRefused(f"{label.value} training requires studio and casual examples")
+    cross_records = [record for record in records if split_by_asset[record.asset_id] == CROSS_SOURCE]
+    if any(not any(record.label is label for record in cross_records) for label in (Label.GENUINE, Label.FAKE)):
+        raise TrainingDataRefused("cross-source holdout requires genuine and fake examples")
+    held_out_sources = set(manifest_raw["source_splits"]["held_out_sources"])
+    if not held_out_sources or {record.source_domain for record in cross_records} != held_out_sources:
+        raise TrainingDataRefused("cross-source holdout differs from reserved source domains")
+    if held_out_sources & {record.source_domain for record in records
+                           if split_by_asset[record.asset_id] in {TRAIN, VAL}}:
+        raise TrainingDataRefused("cross-source domain appears in training or validation")
     for record in records:
         _verify_image_metadata(cos, spec, record)
 
@@ -510,7 +524,13 @@ def _parse_freeze(
         not isinstance(source_records, list)
         or not all(isinstance(item, dict) and set(item) == _SOURCE_RECORD_FIELDS for item in source_records)
         or not isinstance(source_splits, dict)
-        or set(source_splits) != {"assignments", "held_out_factories", "seed", "temporal_cutoff"}
+        or set(source_splits) != {"assignments", "held_out_factories", "held_out_sources", "seed", "temporal_cutoff"}
+        or not isinstance(source_splits["held_out_sources"], list)
+        or any(not isinstance(value, str) for value in source_splits["held_out_sources"])
+        or source_splits["held_out_sources"] != sorted(set(source_splits["held_out_sources"]))
+        or any(not isinstance(item["capture_style"], str)
+               or item["capture_style"] not in {"studio", "casual"}
+               for item in source_records)
     ):
         raise TrainingDataRefused("canonical freeze artifacts are invalid")
     record_digest = hashlib.sha256(_canonical(source_records)).hexdigest()

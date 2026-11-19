@@ -118,6 +118,7 @@ def freeze_dataset(
         records,
         seed=splits.seed,
         held_out_factories=splits.held_out_factories,
+        held_out_sources=splits.held_out_sources,
     )
     if expected_splits != splits:
         raise ValueError("split assignments differ from canonical grouped splits")
@@ -173,6 +174,7 @@ def freeze_dataset(
         eligible_records,
         seed=splits.seed,
         held_out_factories=splits.held_out_factories,
+        held_out_sources=splits.held_out_sources,
     )
     readiness = evaluate_readiness(
         eligible_records,
@@ -186,6 +188,7 @@ def freeze_dataset(
         {
             "assignments": list(eligible_splits.assignments),
             "held_out_factories": list(eligible_splits.held_out_factories),
+            "held_out_sources": list(eligible_splits.held_out_sources),
             "seed": eligible_splits.seed,
             "temporal_cutoff": (
                 None

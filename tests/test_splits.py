@@ -76,6 +76,7 @@ def test_build_splits_returns_all_six_split_keys(manifest_rows: list[ManifestRec
         manifest_rows,
         gold_paths=_gold_paths(manifest_rows),
         holdout_sources={"unseen_forum"},
+        cross_source_sources={"watchuseek", "chinese_replica"},
     )
 
     assert set(splits) == {TRAIN, VAL, TEST, CROSS_SOURCE, FACTORY_HOLDOUT, GOLD}
@@ -83,7 +84,8 @@ def test_build_splits_returns_all_six_split_keys(manifest_rows: list[ManifestRec
 
 def test_gold_set_never_appears_in_train(manifest_rows: list[ManifestRecord]):
     gold_paths = _gold_paths(manifest_rows)
-    splits = build_splits(manifest_rows, gold_paths=gold_paths, holdout_sources={"unseen_forum"})
+    splits = build_splits(manifest_rows, gold_paths=gold_paths, holdout_sources={"unseen_forum"},
+                          cross_source_sources={"watchuseek", "chinese_replica"})
 
     train_paths = {record.path for record in splits[TRAIN]}
     assert train_paths.isdisjoint(gold_paths)
@@ -93,7 +95,8 @@ def test_gold_set_never_appears_in_train(manifest_rows: list[ManifestRecord]):
 def test_factory_holdout_never_appears_in_train(manifest_rows: list[ManifestRecord]):
     holdout_sources = {"unseen_forum"}
     splits = build_splits(
-        manifest_rows, gold_paths=_gold_paths(manifest_rows), holdout_sources=holdout_sources
+        manifest_rows, gold_paths=_gold_paths(manifest_rows), holdout_sources=holdout_sources,
+        cross_source_sources={"watchuseek", "chinese_replica"}
     )
 
     train_sources = {record.source for record in splits[TRAIN]}
@@ -102,11 +105,12 @@ def test_factory_holdout_never_appears_in_train(manifest_rows: list[ManifestReco
     assert len(splits[FACTORY_HOLDOUT]) == 8
 
 
-def test_cross_source_split_pairs_genuine_casual_with_fake_studio(
+def test_cross_source_split_uses_explicit_unseen_sources(
     manifest_rows: list[ManifestRecord],
 ):
     splits = build_splits(
-        manifest_rows, gold_paths=_gold_paths(manifest_rows), holdout_sources={"unseen_forum"}
+        manifest_rows, gold_paths=_gold_paths(manifest_rows), holdout_sources={"unseen_forum"},
+        cross_source_sources={"watchuseek", "chinese_replica"}
     )
 
     cross_source = splits[CROSS_SOURCE]
@@ -120,9 +124,16 @@ def test_cross_source_split_pairs_genuine_casual_with_fake_studio(
     assert len(cross_source) == 20
 
 
+def test_manifest_split_does_not_infer_holdout_from_style_proxy(manifest_rows):
+    splits = build_splits(manifest_rows, gold_paths=_gold_paths(manifest_rows),
+                          holdout_sources={"unseen_forum"})
+    assert splits[CROSS_SOURCE] == []
+
+
 def test_cross_source_split_never_appears_in_train(manifest_rows: list[ManifestRecord]):
     splits = build_splits(
-        manifest_rows, gold_paths=_gold_paths(manifest_rows), holdout_sources={"unseen_forum"}
+        manifest_rows, gold_paths=_gold_paths(manifest_rows), holdout_sources={"unseen_forum"},
+        cross_source_sources={"watchuseek", "chinese_replica"}
     )
 
     cross_source_paths = {record.path for record in splits[CROSS_SOURCE]}
@@ -134,7 +145,8 @@ def test_train_val_test_partition_the_remaining_pool_without_overlap(
     manifest_rows: list[ManifestRecord],
 ):
     splits = build_splits(
-        manifest_rows, gold_paths=_gold_paths(manifest_rows), holdout_sources={"unseen_forum"}
+        manifest_rows, gold_paths=_gold_paths(manifest_rows), holdout_sources={"unseen_forum"},
+        cross_source_sources={"watchuseek", "chinese_replica"}
     )
 
     reserved_paths = (

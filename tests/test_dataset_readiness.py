@@ -18,6 +18,7 @@ from dataset.freeze import (
 )
 from dataset.readiness import evaluate_readiness
 from dataset.splits import (
+    CROSS_SOURCE,
     TRAIN,
     DatasetSplits,
     assert_no_connected_component_crosses_splits,
@@ -75,7 +76,9 @@ def _small_complete_records() -> list[TrainingRecord]:
     index = 1
     for label, grade in ((Label.GENUINE, None), *((Label.FAKE, grade) for grade in range(1, 5))):
         for angle in Angle:
-            records.append(_record(index, label=label, grade=grade, angle=angle, gold=angle is Angle.DIAL))
+            records.append(_record(index, label=label, grade=grade, angle=angle,
+                                   source=f"source-{index % 4}.example.co.za",
+                                   gold=angle is Angle.DIAL))
             index += 1
     records.append(
         _record(index, label=Label.REJECTION, angle=None, gold=True, subtype="no-watch")
@@ -102,7 +105,8 @@ def test_small_complete_dataset_passes_when_thresholds_are_scaled(monkeypatch):
     monkeypatch.setattr(readiness, "MIN_REJECTION_IMAGES", 1)
     monkeypatch.setattr(readiness, "MIN_REJECTION_SUBJECTS", 1)
     monkeypatch.setattr(readiness, "MIN_GOLD_IMAGES", 1)
-    splits = DatasetSplits(tuple((record.asset_id, TRAIN) for record in records), NOW, 42)
+    splits = DatasetSplits(tuple((record.asset_id, CROSS_SOURCE if record.source_domain == "source-0.example.co.za" else TRAIN) for record in records), NOW, 42,
+                           held_out_sources=("source-0.example.co.za",))
 
     report = evaluate_readiness(records, "rolex-submariner-126610ln", splits=splits, required_angles=tuple(Angle))
 
@@ -139,6 +143,47 @@ def test_patek_readiness_uses_its_views_and_non_target_rejections(monkeypatch):
     assert report.required_angles == required_angles
     assert len(report.cell_counts) == 20
     assert not any("cyclops" in cell or "rehaut" in cell for cell, _, _ in report.cell_counts)
+
+
+def test_training_style_shortcut_and_missing_unseen_source_block_readiness():
+    records = [
+        _record(1, label=Label.GENUINE, style="studio"),
+        _record(2, label=Label.FAKE, grade=1, style="casual"),
+        _record(3, label=Label.GENUINE, style="casual"),
+        _record(4, label=Label.FAKE, grade=1, style="studio"),
+    ]
+    splits = DatasetSplits(tuple((record.asset_id, CROSS_SOURCE if record.asset_id in {"asset-3", "asset-4"} else TRAIN)
+                                  for record in records), NOW, 42)
+
+    report = evaluate_readiness(records, records[0].reference_id, splits=splits,
+                                required_angles=(Angle.DIAL,))
+
+    assert "train/genuine: requires studio and casual examples" in report.reasons
+    assert "train/fake: requires studio and casual examples" in report.reasons
+    assert "cross-source: source also appears in train" in report.reasons
+
+
+def test_explicit_source_holdout_leaves_both_styles_per_class_in_train():
+    records = [
+        _record(index, label=label, grade=1 if label is Label.FAKE else None,
+                style=style, source=source)
+        for index, label, style, source in (
+            (1, Label.GENUINE, "casual", "unseen-original.example"),
+            (2, Label.FAKE, "studio", "unseen-fake.example"),
+            (3, Label.GENUINE, "studio", "studio-original.example"),
+            (4, Label.GENUINE, "casual", "casual-original.example"),
+            (5, Label.FAKE, "studio", "studio-fake.example"),
+            (6, Label.FAKE, "casual", "casual-fake.example"),
+        )
+    ] + [_record(index, label=Label.REJECTION, angle=None, subtype="no-watch") for index in (7, 8)]
+    splits = build_splits(records, seed=42, held_out_factories=(),
+                          held_out_sources={"unseen-original.example", "unseen-fake.example"})
+    train = {record.asset_id for record in records if splits.split_by_asset[record.asset_id] == TRAIN}
+    cross = {record.asset_id for record in records if splits.split_by_asset[record.asset_id] == CROSS_SOURCE}
+
+    assert cross == {"asset-1", "asset-2"}
+    assert {record.capture_style for record in records if record.asset_id in train and record.label is Label.GENUINE} == {"studio", "casual"}
+    assert {record.capture_style for record in records if record.asset_id in train and record.label is Label.FAKE} == {"studio", "casual"}
 
 
 def test_other_watch_rejection_cannot_name_its_target_reference():
@@ -460,6 +505,21 @@ def test_freeze_hashes_do_not_depend_on_record_order(policy_set, rights, catalog
     )
 
     assert first.freeze == second.freeze
+
+
+def test_freeze_commits_source_holdout_to_split_hash(policy_set, rights, catalog_fixture):
+    records = [replace(_record(index, source="heldout.example" if index == 1 else f"source-{index}.example"),
+                       rights_record_id=rights.rights_record_id) for index in range(1, 7)]
+
+    def frozen(held_out_sources):
+        splits = build_splits(records, seed=42, held_out_factories=(),
+                              held_out_sources=held_out_sources)
+        return freeze_dataset(records, splits, policy_set, {rights.rights_record_id: rights},
+                              previous_freeze=None, published_artifact_hashes=(), now=NOW,
+                              object_inventory={}, artifact_lineage={},
+                              reference_catalog=catalog_fixture.catalog).freeze
+
+    assert frozen({"heldout.example"}).split_sha256 != frozen(()).split_sha256
 
 
 def test_freeze_rejects_noncanonical_split_assignments(policy_set, rights, catalog_fixture):

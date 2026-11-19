@@ -23,18 +23,6 @@ from acquisition.types import TrainingRecord as AcceptedTrainingRecord
 from core.types import Label, ManifestRecord
 from dataset.entities import find_near_duplicate_pairs
 
-# item 13's cross-source defense pairs genuine photos shot in a casual,
-# forum-style setting against fake photos shot in a studio/catalog style —
-# each label's *atypical* photographic style, which is what would expose a
-# model that learned "which website this came from" instead of the watch.
-# `source` is this manifest's only per-row style signal (no dedicated style
-# tag exists on `ManifestRecord`), so these two sets map known `source`
-# values onto that casual-vs-studio axis.
-# ponytail: a fixed source->style lookup, not a learned/measured style
-# classifier; extend these sets as new scraper sources are added.
-CASUAL_STYLE_SOURCES = frozenset({"watchuseek"})
-STUDIO_STYLE_SOURCES = frozenset({"chinese_replica"})
-
 DEFAULT_VAL_FRACTION = 0.15
 DEFAULT_TEST_FRACTION = 0.15
 DEFAULT_SEED = 42
@@ -82,6 +70,7 @@ def build_manifest_splits(
     *,
     gold_paths: Collection[str] = (),
     holdout_sources: Collection[str] = (),
+    cross_source_sources: Collection[str] = (),
     val_fraction: float = DEFAULT_VAL_FRACTION,
     test_fraction: float = DEFAULT_TEST_FRACTION,
     seed: int = DEFAULT_SEED,
@@ -91,11 +80,14 @@ def build_manifest_splits(
     `gold_paths` (the frozen ~200-photo gold set) and `holdout_sources`
     (factories/sources reserved for the never-seen-in-training evaluation
     split) are the caller's membership decisions — neither is derivable
-    from a manifest row alone. Both pools, plus the cross-source pairing,
+    from a manifest row alone. The cross-source domains are also explicit. Both pools
     are removed from the pool before train/val/test is cut.
     """
     gold_path_set = set(gold_paths)
     holdout_source_set = set(holdout_sources)
+    cross_source_set = set(cross_source_sources)
+    if holdout_source_set & cross_source_set:
+        raise ValueError("factory and cross-source holdouts must use distinct sources")
 
     gold = [record for record in records if record.path in gold_path_set]
     remaining = [record for record in records if record.path not in gold_path_set]
@@ -103,7 +95,7 @@ def build_manifest_splits(
     factory_holdout = [record for record in remaining if record.source in holdout_source_set]
     remaining = [record for record in remaining if record.source not in holdout_source_set]
 
-    cross_source = _build_cross_source_split(remaining)
+    cross_source = [record for record in remaining if record.source in cross_source_set]
     cross_source_paths = {record.path for record in cross_source}
     remaining = [record for record in remaining if record.path not in cross_source_paths]
 
@@ -119,21 +111,6 @@ def build_manifest_splits(
         FACTORY_HOLDOUT: factory_holdout,
         GOLD: gold,
     }
-
-
-def _build_cross_source_split(records: Sequence[ManifestRecord]) -> list[ManifestRecord]:
-    """Pair genuine-in-casual-style rows with fake-in-studio-style rows."""
-    genuine_in_casual_style = [
-        record
-        for record in records
-        if record.label is Label.GENUINE and record.source in CASUAL_STYLE_SOURCES
-    ]
-    fake_in_studio_style = [
-        record
-        for record in records
-        if record.label is Label.FAKE and record.source in STUDIO_STYLE_SOURCES
-    ]
-    return genuine_in_casual_style + fake_in_studio_style
 
 
 def _split_train_val_test(
@@ -163,6 +140,7 @@ class DatasetSplits:
     temporal_cutoff: datetime | None
     seed: int
     held_out_factories: tuple[str, ...] = ()
+    held_out_sources: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         asset_ids = [asset_id for asset_id, _ in self.assignments]
@@ -179,6 +157,8 @@ class DatasetSplits:
             raise ValueError("seed must be an integer")
         if tuple(sorted(set(self.held_out_factories))) != self.held_out_factories:
             raise ValueError("held-out factories must be sorted and unique")
+        if tuple(sorted(set(self.held_out_sources))) != self.held_out_sources:
+            raise ValueError("held-out sources must be sorted and unique")
 
     @property
     def split_by_asset(self) -> Mapping[str, str]:
@@ -209,6 +189,7 @@ def build_splits(
     *,
     seed: int,
     held_out_factories: Collection[str],
+    held_out_sources: Collection[str] = (),
 ) -> DatasetSplits:
     """Assign every transitive leakage family to one deterministic split."""
     asset_ids = [record.asset_id for record in records]
@@ -246,6 +227,7 @@ def build_splits(
     assigned_components: dict[str, str] = {}
     remainder: list[tuple[AcceptedTrainingRecord, ...]] = []
     held_out = set(held_out_factories)
+    held_out_domains = set(held_out_sources)
     for component in ordered_components:
         component_id = component[0].asset_id
         if any(item.is_gold for item in component):
@@ -254,11 +236,7 @@ def build_splits(
             assigned_components[component_id] = FACTORY_HOLDOUT
         elif cutoff is not None and min(item.collected_at for item in component) >= cutoff:
             assigned_components[component_id] = TEMPORAL_HOLDOUT
-        elif any(
-            (item.label is Label.GENUINE and item.capture_style == "casual")
-            or (item.label is Label.FAKE and item.capture_style == "studio")
-            for item in component
-        ):
+        elif any(item.source_domain in held_out_domains for item in component):
             assigned_components[component_id] = CROSS_SOURCE
         else:
             remainder.append(component)
@@ -298,6 +276,7 @@ def build_splits(
         temporal_cutoff=cutoff,
         seed=seed,
         held_out_factories=tuple(sorted(held_out)),
+        held_out_sources=tuple(sorted(held_out_domains)),
     )
     assert_no_connected_component_crosses_splits(records, result)
     return result
