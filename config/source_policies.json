@@ -182,5 +182,19 @@
     ],
     "requires_rightsholder_permission": false,
     "policy_evidence_sha256": "ca24563221d81aea2100182d2db9a90870a9ab7a5b5d27c578174d914a86a17b"
+  },
+  {
+    "policy_id": "cbp-public-seizure-private-download-v1",
+    "source": "cbp",
+    "allowed_methods": [
+      "public-sitemap"
+    ],
+    "may_download": true,
+    "may_train": false,
+    "required_rights_purposes": [
+      "download"
+    ],
+    "requires_rightsholder_permission": false,
+    "policy_evidence_sha256": "a94c5a75f9347d8fca0d7becdfd95122ed3a8b0f46398b29e078a808172b19cb"
   }
 ]

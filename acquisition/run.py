@@ -45,6 +45,7 @@ from infra.ibm_cos import (
     verify_no_public_access_policies,
     verify_private_versioned_bucket,
 )
+from scrapers.cbp import CBPDiscoveryError, discover_cbp
 from scrapers.goldsmiths import GoldsmithsAPIError, discover_goldsmiths
 from scrapers.metadata_http import HTTPDeadlineExceeded
 from scrapers.precisionwatches import PrecisionWatchesAPIError, discover_precisionwatches
@@ -67,6 +68,7 @@ _OWNER_PUBLIC_DOWNLOAD_DIRECTIVE = (
     "images privately; do not treat download as permission to train or proof of authenticity"
 )
 _RECOVERABLE_METADATA_ERRORS = (
+    CBPDiscoveryError,
     GoldsmithsAPIError,
     HTTPDeadlineExceeded,
     PrecisionWatchesAPIError,
@@ -751,7 +753,7 @@ def main(source: str = "all") -> None:
     root = Path(__file__).resolve().parents[1]
     policies = load_source_policies(root / "config/source_policies.json")
     access_registry = load_source_access_registry(root / "config/source_access.json")
-    if source not in {"all", "supercloneluxury"}:
+    if source not in {"all", "supercloneluxury", "cbp"}:
         raise ValueError("unsupported acquisition source")
     logging.basicConfig(level=logging.INFO)
     now = datetime.now(timezone.utc)
@@ -770,6 +772,26 @@ def main(source: str = "all") -> None:
                 requests.Session(),
                 luxury_policy,
                 luxury_access,
+                now=now,
+                previous=previous,
+                deadline=job_deadline,
+            ),
+        )
+        return
+    if source == "cbp":
+        cbp_policy = get_source_policy(policies, source)
+        cbp_access = access_registry[source]
+        run_public_image_collection_resilient(
+            cos,
+            bucket,
+            prefix,
+            cbp_policy,
+            cbp_access,
+            now=now,
+            discover=lambda previous: discover_cbp(
+                requests.Session(),
+                cbp_policy,
+                cbp_access,
                 now=now,
                 previous=previous,
                 deadline=job_deadline,
@@ -914,5 +936,5 @@ def main(source: str = "all") -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", choices=("all", "supercloneluxury"), default="all")
+    parser.add_argument("--source", choices=("all", "supercloneluxury", "cbp"), default="all")
     main(parser.parse_args().source)
