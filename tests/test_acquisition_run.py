@@ -582,7 +582,7 @@ def test_runtime_artifacts_are_bounded_idempotent_and_secret_safe():
     container = (root / "Containerfile.acquisition").read_text()
 
     assert "@sha256:" in script
-    assert "job create" in script and "job update" in script
+    assert "job create" in script and "job update" not in script
     assert "sub cron create" in script and "sub cron update" in script
     assert "17 3 * * *" in script and "--maxexecutiontime 600" in script
     assert "secret list" not in script and "API_KEY" not in script
@@ -595,7 +595,8 @@ def test_runtime_artifacts_are_bounded_idempotent_and_secret_safe():
     assert "requirements.txt" not in container
 
 
-def test_deploy_script_creates_and_rechecks_trusted_profile_link(tmp_path):
+@pytest.mark.parametrize("existing_cron", [False, True])
+def test_deploy_script_creates_and_rechecks_trusted_profile_link(tmp_path, existing_cron):
     root = Path(__file__).resolve().parents[1]
     fake = tmp_path / "ibmcloud"
     fake.write_text(
@@ -603,30 +604,43 @@ def test_deploy_script_creates_and_rechecks_trusted_profile_link(tmp_path):
 set -eu
 printf '%s\n' "$*" >> "$CALL_LOG"
 case "$*" in
-  "ce job get"*) exit 1 ;;
-  "ce sub cron get"*) exit 1 ;;
+  "ce job get"*)
+    if [[ ! -f "$JOB_STATE" ]] || ! grep -qx "$5" "$JOB_STATE"; then exit 1; fi
+    args='["-m","acquisition.run"]'
+    if [[ "$5" == watch-auth-supercloneluxury-* ]]; then args='["-m","acquisition.run","--source","supercloneluxury"]'; fi
+    if [[ "$5" == watch-auth-cbp-* ]]; then args='["-m","acquisition.run","--source","cbp"]'; fi
+    image="$WATCH_AUTH_ACQUISITION_IMAGE_DIGEST"
+    cpu='0.25'
+    if [[ "${DRIFTED_JOB:-0}" == 1 && "$5" == watch-auth-cbp-* ]]; then cpu='1'; fi
+    printf '{"image_reference":"%s","image_secret":"%s","run_service_account":"none","run_compute_resource_token_enabled":true,"run_commands":["python"],"run_arguments":%s,"scale_array_spec":"0","scale_cpu_limit":"%s","scale_max_execution_time":600,"scale_memory_limit":"1G","scale_retry_limit":0,"run_env_variables":[' "$image" "$WATCH_AUTH_REGISTRY_SECRET" "$args" "$cpu"
+    printf '{"name":"WATCH_AUTH_COS_BUCKET","type":"literal","value":"%s"},' "$WATCH_AUTH_COS_BUCKET"
+    printf '{"name":"WATCH_AUTH_COS_ENDPOINT","type":"literal","value":"%s"},' "$WATCH_AUTH_COS_ENDPOINT"
+    printf '{"name":"WATCH_AUTH_COS_SERVICE_INSTANCE_ID","type":"literal","value":"%s"},' "$WATCH_AUTH_COS_SERVICE_INSTANCE_ID"
+    printf '{"name":"WATCH_AUTH_TRUSTED_PROFILE_ID","type":"literal","value":"%s"},' "$WATCH_AUTH_TRUSTED_PROFILE_ID"
+    printf '{"name":"WATCH_AUTH_ACCOUNT_ID","type":"literal","value":"%s"},' "$WATCH_AUTH_ACCOUNT_ID"
+    printf '{"name":"WATCH_AUTH_IAM_READER_POLICY_ID","type":"literal","value":"%s"},' "$WATCH_AUTH_IAM_READER_POLICY_ID"
+    printf '{"name":"WATCH_AUTH_ACQUISITION_PREFIX","type":"literal","value":"datasets"}]}'
+    ;;
+  "ce job create"*) printf '%s\n' "$5" >> "$JOB_STATE" ;;
+  "ce sub cron get"*) [[ "$EXISTING_CRON" == 1 ]] ;;
   "iam trusted-profile-links"*)
+    printf '['
+    first=1
     if [[ -f "$LINK_STATE" ]]; then
-      printf '[{"cr_type":"CE","link":{"crn":"%s","component_type":"job","component_name":"watch-auth-acquisition"}}' "$WATCH_AUTH_CE_PROJECT_CRN"
-      if grep -q watch-auth-supercloneluxury "$LINK_STATE"; then
-        printf ',{"cr_type":"CE","link":{"crn":"%s","component_type":"job","component_name":"watch-auth-supercloneluxury"}}' "$WATCH_AUTH_CE_PROJECT_CRN"
-      fi
-      if grep -q watch-auth-cbp "$LINK_STATE"; then
-        printf ',{"cr_type":"CE","link":{"crn":"%s","component_type":"job","component_name":"watch-auth-cbp"}}' "$WATCH_AUTH_CE_PROJECT_CRN"
-      fi
-      printf ']'
-    else
-      printf '[]'
+      while IFS= read -r job; do
+        [[ "$first" -eq 1 ]] || printf ','
+        printf '{"cr_type":"CE","link":{"crn":"%s","component_type":"job","component_name":"%s"}}' "$WATCH_AUTH_CE_PROJECT_CRN" "$job"
+        first=0
+      done < "$LINK_STATE"
     fi
+    printf ']'
     ;;
   "iam trusted-profile-link-create"*)
-    if [[ "$*" == *watch-auth-supercloneluxury* ]]; then
-      printf 'watch-auth-supercloneluxury\n' >> "$LINK_STATE"
-    elif [[ "$*" == *watch-auth-cbp* ]]; then
-      printf 'watch-auth-cbp\n' >> "$LINK_STATE"
-    else
-      touch "$LINK_STATE"
-    fi
+    for ((i=1; i<=$#; i++)); do
+      if [[ "${!i}" == '--link-component-name' ]]; then
+        j=$((i+1)); printf '%s\n' "${!j}" >> "$LINK_STATE"; break
+      fi
+    done
     ;;
 esac
 """
@@ -638,6 +652,8 @@ esac
         "PATH": f"{tmp_path}:{os.environ['PATH']}",
         "CALL_LOG": str(log),
         "LINK_STATE": str(tmp_path / "linked"),
+        "JOB_STATE": str(tmp_path / "jobs"),
+        "EXISTING_CRON": "1" if existing_cron else "0",
         "WATCH_AUTH_CE_PROJECT": "watch-authenticity",
         "WATCH_AUTH_CE_PROJECT_CRN": "crn:v1:project",
         "WATCH_AUTH_ACQUISITION_IMAGE_DIGEST": "us.icr.io/ns/acquisition@sha256:" + "a" * 64,
@@ -663,15 +679,42 @@ esac
     assert "ce job create" in calls
     assert calls.count("iam trusted-profile-links") == 6
     assert calls.count("iam trusted-profile-link-create") == 3
-    assert "ce job create --name watch-auth-supercloneluxury" in calls
+    assert "ce job create --name watch-auth-supercloneluxury-" in calls
     assert "--arg=--source --arg=supercloneluxury" in calls
-    assert "ce sub cron create --name watch-auth-supercloneluxury-daily" in calls
-    assert "ce job create --name watch-auth-cbp" in calls
+    cron_action = "update" if existing_cron else "create"
+    assert f"ce sub cron {cron_action} --name watch-auth-supercloneluxury-daily" in calls
+    assert "ce job create --name watch-auth-cbp-" in calls
     assert "--arg=--source --arg=cbp" in calls
-    assert "ce sub cron create --name watch-auth-cbp-daily" in calls
+    assert f"ce sub cron {cron_action} --name watch-auth-cbp-daily" in calls
+    assert calls.index("--link-component-name watch-auth-cbp-") < calls.index(
+        f"ce sub cron {cron_action} --name watch-auth-acquisition-daily"
+    )
+    assert "ce job update" not in calls
+    if existing_cron:
+        log.write_text("")
+        repeated = subprocess.run(
+            ["bash", str(root / "scripts/deploy_ibm_acquisition.sh")],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+        assert repeated.returncode == 0, repeated.stderr
+        assert "ce job create" not in log.read_text()
+        log.write_text("")
+        drifted = subprocess.run(
+            ["bash", str(root / "scripts/deploy_ibm_acquisition.sh")],
+            capture_output=True,
+            text=True,
+            env={**env, "DRIFTED_JOB": "1"},
+            timeout=10,
+        )
+        assert drifted.returncode == 2
+        assert "staged job readback differs" in drifted.stderr
+        assert "ce sub cron update" not in log.read_text()
 
 
-def test_deploy_fails_closed_when_link_inventory_is_unavailable(tmp_path):
+def test_deploy_fails_closed_when_job_readback_is_unavailable(tmp_path):
     root = Path(__file__).resolve().parents[1]
     fake = tmp_path / "ibmcloud"
     fake.write_text(
@@ -710,8 +753,9 @@ esac
     )
 
     assert result.returncode == 2
-    assert "trusted-profile link inventory failed" in result.stderr
+    assert "staged job readback differs" in result.stderr
     assert "trusted-profile-link-create" not in log.read_text()
+    assert "ce sub cron" not in log.read_text()
 
 
 def test_bounded_metadata_sources_run_before_unbounded_wos():
