@@ -238,6 +238,27 @@ def test_search_offset_and_next_family_are_resumable(cos):
     assert dict(third.page.records[0].metadata)["brand_claim_from_text"] == "cartier"
 
 
+def test_patek_search_accepts_hyphenated_official_name(cos):
+    http = MagicMock()
+    http.get.return_value = _Response({"batchcomplete": True})
+    commit = None
+    for _ in range(3):
+        result = _discover(http, cos, previous=commit)
+        commit = append_discovery_page(cos, "private", "datasets/discovery", result.page,
+                                       previous=commit)
+    page = _page()
+    page["title"] = "File:Patek-Philippe-Nautilus-5711-1A-010-1.jpg"
+    page["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Patek-Philippe-Nautilus-5711-1A-010-1.jpg"
+    http.get.return_value = _Response({"query": {"pages": [page]}})
+
+    result = _discover(http, cos, previous=commit)
+
+    assert http.get.call_args.kwargs["params"]["gsrsearch"] == "Patek Philippe Nautilus"
+    assert len(result.candidates) == 1
+    assert result.candidates[0].metadata.declared_reference == "unverified"
+    assert dict(result.page.records[0].metadata)["brand_claim_from_text"] == "patek philippe"
+
+
 def test_unsupported_file_mime_is_skipped(cos):
     http = MagicMock()
     page = _page()
