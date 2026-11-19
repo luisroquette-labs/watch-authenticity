@@ -612,15 +612,21 @@ case "$*" in
     if [[ "$5" == watch-auth-goldsmiths-* ]]; then args='["-m","acquisition.run","--source","goldsmiths"]'; fi
     image="$WATCH_AUTH_ACQUISITION_IMAGE_DIGEST"
     cpu='0.25'
+    service_account='project-none'
     if [[ "${DRIFTED_JOB:-0}" == 1 && "$5" == watch-auth-cbp-* ]]; then cpu='1'; fi
-    printf '{"image_reference":"%s","image_secret":"%s","run_service_account":"none","run_compute_resource_token_enabled":true,"run_commands":["python"],"run_arguments":%s,"scale_array_spec":"0","scale_cpu_limit":"%s","scale_max_execution_time":600,"scale_memory_limit":"1G","scale_retry_limit":0,"run_env_variables":[' "$image" "$WATCH_AUTH_REGISTRY_SECRET" "$args" "$cpu"
-    printf '{"name":"WATCH_AUTH_COS_BUCKET","type":"literal","value":"%s"},' "$WATCH_AUTH_COS_BUCKET"
-    printf '{"name":"WATCH_AUTH_COS_ENDPOINT","type":"literal","value":"%s"},' "$WATCH_AUTH_COS_ENDPOINT"
-    printf '{"name":"WATCH_AUTH_COS_SERVICE_INSTANCE_ID","type":"literal","value":"%s"},' "$WATCH_AUTH_COS_SERVICE_INSTANCE_ID"
-    printf '{"name":"WATCH_AUTH_TRUSTED_PROFILE_ID","type":"literal","value":"%s"},' "$WATCH_AUTH_TRUSTED_PROFILE_ID"
-    printf '{"name":"WATCH_AUTH_ACCOUNT_ID","type":"literal","value":"%s"},' "$WATCH_AUTH_ACCOUNT_ID"
-    printf '{"name":"WATCH_AUTH_IAM_READER_POLICY_ID","type":"literal","value":"%s"},' "$WATCH_AUTH_IAM_READER_POLICY_ID"
-    printf '{"name":"WATCH_AUTH_ACQUISITION_PREFIX","type":"literal","value":"datasets"}]}'
+    if [[ "${DRIFTED_JOB:-0}" == 2 && "$5" == watch-auth-goldsmiths-* ]]; then image='unapproved:latest'; fi
+    if [[ "${DRIFTED_JOB:-0}" == 3 && "$5" == watch-auth-goldsmiths-* ]]; then service_account='privileged-none'; fi
+    printf '{"metadata":{"namespace":"project"},"spec":{"arraySpec":"0","maxExecutionTime":600,"retryLimit":0,"mode":"task","template":{"serviceAccountName":"%s","mountComputeResourceToken":true,"imagePullSecrets":[{"name":"%s"}],"containers":[{"image":"%s","command":["python"],"args":%s,"resources":{"requests":{"cpu":"%sm","ephemeral-storage":"400M","memory":"1G"}},"env":[' "$service_account" "$WATCH_AUTH_REGISTRY_SECRET" "$image" "$args" "${cpu/0.25/250}"
+    printf '{"name":"WATCH_AUTH_COS_BUCKET","value":"%s"},' "$WATCH_AUTH_COS_BUCKET"
+    printf '{"name":"WATCH_AUTH_COS_ENDPOINT","value":"%s"},' "$WATCH_AUTH_COS_ENDPOINT"
+    printf '{"name":"WATCH_AUTH_COS_SERVICE_INSTANCE_ID","value":"%s"},' "$WATCH_AUTH_COS_SERVICE_INSTANCE_ID"
+    printf '{"name":"WATCH_AUTH_TRUSTED_PROFILE_ID","value":"%s"},' "$WATCH_AUTH_TRUSTED_PROFILE_ID"
+    printf '{"name":"WATCH_AUTH_ACCOUNT_ID","value":"%s"},' "$WATCH_AUTH_ACCOUNT_ID"
+    printf '{"name":"WATCH_AUTH_IAM_READER_POLICY_ID","value":"%s"},' "$WATCH_AUTH_IAM_READER_POLICY_ID"
+    printf '{"name":"WATCH_AUTH_ACQUISITION_PREFIX","value":"datasets"},'
+    printf '{"name":"CE_API_BASE_URL","value":"https://api.private.us-south.codeengine.cloud.ibm.com"},'
+    printf '{"name":"CE_PROJECT_ID","value":"project-id"},'
+    printf '{"name":"CE_REGION","value":"us-south"}]}]}}}'
     ;;
   "ce job create"*) printf '%s\n' "$5" >> "$JOB_STATE" ;;
   "ce sub cron get"*) [[ "$EXISTING_CRON" == 1 ]] ;;
@@ -724,17 +730,18 @@ esac
         )
         assert repeated.returncode == 0, repeated.stderr
         assert "ce job create" not in log.read_text()
-        log.write_text("")
-        drifted = subprocess.run(
-            ["bash", str(root / "scripts/deploy_ibm_acquisition.sh")],
-            capture_output=True,
-            text=True,
-            env={**env, "DRIFTED_JOB": "1"},
-            timeout=10,
-        )
-        assert drifted.returncode == 2
-        assert "staged job readback differs" in drifted.stderr
-        assert "ce sub cron update" not in log.read_text()
+        for drift in ("1", "2", "3"):
+            log.write_text("")
+            drifted = subprocess.run(
+                ["bash", str(root / "scripts/deploy_ibm_acquisition.sh")],
+                capture_output=True,
+                text=True,
+                env={**env, "DRIFTED_JOB": drift},
+                timeout=10,
+            )
+            assert drifted.returncode == 2
+            assert "staged job readback differs" in drifted.stderr
+            assert "ce sub cron update" not in log.read_text()
 
 
 def test_deploy_fails_closed_when_job_readback_is_unavailable(tmp_path):
