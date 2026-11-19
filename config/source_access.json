@@ -219,5 +219,20 @@
     "requests_per_minute": 10,
     "reason": "robots.txt advertises public product sitemaps; image copyright permission is absent, so only CPO metadata and image URLs may be stored",
     "evidence_sha256": "a1a2e954e8228811e6c31945c89d178c081c2745c6e401ac497d24c4a0e80aed"
+  },
+  {
+    "access_record_id": "access-supercloneluxury-store-api-20261119",
+    "source": "supercloneluxury",
+    "acquisition_method": "woocommerce-store-api",
+    "status": "active",
+    "evidence_url": "https://supercloneluxury.com/robots.txt",
+    "verified_at": "2026-11-19T04:12:50Z",
+    "expires_at": "2027-11-19T04:12:50Z",
+    "allowed_image_hosts": [
+      "supercloneluxury.com"
+    ],
+    "requests_per_minute": 30,
+    "reason": "Public WooCommerce Store API and robots.txt permit public catalog reads; owner authorized private archiving, but training remains blocked",
+    "evidence_sha256": "bb0d74db81a89ef6db0662bff3eb4379945a2b7f29eb99ed10a1d636cd97a6dc"
   }
 ]

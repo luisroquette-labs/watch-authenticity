@@ -168,5 +168,19 @@
     "required_rights_purposes": [],
     "requires_rightsholder_permission": true,
     "policy_evidence_sha256": "7796ed2c4adc07b81adbfc962609d1472ebdfafe83fd8f9aa8b4d2ca800096ce"
+  },
+  {
+    "policy_id": "supercloneluxury-store-api-private-download-v1",
+    "source": "supercloneluxury",
+    "allowed_methods": [
+      "woocommerce-store-api"
+    ],
+    "may_download": true,
+    "may_train": false,
+    "required_rights_purposes": [
+      "download"
+    ],
+    "requires_rightsholder_permission": false,
+    "policy_evidence_sha256": "ca24563221d81aea2100182d2db9a90870a9ab7a5b5d27c578174d914a86a17b"
   }
 ]

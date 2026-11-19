@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import logging
@@ -31,6 +32,7 @@ from acquisition.source_policy import (
     load_source_access_registry,
     load_source_policies,
 )
+from acquisition.supercloneluxury_archive import CatalogError
 from acquisition.types import (
     CollectionAuthorizationRecord,
     SourceAccessRecord,
@@ -48,6 +50,7 @@ from scrapers.metadata_http import HTTPDeadlineExceeded
 from scrapers.precisionwatches import PrecisionWatchesAPIError, discover_precisionwatches
 from scrapers.replica_sitemap import ReplicaSitemapError
 from scrapers.richfactoryus import discover_richfactoryus
+from scrapers.supercloneluxury import discover_supercloneluxury
 from scrapers.superclonerolex import SuperCloneRolexAPIError, discover_superclonerolex
 from scrapers.vsfactoryusa import discover_vsfactoryusa
 from scrapers.vsfwatcheshub import discover_vsfwatcheshub
@@ -70,6 +73,7 @@ _RECOVERABLE_METADATA_ERRORS = (
     ReplicaSitemapError,
     requests.RequestException,
     SuperCloneRolexAPIError,
+    CatalogError,
     UnicodeDecodeError,
     WatchesOfSwitzerlandAPIError,
 )
@@ -715,7 +719,7 @@ def _required_env(name: str) -> str:
     return value
 
 
-def main() -> None:
+def main(source: str = "all") -> None:
     """Create a credentialless Code Engine client and run one page."""
     from ibm_cloud_sdk_core.authenticators import ContainerAuthenticator
 
@@ -747,12 +751,34 @@ def main() -> None:
     root = Path(__file__).resolve().parents[1]
     policies = load_source_policies(root / "config/source_policies.json")
     access_registry = load_source_access_registry(root / "config/source_access.json")
-    image_requests_per_minute = access_registry["wikimedia"].requests_per_minute
-    if image_requests_per_minute is None or image_requests_per_minute < 2:
-        raise RuntimeError("Wikimedia rate limit cannot reserve the API request")
+    if source not in {"all", "supercloneluxury"}:
+        raise ValueError("unsupported acquisition source")
     logging.basicConfig(level=logging.INFO)
     now = datetime.now(timezone.utc)
     job_deadline = time.monotonic() + 420
+    if source == "supercloneluxury":
+        luxury_policy = get_source_policy(policies, source)
+        luxury_access = access_registry[source]
+        run_public_image_collection_resilient(
+            cos,
+            bucket,
+            prefix,
+            luxury_policy,
+            luxury_access,
+            now=now,
+            discover=lambda previous: discover_supercloneluxury(
+                requests.Session(),
+                luxury_policy,
+                luxury_access,
+                now=now,
+                previous=previous,
+                deadline=job_deadline,
+            ),
+        )
+        return
+    image_requests_per_minute = access_registry["wikimedia"].requests_per_minute
+    if image_requests_per_minute is None or image_requests_per_minute < 2:
+        raise RuntimeError("Wikimedia rate limit cannot reserve the API request")
     run_wikimedia_once(
         cos,
         bucket,
@@ -887,4 +913,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", choices=("all", "supercloneluxury"), default="all")
+    main(parser.parse_args().source)

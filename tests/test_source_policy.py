@@ -48,6 +48,7 @@ def test_registry_loads_every_declared_source_policy(policy_set):
         "vsfwatcheshub",
         "richfactoryus",
         "superclonerolex",
+        "supercloneluxury",
         "watchesofswitzerland",
         "goldsmiths",
         "precisionwatches",
@@ -67,7 +68,7 @@ def test_unknown_source_cannot_download_or_train(policy_set, rights):
 
 @pytest.mark.parametrize(
     "source",
-    ("vsfactoryusa", "vsfwatcheshub", "richfactoryus", "superclonerolex"),
+    ("vsfactoryusa", "vsfwatcheshub", "richfactoryus", "superclonerolex", "supercloneluxury"),
 )
 def test_owner_authorized_public_replica_source_downloads_privately_but_cannot_train(
     policy_set, source, rights
@@ -219,6 +220,7 @@ def test_versioned_access_registry_keeps_unproven_sources_inactive():
         "vsfwatcheshub",
         "richfactoryus",
         "superclonerolex",
+        "supercloneluxury",
         "watchesofswitzerland",
         "goldsmiths",
         "precisionwatches",
@@ -228,6 +230,7 @@ def test_versioned_access_registry_keeps_unproven_sources_inactive():
     assert registry["vsfwatcheshub"].status is SourceAccessStatus.ACTIVE
     assert registry["richfactoryus"].status is SourceAccessStatus.ACTIVE
     assert registry["superclonerolex"].status is SourceAccessStatus.ACTIVE
+    assert registry["supercloneluxury"].status is SourceAccessStatus.ACTIVE
     assert registry["watchesofswitzerland"].status is SourceAccessStatus.ACTIVE
     assert registry["goldsmiths"].status is SourceAccessStatus.ACTIVE
     assert registry["precisionwatches"].status is SourceAccessStatus.ACTIVE
@@ -241,6 +244,7 @@ def test_versioned_access_registry_keeps_unproven_sources_inactive():
             "vsfwatcheshub",
             "richfactoryus",
             "superclonerolex",
+            "supercloneluxury",
             "watchesofswitzerland",
             "goldsmiths",
             "precisionwatches",

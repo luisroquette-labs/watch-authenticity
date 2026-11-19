@@ -46,7 +46,7 @@ else
 fi
 
 link_exists() {
-  local output
+  local output job_name="$1"
   output="$(ibmcloud iam trusted-profile-links "${WATCH_AUTH_TRUSTED_PROFILE_ID}" --output json)" || return 2
   printf '%s' "${output}" | python3 -c '
 import json, sys
@@ -64,9 +64,9 @@ raise SystemExit(0 if any(
     and item["link"].get("component_name") == job
     for item in links
 ) else 1)
-' "${WATCH_AUTH_CE_PROJECT_CRN}" watch-auth-acquisition
+' "${WATCH_AUTH_CE_PROJECT_CRN}" "${job_name}"
 }
-if link_exists; then
+if link_exists watch-auth-acquisition; then
   :
 else
   link_state=$?
@@ -81,7 +81,7 @@ else
     --link-component-type job \
     --link-component-name watch-auth-acquisition \
     --output json >/dev/null
-  link_exists || { echo "trusted-profile link readback failed" >&2; exit 2; }
+  link_exists watch-auth-acquisition || { echo "trusted-profile link readback failed" >&2; exit 2; }
 fi
 
 cron_args=(
@@ -95,4 +95,41 @@ if ibmcloud ce sub cron get --name watch-auth-acquisition-daily --output json >/
   ibmcloud ce sub cron update "${cron_args[@]}"
 else
   ibmcloud ce sub cron create "${cron_args[@]}"
+fi
+
+luxury_job_args=("${job_args[@]}")
+luxury_job_args[1]=watch-auth-supercloneluxury
+luxury_job_args+=(--arg=--source --arg=supercloneluxury)
+if ibmcloud ce job get --name watch-auth-supercloneluxury --output json >/dev/null 2>&1; then
+  ibmcloud ce job update "${luxury_job_args[@]}"
+else
+  ibmcloud ce job create "${luxury_job_args[@]}"
+fi
+
+if link_exists watch-auth-supercloneluxury; then
+  :
+else
+  link_state=$?
+  [[ "${link_state}" -eq 1 ]] || {
+    echo "trusted-profile link inventory failed" >&2
+    exit 2
+  }
+  ibmcloud iam trusted-profile-link-create "${WATCH_AUTH_TRUSTED_PROFILE_ID}" \
+    --name watch-auth-supercloneluxury \
+    --cr-type CE \
+    --link-crn "${WATCH_AUTH_CE_PROJECT_CRN}" \
+    --link-component-type job \
+    --link-component-name watch-auth-supercloneluxury \
+    --output json >/dev/null
+  link_exists watch-auth-supercloneluxury || { echo "trusted-profile link readback failed" >&2; exit 2; }
+fi
+
+luxury_cron_args=("${cron_args[@]}")
+luxury_cron_args[1]=watch-auth-supercloneluxury-daily
+luxury_cron_args[5]=watch-auth-supercloneluxury
+luxury_cron_args[7]='37 3 * * *'
+if ibmcloud ce sub cron get --name watch-auth-supercloneluxury-daily --output json >/dev/null 2>&1; then
+  ibmcloud ce sub cron update "${luxury_cron_args[@]}"
+else
+  ibmcloud ce sub cron create "${luxury_cron_args[@]}"
 fi

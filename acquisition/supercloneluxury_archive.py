@@ -74,7 +74,15 @@ def _product(raw: object) -> dict[str, object]:
     if not isinstance(name, str) or not name or not isinstance(permalink, str):
         raise CatalogError("product name or permalink is missing")
     parsed = urlsplit(permalink)
-    if parsed.scheme != "https" or parsed.hostname != HOST or not parsed.path.startswith("/product/"):
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != HOST
+        or parsed.port is not None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+        or not parsed.path.startswith("/product/")
+    ):
         raise CatalogError("product permalink is outside the catalog")
     if not isinstance(images, list):
         raise CatalogError("product image list is missing")
