@@ -1,4 +1,4 @@
-"""Metadata-only discovery of seller-claimed Rolex watches from public sitemaps."""
+"""Metadata-only discovery of seller-claimed watches from public sitemaps."""
 
 from __future__ import annotations
 
