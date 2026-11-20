@@ -717,6 +717,15 @@ def test_runtime_artifacts_are_bounded_idempotent_and_secret_safe():
     assert "requirements.txt" not in container
 
 
+def test_research_census_source_is_accepted_by_runtime_cli():
+    result = subprocess.run(
+        [sys.executable, "-m", "acquisition.run", "--help"],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0
+    assert "research-census" in result.stdout
+
+
 @pytest.mark.parametrize("existing_cron", [False, True])
 def test_deploy_script_creates_and_rechecks_trusted_profile_link(tmp_path, existing_cron):
     root = Path(__file__).resolve().parents[1]
@@ -733,6 +742,7 @@ case "$*" in
     if [[ "$5" == watch-auth-cbp-* ]]; then args='["-m","acquisition.run","--source","cbp"]'; fi
     if [[ "$5" == watch-auth-goldsmiths-* ]]; then args='["-m","acquisition.run","--source","goldsmiths"]'; fi
     if [[ "$5" == watch-auth-speedmaster-* ]]; then args='["-m","acquisition.run","--source","wikimedia-speedmaster"]'; fi
+    if [[ "$5" == watch-auth-research-census-* ]]; then args='["-m","acquisition.run","--source","research-census"]'; fi
     image="$WATCH_AUTH_ACQUISITION_IMAGE_DIGEST"
     cpu='0.25'
     service_account='project-none'
@@ -823,8 +833,8 @@ esac
     assert result.returncode == 0, result.stderr
     calls = log.read_text()
     assert "ce job create" in calls
-    assert calls.count("iam trusted-profile-links") == 10
-    assert calls.count("iam trusted-profile-link-create") == 5
+    assert calls.count("iam trusted-profile-links") == 12
+    assert calls.count("iam trusted-profile-link-create") == 6
     assert "ce job create --name watch-auth-supercloneluxury-" in calls
     assert "--arg=--source --arg=supercloneluxury" in calls
     cron_action = "update" if existing_cron else "create"
@@ -838,6 +848,10 @@ esac
     assert "ce job create --name watch-auth-speedmaster-" in calls
     assert "--arg=--source --arg=wikimedia-speedmaster" in calls
     assert f"ce sub cron {cron_action} --name watch-auth-speedmaster-daily" in calls
+    assert "ce job create --name watch-auth-research-census-" in calls
+    assert "--arg=--source --arg=research-census" in calls
+    assert f"ce sub cron {cron_action} --name watch-auth-research-census-daily" in calls
+    assert "27 4 * * *" in calls
     assert calls.index(f"ce sub cron {cron_action} --name watch-auth-goldsmiths-daily") < calls.index(
         f"ce sub cron {cron_action} --name watch-auth-acquisition-daily"
     )
