@@ -8,6 +8,7 @@ import hashlib
 import json
 import subprocess
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,23 @@ def _verify_remote(client: Any, bucket: str, key: str, spec: dict[str, Any]) -> 
     return sha256.hexdigest()
 
 
+def _reconcile_uploads(client: Any, bucket: str, key: str) -> None:
+    """Abort only expired uploads for this exact asset; fail if another writer is active."""
+    result = client.list_multipart_uploads(Bucket=bucket, Prefix=key)
+    if result.get("IsTruncated"):
+        raise RuntimeError("incomplete COS multipart inventory")
+    now = datetime.now(timezone.utc)
+    for upload in result.get("Uploads", []):
+        if upload["Key"] != key:
+            continue
+        started = upload["Initiated"]
+        if not isinstance(started, datetime) or started.tzinfo is None:
+            raise RuntimeError("COS multipart start time is invalid")
+        if now - started < timedelta(hours=1):
+            raise RuntimeError(f"another model upload is still active: {key}")
+        client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload["UploadId"])
+
+
 def stage_file(client: Any, bucket: str, model: dict[str, Any], spec: dict[str, Any]) -> str:
     name, revision, path = model["name"], model["revision"], spec["path"]
     if not all(isinstance(value, str) and value and ".." not in value and "\\" not in value
@@ -88,9 +106,13 @@ def stage_file(client: Any, bucket: str, model: dict[str, Any], spec: dict[str, 
             raise
         head = None
     if head is not None:
-        if head.get("ContentLength") != spec["size"] or head.get("Metadata", {}).get("source-digest") != spec["digest"]:
-            raise RuntimeError(f"existing COS model asset differs: {key}")
-        return _verify_remote(client, bucket, key, spec)
+        if head.get("ContentLength") == spec["size"] and head.get("Metadata", {}).get("source-digest") == spec["digest"]:
+            try:
+                return _verify_remote(client, bucket, key, spec)
+            except RuntimeError:
+                pass  # A new version is safe because main verified COS versioning first.
+        if client.get_bucket_versioning(Bucket=bucket).get("Status") != "Enabled":
+            raise RuntimeError(f"corrupt model asset cannot be repaired without COS versioning: {key}")
 
     url = f"https://huggingface.co/{model['repository']}/resolve/{revision}/{path}"
     with requests.get(url, stream=True, timeout=(10, 120)) as response:
@@ -109,6 +131,7 @@ def stage_file(client: Any, bucket: str, model: dict[str, Any], spec: dict[str, 
                 raise RuntimeError(f"source model asset digest differs: {path}")
             client.put_object(Bucket=bucket, Key=key, Body=body, Metadata=metadata)
         else:
+            _reconcile_uploads(client, bucket, key)
             upload = client.create_multipart_upload(Bucket=bucket, Key=key, Metadata=metadata)
             parts: list[dict[str, object]] = []
             buffer = bytearray()
@@ -157,6 +180,9 @@ def main() -> None:
     manifest = json.loads((Path(__file__).resolve().parents[1] / "config/pilot_model_sources.json").read_text())
     model = next(item for item in manifest["models"] if item["name"] == args.model)
     client = _client(args.endpoint, args.instance_id)
+    from infra.ibm_cos import verify_private_versioned_bucket
+
+    verify_private_versioned_bucket(client, args.bucket)
     for spec in model["files"]:
         digest = stage_file(client, args.bucket, model, spec)
         print(json.dumps({"model": args.model, "path": spec["path"], "sha256": digest}), flush=True)

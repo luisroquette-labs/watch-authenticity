@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -43,6 +44,12 @@ class COS:
 
     def put_object(self, *, Key, Body, Metadata, **_kwargs):
         self.objects[Key] = (Body, Metadata)
+
+    def get_bucket_versioning(self, **_kwargs):
+        return {"Status": "Enabled"}
+
+    def list_multipart_uploads(self, **_kwargs):
+        return {"Uploads": []}
 
     def create_multipart_upload(self, **_kwargs):
         return {"UploadId": "one"}
@@ -118,3 +125,36 @@ def test_multipart_readback_matches_pinned_bytes(monkeypatch):
 
     assert stage.stage_file(cos, "private", model, spec) == digest
     assert b"".join(cos.parts) == body
+
+
+def test_corrupt_existing_asset_is_repaired_as_new_version(monkeypatch):
+    body = b'{"model":"pinned"}'
+    digest = hashlib.sha1(b"blob " + str(len(body)).encode() + b"\0" + body).hexdigest()
+    spec = {"path": "config.json", "size": len(body), "digest_type": "git-sha1", "digest": digest}
+    model = {"name": "smolvlm", "repository": "owner/model", "revision": "a" * 40}
+    cos = COS()
+    key = f"{stage.BUCKET_PREFIX}/smolvlm/{model['revision']}/config.json"
+    cos.objects[key] = (b"x" * len(body), {"source-digest": digest})
+    monkeypatch.setattr(stage.requests, "get", lambda *_args, **_kwargs: Response(body))
+
+    assert stage.stage_file(cos, "private", model, spec) == hashlib.sha256(body).hexdigest()
+    assert cos.objects[key][0] == body
+
+
+def test_expired_multipart_is_aborted_and_recent_one_blocks():
+    class UploadCOS(COS):
+        def __init__(self, started):
+            super().__init__()
+            self.started = started
+
+        def list_multipart_uploads(self, **_kwargs):
+            return {"Uploads": [{"Key": "asset", "UploadId": "old", "Initiated": self.started}]}
+
+    recent = UploadCOS(datetime.now(timezone.utc))
+    with pytest.raises(RuntimeError, match="still active"):
+        stage._reconcile_uploads(recent, "private", "asset")
+    assert not recent.aborted
+
+    expired = UploadCOS(datetime.now(timezone.utc) - timedelta(hours=2))
+    stage._reconcile_uploads(expired, "private", "asset")
+    assert expired.aborted
