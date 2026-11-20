@@ -253,6 +253,33 @@ def test_same_stock_id_across_references_is_rejected_before_commit():
         _discover(_http(sitemap=sitemap), policy, access)
 
 
+def test_current_scale_inventory_does_not_disable_datejust_discovery():
+    policy, access = _registry()
+    urls = [
+        DATEJUST_URL.rsplit("/", 1)[0] + f"/{408100000000 + number}"
+        for number in range(182)
+    ]
+    sitemap = "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">" + "".join(
+        f"<url><loc>{url}</loc></url>" for url in urls
+    ) + "</urlset>"
+    bodies = {
+        "https://www.goldsmiths.co.uk/robots.txt":
+            f"User-agent: *\nSitemap: {INDEX_URL}\n",
+        INDEX_URL: _index(),
+        PRODUCT_SITEMAP: sitemap,
+    }
+    http = MagicMock()
+    http.get.side_effect = lambda url, **_kwargs: _Response(
+        bodies[url] if url in bodies else _product_page(
+            product_url=url,
+            title="Rolex Certified Pre-Owned Datejust 41 126334 | Goldsmiths",
+        )
+    )
+    records = _discover(http, policy, access).records
+    assert len(records) == 182
+    assert {record.declared_reference for record in records} == {"rolex-datejust-126334"}
+
+
 def test_oversized_response_stops_stream_and_closes(monkeypatch):
     policy, access = _registry()
     response = _Response("")
