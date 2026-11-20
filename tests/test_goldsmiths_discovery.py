@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,6 +23,10 @@ PRODUCT_SITEMAP = "https://www.goldsmiths.co.uk/sitemap/product-en-gbp-0.xml"
 PRODUCT_URL = (
     "https://www.goldsmiths.co.uk/"
     "Rolex-Certified-Pre+Owned-Submariner-Date-126610LN/p/406107907490"
+)
+DATEJUST_URL = (
+    "https://www.goldsmiths.co.uk/"
+    "Rolex-Certified-Pre+Owned-Datejust-41-126334/p/408102274490"
 )
 
 
@@ -82,7 +87,8 @@ def _product_page(
     )
 
 
-def _http(*, index: str | None = None, sitemap: str | None = None, page: str | None = None):
+def _http(*, index: str | None = None, sitemap: str | None = None, page: str | None = None,
+          product_url: str = PRODUCT_URL):
     http = MagicMock()
     bodies = {
         "https://www.goldsmiths.co.uk/robots.txt": _Response(
@@ -90,7 +96,7 @@ def _http(*, index: str | None = None, sitemap: str | None = None, page: str | N
         ),
         INDEX_URL: _Response(index or _index()),
         PRODUCT_SITEMAP: _Response(sitemap or _sitemap()),
-        PRODUCT_URL: _Response(page or _product_page()),
+        product_url: _Response(page or _product_page(product_url=product_url)),
     }
     http.get.side_effect = lambda url, **_kwargs: bodies[url]
     return http
@@ -183,6 +189,70 @@ def test_exact_m_prefixed_reference_title_is_accepted():
     assert len(_discover(_http(page=page), policy, access).records) == 1
 
 
+def test_exact_datejust_cpo_claim_is_discovered_without_variant_leakage():
+    policy, access = _registry()
+    page = _product_page(
+        title="Rolex Certified Pre-Owned Datejust 41 126334 | Goldsmiths",
+        product_url=DATEJUST_URL,
+    )
+    http = _http(sitemap=_sitemap(DATEJUST_URL), page=page, product_url=DATEJUST_URL)
+    records = _discover(http, policy, access).records
+    assert len(records) == 1
+    assert records[0].declared_reference == "rolex-datejust-126334"
+    assert records[0].source_record_id == "408102274490"
+    assert len(records[0].image_urls) == 3
+    assert dict(records[0].metadata)["rights_status"] == "metadata_only"
+
+    variant = DATEJUST_URL.replace("Datejust-41-126334", "Datejust-41-M126334+0018")
+    assert _discover(_http(sitemap=_sitemap(variant)), policy, access).records == ()
+    with pytest.raises(GoldsmithsAPIError, match="CPO declaration"):
+        _discover(_http(sitemap=_sitemap(DATEJUST_URL), product_url=DATEJUST_URL,
+                        page=page.replace("Datejust 41 126334", "Datejust 41 126333")),
+                  policy, access)
+
+
+def test_legacy_submariner_cursor_still_discovers_new_datejust_lane():
+    policy, access = _registry()
+    page = _product_page(
+        title="Rolex Certified Pre-Owned Datejust 41 126334 | Goldsmiths",
+        product_url=DATEJUST_URL,
+    )
+    result = discover_goldsmiths(
+        _http(sitemap=_sitemap(DATEJUST_URL), page=page, product_url=DATEJUST_URL),
+        policy, access, now=NOW,
+        previous=SimpleNamespace(next_cursor="after:999999999999"),
+        clock=lambda: 0.0, sleeper=lambda _seconds: None,
+    )
+    assert [record.declared_reference for record in result.records] == ["rolex-datejust-126334"]
+
+
+def test_v2_cursor_resumes_datejust_without_replaying_submariner():
+    policy, access = _registry()
+    sitemap = _sitemap().replace(
+        "</urlset>", f"<url><loc>{DATEJUST_URL}</loc></url></urlset>"
+    )
+    page = _product_page(
+        title="Rolex Certified Pre-Owned Datejust 41 126334 | Goldsmiths",
+        product_url=DATEJUST_URL,
+    )
+    http = _http(sitemap=sitemap, page=page, product_url=DATEJUST_URL)
+    result = discover_goldsmiths(
+        http, policy, access, now=NOW,
+        previous=SimpleNamespace(next_cursor="after2:406107907490:-"),
+        clock=lambda: 0.0, sleeper=lambda _seconds: None,
+    )
+    assert [record.source_record_id for record in result.records] == ["408102274490"]
+    assert PRODUCT_URL not in [call.args[0] for call in http.get.call_args_list]
+
+
+def test_same_stock_id_across_references_is_rejected_before_commit():
+    policy, access = _registry()
+    duplicate = DATEJUST_URL.replace("408102274490", "406107907490")
+    sitemap = _sitemap().replace("</urlset>", f"<url><loc>{duplicate}</loc></url></urlset>")
+    with pytest.raises(GoldsmithsAPIError, match="inventory is invalid"):
+        _discover(_http(sitemap=sitemap), policy, access)
+
+
 def test_oversized_response_stops_stream_and_closes(monkeypatch):
     policy, access = _registry()
     response = _Response("")
@@ -268,7 +338,7 @@ def test_deadline_checkpoint_persists_and_resumes_without_repeating_product(cos)
     assert first["state"] == "page_complete"
     assert second["state"] == "complete"
     assert [record.source_record_id for record in pages[0].records] == ["406107907489"]
-    assert pages[0].next_cursor == "after:406107907489"
+    assert pages[0].next_cursor == "after2:406107907489:-"
     assert pages[1].cursor == pages[0].next_cursor
     assert [record.source_record_id for record in pages[1].records] == ["406107907490"]
     assert second_url in requests_by_run[0]
