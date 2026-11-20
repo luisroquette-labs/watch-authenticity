@@ -132,6 +132,16 @@ def test_wikimedia_lane_has_independent_checkpoint(cos, monkeypatch):
     assert "datasets/lanes/speedmaster/discovery/2026-11-10/wikimedia/children/root.json" in cos.bodies
     assert "datasets/discovery/2026-11-10/wikimedia/children/root.json" in cos.bodies
 
+    replica_lane = run_wikimedia_once(
+        cos, "private", "datasets/lanes/speedmaster/replica-research", SimpleNamespace(), SimpleNamespace(),
+        now=NOW, api_client=object(), image_client=object(),
+        discover=lambda *_args, **kwargs: _result(
+            cursor=kwargs["previous"].next_cursor if kwargs["previous"] else None
+        ),
+    )
+    assert replica_lane["state"] == "complete"
+    assert "datasets/lanes/speedmaster/replica-research/discovery/2026-11-10/wikimedia/children/root.json" in cos.bodies
+
 
 def test_metadata_only_source_commits_without_downloading(cos):
     page = DiscoveryPage(

@@ -848,13 +848,13 @@ def main(source: str = "all") -> None:
         run_wikimedia_once(
             cos,
             bucket,
-            f"{prefix}/lanes/speedmaster",
+            f"{prefix}/lanes/speedmaster/replica-research",
             get_source_policy(policies, "wikimedia"),
             access,
             now=now,
             api_client=requests.Session(),
             image_client=PinnedRequestsClient(requests_per_minute=access.requests_per_minute - 1),
-            discover=lambda *args, **kwargs: discover_wikimedia(*args, **kwargs, family_index=5),
+            discover=lambda *args, **kwargs: discover_wikimedia(*args, **kwargs, query_range=(6, 7)),
         )
         return
     image_requests_per_minute = access_registry["wikimedia"].requests_per_minute
