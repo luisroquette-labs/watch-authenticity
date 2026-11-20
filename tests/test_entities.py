@@ -28,6 +28,26 @@ def test_syndicated_listing_with_identical_bytes_shares_content_cluster(grouped_
     assert clusters["front"] == clusters["repost"]
 
 
+def test_identical_photo_in_different_listings_is_quarantined_even_with_same_label(
+    grouped_records,
+):
+    records = [
+        grouped_records[0],
+        replace(
+            grouped_records[1],
+            raw_sha256=grouped_records[0].raw_sha256,
+            source_url="https://partner.example/another-listing",
+        ),
+    ]
+    clusters = build_content_clusters(records)
+    entities = assign_watch_entities(records, clusters)
+
+    assert clusters["front"] == clusters["repost"]
+    assert entities["front"] != entities["repost"]
+    assert all(build_grouping_decision(record, clusters, entities).quarantined for record in records)
+    assert entities.conflicts[clusters["front"]].candidate_ids == ("front", "repost")
+
+
 def test_distinct_listings_with_similar_phash_do_not_become_one_image(grouped_records):
     # Distinct catalog watches can have near-identical composition and pHash.
     records = [
