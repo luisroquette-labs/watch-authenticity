@@ -1,0 +1,47 @@
+FROM registry.access.redhat.com/ubi9/python-312-minimal@sha256:d0ac54e77cd0be473b22fb274493526027f2746ec503b4a97ca08257813f0d4b
+
+USER 0
+RUN groupadd --gid 10001 watch-auth \
+    && useradd --uid 10001 --gid watch-auth \
+        --home-dir /home/watch-auth --create-home --shell /sbin/nologin watch-auth
+WORKDIR /opt/watch-auth
+
+COPY requirements-pilot.lock ./
+RUN python -m pip install --no-cache-dir --require-hashes -r requirements-pilot.lock
+
+ENV HOME=/home/watch-auth
+RUN mkdir -p /opt/watch-auth/models/smolvlm /home/watch-auth/.cache/watch-authenticity/detector-cache \
+    && python - <<'PY'
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    "HuggingFaceTB/SmolVLM-500M-Instruct",
+    revision="753c1752602b5e739af7a7fa6947a635051897a3",
+    local_dir="/opt/watch-auth/models/smolvlm",
+    allow_patterns=["*.json", "*.txt", "*.safetensors"],
+)
+snapshot_download(
+    "google/owlv2-base-patch16-ensemble",
+    revision="cfd3195ba4ea9592eec887ded089f4c08eff231d",
+    cache_dir="/home/watch-auth/.cache/watch-authenticity/detector-cache",
+    allow_patterns=["*.json", "*.txt", "*.safetensors"],
+)
+PY
+
+COPY --chown=10001:10001 acquisition acquisition
+COPY --chown=10001:10001 config config
+COPY --chown=10001:10001 core core
+COPY --chown=10001:10001 infra infra
+COPY --chown=10001:10001 pilot pilot
+COPY --chown=10001:10001 quality_gate quality_gate
+COPY --chown=10001:10001 reference_intelligence reference_intelligence
+RUN chown -R 10001:10001 /opt/watch-auth/models /home/watch-auth/.cache \
+    && python -m pip uninstall -y setuptools wheel
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+USER 10001:10001
+EXPOSE 8080
+CMD ["python", "-m", "pilot.server", "--checkpoint", "/opt/watch-auth/models/smolvlm", "--host", "0.0.0.0", "--port", "8080"]
