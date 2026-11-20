@@ -33,6 +33,7 @@ _FAMILY_SEARCHES = (
     ("Omega Seamaster watch", "omega", "seamaster"),
     ("Patek Philippe Nautilus", "patek philippe", "nautilus"),
     ("Rolex Submariner wristwatch", "rolex", "submariner"),
+    ("Omega Speedmaster watch", "omega", "speedmaster"),
 )
 _CLASSIFICATION = "brand_family_candidate_unverified"
 _CURSOR = re.compile(r"^q:(\d+):(\d+)$")
