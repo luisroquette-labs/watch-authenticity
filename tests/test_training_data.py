@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from types import MappingProxyType
 
@@ -28,6 +29,22 @@ def test_training_refuses_tier_c_rows(training_fixture):
     cos, spec = _seed(manifest, splits, images)
 
     with pytest.raises(TrainingDataRefused, match="Tier A or B"):
+        load_training_data(cos, spec)
+
+
+def test_training_refuses_frozen_source_with_copied_official_media(training_fixture):
+    from tests.test_training_run import _canonical
+
+    _cos, _spec, manifest, splits, images = training_fixture
+    manifest["source_records"][0]["original_sha256"] = (
+        "f6552812a866a41d8285ef2b5997aa66b9370414ea26bd5e3cb55faf0f112c98"
+    )
+    manifest["freeze"]["manifest_sha256"] = hashlib.sha256(
+        _canonical(manifest["source_records"])
+    ).hexdigest()
+    cos, spec = _seed(manifest, splits, images, refresh_freeze=False)
+
+    with pytest.raises(TrainingDataRefused, match="reuses official brand media"):
         load_training_data(cos, spec)
 
 

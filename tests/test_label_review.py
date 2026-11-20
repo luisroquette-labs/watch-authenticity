@@ -120,6 +120,23 @@ def test_dealer_reputation_alone_is_tier_c_and_not_trainable(
         )
 
 
+def test_copied_official_media_cannot_be_admitted_even_with_review(
+    candidate, make_review, reviewer_registry, grouping, rights, object_ref
+):
+    copied = replace(
+        candidate,
+        raw_sha256="f6552812a866a41d8285ef2b5997aa66b9370414ea26bd5e3cb55faf0f112c98",
+    )
+    review = make_review(label=Label.FAKE, grade=4)
+    evidence = adjudicate(candidate, [review], reviewer_registry)
+    with pytest.raises(NotTrainingEligible, match="reuses official brand media"):
+        build_training_record(
+            copied, evidence, grouping, rights, object_ref=object_ref,
+            angle=Angle.DIAL, usability_review=None, capture_style="casual",
+            now=candidate.collected_at, reviews=[review], reviewer_registry=reviewer_registry,
+        )
+
+
 def test_default_reviewer_registry_fails_closed():
     assert load_reviewer_registry(Path("config/reviewer_registry.json")) == {}
 

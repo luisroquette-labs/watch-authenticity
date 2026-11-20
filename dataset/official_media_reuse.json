@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "records": [
+    {
+      "raw_sha256": "587e0b5e5a47ce40562630c85542511a82461dda21c6f1094dab7a1a41bb12cd",
+      "derivative_sha256": "c51cdc4cf8dabef5ad81ec51c08fa422363ba3440f27befaa8a9f2a1ff8d406a",
+      "evidence_file": "patek-5811-seller-official-image-reuse-review-v2-20261119.json"
+    },
+    {
+      "raw_sha256": "5ad455e8b1e4b19eeded1417fb59a312e929b2a81f94885bc4e0849e1951bc1a",
+      "derivative_sha256": null,
+      "evidence_file": "operational-audits/ap-26331-media-reuse-2026-11-20.json"
+    },
+    {
+      "raw_sha256": "9ae72a1437276b032b7cc757894d0644ab0c8a522779ff32a687158e733d7af4",
+      "derivative_sha256": "0498af9a56807a30e3aad7992a8b66ae1e06e36138ec3cac897e241ecb438925",
+      "evidence_file": "patek-5811-seller-official-image-reuse-review-v2-20261119.json"
+    },
+    {
+      "raw_sha256": "b7afa2e7dad8056482f82ac4bb764817f3e63fedbc384940212a6f7bea7d044a",
+      "derivative_sha256": "aade92bf504e09186a51a032c6885288587a56537ff0bb98c4d062ea8ce4b328",
+      "evidence_file": "patek-5811-seller-official-image-reuse-review-v2-20261119.json"
+    },
+    {
+      "raw_sha256": "d3d934753051ae90c20e9380f962df16bbb60f51a6445ce265f4953852a2f916",
+      "derivative_sha256": "f0f34f2728031a937b074b7d38398d8a924c8e733d3d48279f61f3d656b384f6",
+      "evidence_file": "patek-5811-seller-official-image-reuse-review-v2-20261119.json"
+    },
+    {
+      "raw_sha256": "f6552812a866a41d8285ef2b5997aa66b9370414ea26bd5e3cb55faf0f112c98",
+      "derivative_sha256": "d5d939207ffe0192d12e403d5cc9d26be72e498c4df4bab97b186c3a5df01c24",
+      "evidence_file": "patek-5811-seller-official-image-reuse-review-v2-20261119.json"
+    }
+  ]
+}

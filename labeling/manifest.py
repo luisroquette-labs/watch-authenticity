@@ -32,6 +32,7 @@ from acquisition.types import (
 from core.types import Label, ManifestRecord
 from dataset.angle_review import AngleUsabilityReview, verify_usability_review
 from dataset.entities import GroupingDecision
+from dataset.media_reuse import is_known_official_media_reuse
 from infra.ibm_types import ObjectRef
 from labeling.adjudicate import NotTrainingEligible, adjudicate, verify_evidence_record
 from labeling.review import ReviewerRecord, candidate_digest
@@ -113,6 +114,8 @@ def build_training_record(
         raise NotTrainingEligible("capture style requires review before training")
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("now must be timezone-aware")
+    if is_known_official_media_reuse(candidate.raw_sha256, candidate.derivative_sha256):
+        raise NotTrainingEligible("candidate reuses official brand media")
     if (
         rights.status is not RightsStatus.ACTIVE
         or "train" not in rights.allowed_purposes

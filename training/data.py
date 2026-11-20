@@ -19,6 +19,7 @@ from core.rules import model_class_for_label, require_all_model_classes
 from core.types import Label, ModelClass
 from dataset.angle_review import usability_review_from_json, verify_usability_review
 from dataset.crop import ANGLE_CROP_FRACTIONS
+from dataset.media_reuse import is_known_official_media_reuse
 from dataset.splits import (
     CROSS_SOURCE,
     FACTORY_HOLDOUT,
@@ -553,6 +554,8 @@ def _parse_freeze(
         raise TrainingDataRefused("canonical source splits do not match eligible assets")
     for record in records:
         source = source_by_asset[record.asset_id]
+        if is_known_official_media_reuse(source["original_sha256"], record.image_sha256):
+            raise TrainingDataRefused("source image reuses official brand media")
         try:
             if record.label is Label.REJECTION:
                 if source["usability_review"] is not None:
