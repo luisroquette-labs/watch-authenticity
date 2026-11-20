@@ -34,7 +34,11 @@ _FAMILY_SEARCHES = (
     ("Patek Philippe Nautilus", "patek philippe", "nautilus"),
     ("Rolex Submariner wristwatch", "rolex", "submariner"),
     ("Omega Speedmaster watch", "omega", "speedmaster"),
+    ("replica Omega Speedmaster", "omega", "speedmaster"),
+    ("fake Rolex Datejust", "rolex", "datejust"),
 )
+_REPLICA_SEARCHES = frozenset({6, 7})
+_REPLICA_RESEARCH = "commons_replica_keyword_research_unverified"
 _CLASSIFICATION = "brand_family_candidate_unverified"
 _CURSOR = re.compile(r"^q:(\d+):(\d+)$")
 _IMAGE_MIMES = frozenset({"image/jpeg", "image/png", "image/webp"})
@@ -79,7 +83,7 @@ def discover_wikimedia(
     *,
     now: datetime,
     previous: DiscoveryCommit | None = None,
-    family_index: int | None = None,
+    query_range: tuple[int, int] | None = None,
 ) -> WikimediaDiscovery:
     """Return one validated page; the caller commits it after collecting every file."""
     decision = authorize_discovery(policy, access, now=now)
@@ -90,6 +94,9 @@ def discover_wikimedia(
     if access.requests_per_minute is None or access.requests_per_minute < 4:
         raise PermissionError("source rate limit cannot cover API and image retries")
 
+    if query_range is not None and not (0 <= query_range[0] < query_range[1] <= len(_FAMILY_SEARCHES)):
+        raise ValueError("Wikimedia query range is invalid")
+    start, stop = query_range or (0, len(_FAMILY_SEARCHES))
     cursor = previous.next_cursor if previous is not None else None
     if previous is not None and cursor is None:
         raise WikimediaAPIError("Wikimedia discovery ledger is already complete")
@@ -98,15 +105,13 @@ def discover_wikimedia(
         return WikimediaDiscovery(
             page=DiscoveryPage(
                 source="wikimedia", access_record_id=access.access_record_id,
-                cursor=cursor, next_cursor="q:0:0", observed_at=now, records=(),
+                cursor=cursor, next_cursor=f"q:{start}:0", observed_at=now, records=(),
             ),
             candidates=(),
         )
-    if family_index is not None and (family_index < 0 or family_index >= len(_FAMILY_SEARCHES)):
-        raise ValueError("Wikimedia family index is invalid")
-    query_index, offset = _parse_cursor(cursor) if cursor is not None else (family_index or 0, 0)
-    if family_index is not None and query_index != family_index:
-        raise WikimediaAPIError("Wikimedia cursor belongs to another family")
+    query_index, offset = _parse_cursor(cursor) if cursor is not None else (start, 0)
+    if not start <= query_index < stop:
+        raise WikimediaAPIError("Wikimedia cursor belongs to another query range")
     query, brand, family = _FAMILY_SEARCHES[query_index]
     params: dict[str, object] = {
         "action": "query",
@@ -156,7 +161,7 @@ def discover_wikimedia(
         raise WikimediaAPIError("Wikimedia continuation offset is invalid")
     next_cursor = (
         f"q:{query_index}:{next_offset}" if next_offset is not None
-        else f"q:{query_index + 1}:0" if family_index is None and query_index + 1 < len(_FAMILY_SEARCHES)
+        else f"q:{query_index + 1}:0" if query_index + 1 < stop
         else None
     )
     discovery_page = DiscoveryPage(
@@ -228,6 +233,8 @@ def _parse_page(
     if any(re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", searchable, re.I) is None
            for word in (brand, family)):
         return None
+    if query_index in _REPLICA_SEARCHES and re.search(r"\b(fake|replica|counterfeit|illegal cop(?:y|ies))\b", searchable, re.I) is None:
+        return None
     license_name = _metadata_value(metadata, "LicenseShortName")
     if license_name not in _ALLOWED_LICENSES:
         return None
@@ -270,6 +277,10 @@ def _parse_page(
         status=RightsStatus.ACTIVE,
     )
     record_id = f"q{query_index}:{page_id}"
+    research_metadata = (
+        (("research_keyword_context", searchable[:2000]),)
+        if query_index in _REPLICA_SEARCHES else ()
+    )
     record = DiscoveryRecord(
         source="wikimedia",
         source_record_id=record_id,
@@ -288,6 +299,7 @@ def _parse_page(
             ("image_timestamp", revision),
             ("license", license_name),
             ("license_url", license_url),
+            *research_metadata,
         ),
     )
     candidate = WikimediaCandidate(
@@ -297,7 +309,7 @@ def _parse_page(
             source_url=source_url,
             image_url=image_url,
             declared_reference="unverified",
-            listing_text=_CLASSIFICATION,
+            listing_text=_REPLICA_RESEARCH if query_index in _REPLICA_SEARCHES else _CLASSIFICATION,
         ),
         rights=rights,
         observed_at=observed_at,

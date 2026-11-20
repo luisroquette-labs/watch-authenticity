@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from acquisition.discovery import append_discovery_page
+from acquisition.discovery import DiscoveryCommit, append_discovery_page
 from acquisition.source_policy import (
     get_source_policy,
     load_source_access_registry,
@@ -278,7 +278,7 @@ def test_speedmaster_search_resumes_after_existing_families_without_authenticity
 
     assert http.get.call_args.kwargs["params"]["gsrsearch"] == "Omega Speedmaster watch"
     assert len(result.candidates) == 1
-    assert result.page.next_cursor is None
+    assert result.page.next_cursor == "q:6:0"
     assert result.candidates[0].evidence_tier is EvidenceTier.INCONCLUSIVE
     assert result.candidates[0].metadata.declared_reference == "unverified"
     assert dict(result.page.records[0].metadata)["family_claim_from_text"] == "speedmaster"
@@ -291,11 +291,11 @@ def test_speedmaster_lane_starts_directly_and_keeps_original_query_identity(cos)
     page["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Omega_Speedmaster_Professional.jpg"
     http.get.return_value = _Response({"query": {"pages": [page]}})
 
-    result = _discover(http, cos, family_index=5)
+    result = _discover(http, cos, query_range=(5, 7))
 
     assert http.get.call_args.kwargs["params"]["gsrsearch"] == "Omega Speedmaster watch"
     assert result.page.records[0].source_record_id == "q5:123"
-    assert result.page.next_cursor is None
+    assert result.page.next_cursor == "q:6:0"
     assert result.candidates[0].evidence_tier is EvidenceTier.INCONCLUSIVE
 
 
@@ -304,8 +304,69 @@ def test_speedmaster_lane_rejects_another_family_checkpoint(cos):
     http.get.return_value = _Response({"query": {"pages": [_page()]}})
     first = _discover(http, cos)
     commit = append_discovery_page(cos, "private", "datasets/discovery", first.page)
-    with pytest.raises(WikimediaAPIError, match="another family"):
-        _discover(http, cos, family_index=5, previous=commit)
+    with pytest.raises(WikimediaAPIError, match="another query range"):
+        _discover(http, cos, query_range=(5, 7), previous=commit)
+
+
+def test_replica_query_keeps_uploader_claim_separate_from_authenticity(cos):
+    http = MagicMock()
+    original = _page()
+    original["title"] = "File:Omega Speedmaster Professional.jpg"
+    original["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Omega_Speedmaster_Professional.jpg"
+    fake = _page()
+    fake["title"] = "File:Back of a fake replica Omega Speedmaster watch.jpeg"
+    fake["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Back_of_a_fake_replica_Omega_Speedmaster_watch.jpeg"
+    http.get.side_effect = [
+        _Response({"query": {"pages": [original]}}),
+        _Response({"query": {"pages": [original, fake]}}),
+    ]
+
+    first = _discover(http, cos, query_range=(5, 7))
+    commit = append_discovery_page(cos, "private", "datasets/lanes/speedmaster/discovery", first.page)
+    second = _discover(http, cos, query_range=(5, 7), previous=commit)
+
+    assert http.get.call_args.kwargs["params"]["gsrsearch"] == "replica Omega Speedmaster"
+    assert second.page.next_cursor is None
+    assert len(second.candidates) == 1
+    assert second.candidates[0].evidence_tier is EvidenceTier.INCONCLUSIVE
+    assert second.candidates[0].metadata.declared_reference == "unverified"
+    assert second.candidates[0].metadata.listing_text == "commons_replica_keyword_research_unverified"
+    assert "fake replica Omega Speedmaster" in dict(second.page.records[0].metadata)["research_keyword_context"]
+    assert propose_source_label(
+        second.candidates[0].metadata.source,
+        listing_text=second.candidates[0].metadata.listing_text,
+    ) is None
+
+
+def test_datejust_fake_search_is_research_only(cos):
+    http = MagicMock()
+    page = _page()
+    page["title"] = "File:Fake Rolex Datejust.jpg"
+    page["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Fake_Rolex_Datejust.jpg"
+    http.get.return_value = _Response({"query": {"pages": [page]}})
+    prior = DiscoveryCommit("wikimedia", _access().access_record_id, None, "0" * 64, "q:7:0", (), "0" * 64)
+
+    result = _discover(http, cos, previous=prior)
+
+    assert http.get.call_args.kwargs["params"]["gsrsearch"] == "fake Rolex Datejust"
+    assert result.page.next_cursor is None
+    assert len(result.candidates) == 1
+    assert result.candidates[0].metadata.declared_reference == "unverified"
+    assert result.candidates[0].evidence_tier is EvidenceTier.INCONCLUSIVE
+    assert "Fake Rolex Datejust" in dict(result.page.records[0].metadata)["research_keyword_context"]
+
+
+def test_negated_replica_word_does_not_become_authenticity_claim(cos):
+    http = MagicMock()
+    page = _page()
+    page["title"] = "File:Not a fake Omega Speedmaster.jpg"
+    http.get.return_value = _Response({"query": {"pages": [page]}})
+
+    result = _discover(http, cos, query_range=(6, 7))
+
+    assert len(result.candidates) == 1
+    assert result.candidates[0].metadata.listing_text == "commons_replica_keyword_research_unverified"
+    assert "source_authenticity_claim" not in dict(result.page.records[0].metadata)
 
 
 def test_unsupported_file_mime_is_skipped(cos):
