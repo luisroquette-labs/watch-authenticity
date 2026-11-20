@@ -24,6 +24,7 @@ from acquisition.collect import (
 from acquisition.cos import AtomicCOSClient
 from acquisition.discovery import DiscoveryCommit, DiscoveryPage, append_discovery_page
 from acquisition.http import PinnedRequestsClient
+from acquisition.research_census import run_research_census_once
 from acquisition.source_policy import (
     authorize_candidate,
     authorize_discovery,
@@ -777,11 +778,14 @@ def main(source: str = "all") -> None:
     root = Path(__file__).resolve().parents[1]
     policies = load_source_policies(root / "config/source_policies.json")
     access_registry = load_source_access_registry(root / "config/source_access.json")
-    if source not in {"all", "supercloneluxury", "cbp", "goldsmiths", "wikimedia-speedmaster"}:
+    if source not in {"all", "supercloneluxury", "cbp", "goldsmiths", "wikimedia-speedmaster", "research-census"}:
         raise ValueError("unsupported acquisition source")
     logging.basicConfig(level=logging.INFO)
     now = datetime.now(timezone.utc)
     job_deadline = time.monotonic() + 420
+    if source == "research-census":
+        run_research_census_once(cos, bucket, prefix, now=now)
+        return
     if source == "supercloneluxury":
         luxury_policy = get_source_policy(policies, source)
         luxury_access = access_registry[source]
@@ -978,5 +982,5 @@ def main(source: str = "all") -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", choices=("all", "supercloneluxury", "cbp", "goldsmiths", "wikimedia-speedmaster"), default="all")
+    parser.add_argument("--source", choices=("all", "supercloneluxury", "cbp", "goldsmiths", "wikimedia-speedmaster", "research-census"), default="all")
     main(parser.parse_args().source)
