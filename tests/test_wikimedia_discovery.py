@@ -259,6 +259,31 @@ def test_patek_search_accepts_hyphenated_official_name(cos):
     assert dict(result.page.records[0].metadata)["brand_claim_from_text"] == "patek philippe"
 
 
+def test_speedmaster_search_resumes_after_existing_families_without_authenticity_claim(cos):
+    http = MagicMock()
+    http.get.return_value = _Response({"batchcomplete": True})
+    commit = None
+    for _ in range(5):
+        result = _discover(http, cos, previous=commit)
+        commit = append_discovery_page(cos, "private", "datasets/discovery", result.page,
+                                       previous=commit)
+    assert commit.next_cursor == "q:5:0"
+
+    page = _page()
+    page["title"] = "File:Omega Speedmaster Professional.jpg"
+    page["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Omega_Speedmaster_Professional.jpg"
+    http.get.return_value = _Response({"query": {"pages": [page]}})
+
+    result = _discover(http, cos, previous=commit)
+
+    assert http.get.call_args.kwargs["params"]["gsrsearch"] == "Omega Speedmaster watch"
+    assert len(result.candidates) == 1
+    assert result.page.next_cursor is None
+    assert result.candidates[0].evidence_tier is EvidenceTier.INCONCLUSIVE
+    assert result.candidates[0].metadata.declared_reference == "unverified"
+    assert dict(result.page.records[0].metadata)["family_claim_from_text"] == "speedmaster"
+
+
 def test_unsupported_file_mime_is_skipped(cos):
     http = MagicMock()
     page = _page()
