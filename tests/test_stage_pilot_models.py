@@ -145,7 +145,7 @@ def test_source_recovers_after_midstream_disconnect(monkeypatch):
     class Interrupted(Response):
         def iter_content(self, chunk_size):
             yield body[:8]
-            raise stage.requests.ConnectionError("disconnect")
+            raise stage.requests.exceptions.ChunkedEncodingError("disconnect")
 
     class Ranged(Response):
         def __init__(self):
@@ -161,6 +161,32 @@ def test_source_recovers_after_midstream_disconnect(monkeypatch):
     monkeypatch.setattr(stage.requests, "get", get)
     assert stage.stage_file(cos, "private", model, spec) == digest
     assert calls == [{}, {"Range": "bytes=8-"}]
+
+
+def test_source_resume_has_bounded_attempts(monkeypatch):
+    body = b"123456789abcdefgh"
+    class Interrupted(Response):
+        def __init__(self, offset):
+            super().__init__(body[offset:])
+            self.status_code = 206 if offset else 200
+            if offset:
+                self.headers["Content-Range"] = f"bytes {offset}-{len(body)-1}/{len(body)}"
+
+        def iter_content(self, chunk_size):
+            yield self.content[:1]
+            raise stage.requests.exceptions.ChunkedEncodingError("disconnect")
+
+    calls = []
+    def get(*_args, **kwargs):
+        offset = int(kwargs["headers"].get("Range", "bytes=0-")[6:-1])
+        calls.append(offset)
+        return Interrupted(offset)
+
+    monkeypatch.setattr(stage.requests, "get", get)
+    monkeypatch.setattr(stage.time, "sleep", lambda _seconds: None)
+    with pytest.raises(stage.requests.exceptions.ChunkedEncodingError):
+        list(stage._source_chunks("https://example.test/model", len(body)))
+    assert len(calls) == 8
 
 
 def test_corrupt_existing_asset_is_repaired_as_new_version(monkeypatch):

@@ -36,13 +36,12 @@ def _source_chunks(url: str, size: int) -> Iterator[bytes]:
                         offset += len(chunk)
                         if offset > size:
                             raise RuntimeError("source model asset exceeds pinned size")
-                        failures = 0
                         yield chunk
                 if offset < size:
                     raise requests.ConnectionError("model source ended before pinned size")
-        except (requests.ConnectionError, requests.Timeout):
+        except (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError):
             failures += 1
-            if failures >= 5:
+            if failures >= 8:
                 raise
             time.sleep(min(failures * 2, 10))
 
