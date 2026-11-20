@@ -741,6 +741,7 @@ case "$*" in
     if [[ "$5" == watch-auth-supercloneluxury-* ]]; then args='["-m","acquisition.run","--source","supercloneluxury"]'; fi
     if [[ "$5" == watch-auth-cbp-* ]]; then args='["-m","acquisition.run","--source","cbp"]'; fi
     if [[ "$5" == watch-auth-goldsmiths-* ]]; then args='["-m","acquisition.run","--source","goldsmiths"]'; fi
+    if [[ "$5" == watch-auth-bobswatches-* ]]; then args='["-m","acquisition.run","--source","bobswatches"]'; fi
     if [[ "$5" == watch-auth-speedmaster-* ]]; then args='["-m","acquisition.run","--source","wikimedia-speedmaster"]'; fi
     if [[ "$5" == watch-auth-research-census-* ]]; then args='["-m","acquisition.run","--source","research-census"]'; fi
     image="$WATCH_AUTH_ACQUISITION_IMAGE_DIGEST"
@@ -833,8 +834,8 @@ esac
     assert result.returncode == 0, result.stderr
     calls = log.read_text()
     assert "ce job create" in calls
-    assert calls.count("iam trusted-profile-links") == 12
-    assert calls.count("iam trusted-profile-link-create") == 6
+    assert calls.count("iam trusted-profile-links") == 14
+    assert calls.count("iam trusted-profile-link-create") == 7
     assert "ce job create --name watch-auth-supercloneluxury-" in calls
     assert "--arg=--source --arg=supercloneluxury" in calls
     cron_action = "update" if existing_cron else "create"
@@ -845,6 +846,10 @@ esac
     assert "ce job create --name watch-auth-goldsmiths-" in calls
     assert "--arg=--source --arg=goldsmiths" in calls
     assert f"ce sub cron {cron_action} --name watch-auth-goldsmiths-daily" in calls
+    assert "ce job create --name watch-auth-bobswatches-" in calls
+    assert "--arg=bobswatches" in calls
+    assert f"ce sub cron {cron_action} --name watch-auth-bobswatches-daily" in calls
+    assert "7 4 * * *" in calls
     assert "ce job create --name watch-auth-speedmaster-" in calls
     assert "--arg=--source --arg=wikimedia-speedmaster" in calls
     assert f"ce sub cron {cron_action} --name watch-auth-speedmaster-daily" in calls
