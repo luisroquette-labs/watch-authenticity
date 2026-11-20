@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "reference_id": "audemarspiguet-royaloak-26331stoo1220st02",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "26331ST.OO.1220ST.02",
+      "source_class": "official_brand",
+      "source_url": "https://www.audemarspiguet.com/en/watch-collection/royal-oak/26331ST.OO.1220ST.02",
+      "citation": "Royal Oak Selfwinding Chronograph > Ref.",
+      "observed_at": "2026-11-20",
+      "applicable_angles": []
+    },
+    {
+      "field": "model_name",
+      "value": "Royal Oak Selfwinding Chronograph",
+      "source_class": "official_brand",
+      "source_url": "https://www.audemarspiguet.com/en/watch-collection/royal-oak/26331ST.OO.1220ST.02",
+      "citation": "Royal Oak Selfwinding Chronograph heading",
+      "observed_at": "2026-11-20",
+      "applicable_angles": []
+    },
+    {
+      "field": "case_material",
+      "value": "stainless steel",
+      "source_class": "official_brand",
+      "source_url": "https://www.audemarspiguet.com/en/watch-collection/royal-oak/26331ST.OO.1220ST.02",
+      "citation": "Product description > stainless steel edition",
+      "observed_at": "2026-11-20",
+      "applicable_angles": []
+    },
+    {
+      "field": "dial_color",
+      "value": "black",
+      "source_class": "official_brand",
+      "source_url": "https://www.audemarspiguet.com/en/watch-collection/royal-oak/26331ST.OO.1220ST.02",
+      "citation": "Product description > black Grande Tapisserie dial",
+      "observed_at": "2026-11-20",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "dial_texture",
+      "value": "Grande Tapisserie",
+      "source_class": "official_brand",
+      "source_url": "https://www.audemarspiguet.com/en/watch-collection/royal-oak/26331ST.OO.1220ST.02",
+      "citation": "Product description > black Grande Tapisserie dial",
+      "observed_at": "2026-11-20",
+      "applicable_angles": [
+        "dial"
+      ]
+    }
+  ]
+}
