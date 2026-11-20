@@ -1,4 +1,4 @@
-"""Metadata-only discovery of seller-claimed Rolex watches from public sitemaps."""
+"""Metadata-only discovery of seller-claimed watches from public sitemaps."""
 
 from __future__ import annotations
 
@@ -20,9 +20,13 @@ _HOST = "www.bobswatches.com"
 _ROBOTS = f"https://{_HOST}/robots.txt"
 _INDEX = f"https://{_HOST}/sitemap.xml"
 _SITEMAP_PATH = re.compile(r"/products-[1-9][0-9]*-sitemap\.xml$")
-_PRODUCT_PATH = re.compile(r"/[^/]+\.html$")
-_REFERENCE = re.compile(r"(?<![A-Z0-9])126610LN(?![A-Z0-9])", re.IGNORECASE)
+_PRODUCT_PATH = re.compile(r"/(?:cartier/)?[^/]+\.html$")
 _SKU = re.compile(r"SKU([0-9]{5,8})(?![0-9])", re.IGNORECASE)
+_REFERENCES = (
+    ("rolex-submariner-126610ln", "rolex", "submariner", "126610ln", ""),
+    ("rolex-datejust-126334", "rolex", "datejust", "126334", ""),
+    ("cartier-santos-wssa0061", "cartier", "santos", "wssa0061", "cartier/"),
+)
 _NS = {
     "sm": "http://www.sitemaps.org/schemas/sitemap/0.9",
     "image": "http://www.google.com/schemas/sitemap-image/1.1",
@@ -95,10 +99,19 @@ def _parse_entry(entry: ET.Element) -> DiscoveryRecord | None:
     if len(images) != 1:
         return None
     title = images[0].findtext("image:title", default="", namespaces=_NS).strip()
-    if _REFERENCE.search(title) is None or "submariner" not in title.lower():
+    reference = next(
+        ((reference_id, path_prefix) for reference_id, brand, family, number, path_prefix
+         in _REFERENCES if brand in title.lower() and family in title.lower()
+         and re.search(rf"(?<![A-Z0-9]){number}(?![A-Z0-9])", title, re.IGNORECASE)
+         and path.startswith(f"/{path_prefix}")
+         and (path_prefix or path.count("/") == 1)),
+        None,
+    )
+    if reference is None:
         return None
+    reference_id, path_prefix = reference
     image_url = _text(images[0].find("image:loc", _NS), "image URL")
-    if not _approved_url(image_url).path.startswith("/images/"):
+    if not _approved_url(image_url).path.startswith(f"/{path_prefix}images/"):
         raise BobsWatchesDiscoveryError("product image is outside the approved image path")
     sku = _SKU.search(image_url)
     if sku is None:
@@ -115,7 +128,7 @@ def _parse_entry(entry: ET.Element) -> DiscoveryRecord | None:
     return DiscoveryRecord(
         source="bobswatches", source_record_id=sku.group(1),
         source_version=version, source_url=source_url,
-        seller_group_id="bobswatches", declared_reference="rolex-submariner-126610ln",
+        seller_group_id="bobswatches", declared_reference=reference_id,
         image_ids=(hashlib.sha256(image_url.encode()).hexdigest(),),
         image_urls=(image_url,),
         metadata=metadata,
