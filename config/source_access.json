@@ -249,5 +249,18 @@
     "requests_per_minute": 10,
     "reason": "Public CBP sitemap and article images; separate metadata and image clients each capped at 10 requests/minute. Copyright notice permits use unless separately marked. Owner permits private archive; training remains blocked.",
     "evidence_sha256": "97aef84978d6f37a5decf34f3cc3c242ccc9d8743c9990d118864bdd7de6de4b"
+  },
+  {
+    "access_record_id": "access-bobswatches-sitemap-20261120",
+    "source": "bobswatches",
+    "acquisition_method": "public-sitemap",
+    "status": "active",
+    "evidence_url": "https://www.bobswatches.com/robots.txt",
+    "verified_at": "2026-11-20T22:45:00Z",
+    "expires_at": "2027-11-20T22:45:00Z",
+    "allowed_image_hosts": ["www.bobswatches.com"],
+    "requests_per_minute": 10,
+    "reason": "robots.txt advertises public product sitemaps with image URLs; no image rights clearance, so only metadata may be stored and seller authenticity claims are not independent confirmation",
+    "evidence_sha256": "0a2479c9fef138de8965b9898195fd819af77cc239649e67da1e9589ea2da6c1"
   }
 ]
