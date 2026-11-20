@@ -136,8 +136,11 @@ def _parse_entry(
         else None
     )
 
-    last_modified = _text(
-        entry.find("sm:lastmod", _NS), "last modified", config.source
+    lastmod_element = entry.find("sm:lastmod", _NS)
+    last_modified = (
+        _text(lastmod_element, "last modified", config.source)
+        if lastmod_element is not None
+        else ""
     )
     images: list[str] = []
     titles: list[str] = []
@@ -197,7 +200,7 @@ def _parse_entry(
             ("classification", "replica_candidate_vendor_declared"),
             ("evidence_tier", "c"),
             ("factory_claim", config.factory_claim),
-            ("last_modified", last_modified),
+            *((("last_modified", last_modified),) if last_modified else ()),
             (
                 "rights_status",
                 "owner_private_download_only" if private_download else "metadata_only",

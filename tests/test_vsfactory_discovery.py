@@ -93,6 +93,24 @@ def test_discovers_exact_replica_reference_as_candidate_only():
     )
 
 
+def test_missing_lastmod_uses_images_for_version_without_inventing_a_date():
+    policy, access = _registry()
+    http = MagicMock()
+    http.get.return_value = _Response(_sitemap().replace("<lastmod>2026-11-09</lastmod>", ""))
+
+    first = discover_vsfactoryusa(http, policy, access, now=NOW).records[0]
+    assert "last_modified" not in dict(first.metadata)
+    assert first.image_urls[0].endswith("126610ln-01.webp")
+
+    http.get.return_value = _Response(
+        _sitemap().replace("<lastmod>2026-11-09</lastmod>", "").replace(
+            "126610ln-02.webp", "126610ln-03.webp"
+        )
+    )
+    changed = discover_vsfactoryusa(http, policy, access, now=NOW).records[0]
+    assert changed.source_version != first.source_version
+
+
 @pytest.mark.parametrize(
     ("product_host", "image_host"),
     [("evil.example", "vsfactoryusa.com"), ("vsfactoryusa.com", "evil.example")],
