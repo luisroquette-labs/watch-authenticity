@@ -111,6 +111,28 @@ def test_run_collects_before_committing_and_repeated_run_is_noop(cos, monkeypatc
     assert cos.write_count == writes
 
 
+def test_wikimedia_lane_has_independent_checkpoint(cos, monkeypatch):
+    monkeypatch.setattr(
+        "acquisition.run.collect_batch",
+        lambda *_args, **_kwargs: SimpleNamespace(accepted_candidate_ids=("candidate-123",)),
+    )
+    run_wikimedia_once(
+        cos, "private", "datasets", SimpleNamespace(), SimpleNamespace(),
+        now=NOW, api_client=object(), image_client=object(),
+        discover=lambda *_args, **_kwargs: _result(next_cursor="q:1:0"),
+    )
+    lane = run_wikimedia_once(
+        cos, "private", "datasets/lanes/speedmaster", SimpleNamespace(), SimpleNamespace(),
+        now=NOW, api_client=object(), image_client=object(),
+        discover=lambda *_args, **kwargs: _result(
+            cursor=kwargs["previous"].next_cursor if kwargs["previous"] else None
+        ),
+    )
+    assert lane["state"] == "complete"
+    assert "datasets/lanes/speedmaster/discovery/2026-11-10/wikimedia/children/root.json" in cos.bodies
+    assert "datasets/discovery/2026-11-10/wikimedia/children/root.json" in cos.bodies
+
+
 def test_metadata_only_source_commits_without_downloading(cos):
     page = DiscoveryPage(
         source="vsfactoryusa",
@@ -700,6 +722,7 @@ case "$*" in
     if [[ "$5" == watch-auth-supercloneluxury-* ]]; then args='["-m","acquisition.run","--source","supercloneluxury"]'; fi
     if [[ "$5" == watch-auth-cbp-* ]]; then args='["-m","acquisition.run","--source","cbp"]'; fi
     if [[ "$5" == watch-auth-goldsmiths-* ]]; then args='["-m","acquisition.run","--source","goldsmiths"]'; fi
+    if [[ "$5" == watch-auth-speedmaster-* ]]; then args='["-m","acquisition.run","--source","wikimedia-speedmaster"]'; fi
     image="$WATCH_AUTH_ACQUISITION_IMAGE_DIGEST"
     cpu='0.25'
     service_account='project-none'
@@ -790,8 +813,8 @@ esac
     assert result.returncode == 0, result.stderr
     calls = log.read_text()
     assert "ce job create" in calls
-    assert calls.count("iam trusted-profile-links") == 8
-    assert calls.count("iam trusted-profile-link-create") == 4
+    assert calls.count("iam trusted-profile-links") == 10
+    assert calls.count("iam trusted-profile-link-create") == 5
     assert "ce job create --name watch-auth-supercloneluxury-" in calls
     assert "--arg=--source --arg=supercloneluxury" in calls
     cron_action = "update" if existing_cron else "create"
@@ -802,6 +825,9 @@ esac
     assert "ce job create --name watch-auth-goldsmiths-" in calls
     assert "--arg=--source --arg=goldsmiths" in calls
     assert f"ce sub cron {cron_action} --name watch-auth-goldsmiths-daily" in calls
+    assert "ce job create --name watch-auth-speedmaster-" in calls
+    assert "--arg=--source --arg=wikimedia-speedmaster" in calls
+    assert f"ce sub cron {cron_action} --name watch-auth-speedmaster-daily" in calls
     assert calls.index(f"ce sub cron {cron_action} --name watch-auth-goldsmiths-daily") < calls.index(
         f"ce sub cron {cron_action} --name watch-auth-acquisition-daily"
     )
@@ -881,7 +907,7 @@ esac
 def test_goldsmiths_has_its_own_deadline_and_is_absent_from_daily_job():
     source = Path("acquisition/run.py").read_text(encoding="utf-8")
 
-    main = source[source.index("def main"):]
+    main = source[source.index("def main"):source.index('if __name__ == "__main__":')]
     dedicated = main.index('if source == "goldsmiths":')
     daily = main.index('image_requests_per_minute =', dedicated)
     precision = main.index('"precisionwatches",', daily)

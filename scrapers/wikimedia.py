@@ -33,6 +33,7 @@ _FAMILY_SEARCHES = (
     ("Omega Seamaster watch", "omega", "seamaster"),
     ("Patek Philippe Nautilus", "patek philippe", "nautilus"),
     ("Rolex Submariner wristwatch", "rolex", "submariner"),
+    ("Omega Speedmaster watch", "omega", "speedmaster"),
 )
 _CLASSIFICATION = "brand_family_candidate_unverified"
 _CURSOR = re.compile(r"^q:(\d+):(\d+)$")
@@ -78,6 +79,7 @@ def discover_wikimedia(
     *,
     now: datetime,
     previous: DiscoveryCommit | None = None,
+    family_index: int | None = None,
 ) -> WikimediaDiscovery:
     """Return one validated page; the caller commits it after collecting every file."""
     decision = authorize_discovery(policy, access, now=now)
@@ -100,7 +102,11 @@ def discover_wikimedia(
             ),
             candidates=(),
         )
-    query_index, offset = _parse_cursor(cursor)
+    if family_index is not None and (family_index < 0 or family_index >= len(_FAMILY_SEARCHES)):
+        raise ValueError("Wikimedia family index is invalid")
+    query_index, offset = _parse_cursor(cursor) if cursor is not None else (family_index or 0, 0)
+    if family_index is not None and query_index != family_index:
+        raise WikimediaAPIError("Wikimedia cursor belongs to another family")
     query, brand, family = _FAMILY_SEARCHES[query_index]
     params: dict[str, object] = {
         "action": "query",
@@ -150,7 +156,7 @@ def discover_wikimedia(
         raise WikimediaAPIError("Wikimedia continuation offset is invalid")
     next_cursor = (
         f"q:{query_index}:{next_offset}" if next_offset is not None
-        else f"q:{query_index + 1}:0" if query_index + 1 < len(_FAMILY_SEARCHES)
+        else f"q:{query_index + 1}:0" if family_index is None and query_index + 1 < len(_FAMILY_SEARCHES)
         else None
     )
     discovery_page = DiscoveryPage(
