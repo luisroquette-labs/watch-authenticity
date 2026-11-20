@@ -284,6 +284,30 @@ def test_speedmaster_search_resumes_after_existing_families_without_authenticity
     assert dict(result.page.records[0].metadata)["family_claim_from_text"] == "speedmaster"
 
 
+def test_speedmaster_lane_starts_directly_and_keeps_original_query_identity(cos):
+    http = MagicMock()
+    page = _page()
+    page["title"] = "File:Omega Speedmaster Professional.jpg"
+    page["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Omega_Speedmaster_Professional.jpg"
+    http.get.return_value = _Response({"query": {"pages": [page]}})
+
+    result = _discover(http, cos, family_index=5)
+
+    assert http.get.call_args.kwargs["params"]["gsrsearch"] == "Omega Speedmaster watch"
+    assert result.page.records[0].source_record_id == "q5:123"
+    assert result.page.next_cursor is None
+    assert result.candidates[0].evidence_tier is EvidenceTier.INCONCLUSIVE
+
+
+def test_speedmaster_lane_rejects_another_family_checkpoint(cos):
+    http = MagicMock()
+    http.get.return_value = _Response({"query": {"pages": [_page()]}})
+    first = _discover(http, cos)
+    commit = append_discovery_page(cos, "private", "datasets/discovery", first.page)
+    with pytest.raises(WikimediaAPIError, match="another family"):
+        _discover(http, cos, family_index=5, previous=commit)
+
+
 def test_unsupported_file_mime_is_skipped(cos):
     http = MagicMock()
     page = _page()
