@@ -9,12 +9,42 @@ import json
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import requests
 
 PART_BYTES = 16 * 1024 * 1024
 BUCKET_PREFIX = "pilot/model-sources"
+
+
+def _source_chunks(url: str, size: int) -> Iterator[bytes]:
+    offset = 0
+    failures = 0
+    while offset < size:
+        headers = {"Range": f"bytes={offset}-"} if offset else {}
+        try:
+            with requests.get(url, stream=True, timeout=(10, 120), headers=headers) as response:
+                response.raise_for_status()
+                if offset:
+                    expected = f"bytes {offset}-"
+                    if response.status_code != 206 or not response.headers.get("Content-Range", "").startswith(expected):
+                        raise RuntimeError("model source did not honor byte-range resume")
+                elif response.headers.get("Content-Length") and int(response.headers["Content-Length"]) != size:
+                    raise RuntimeError("source model asset size differs")
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        offset += len(chunk)
+                        if offset > size:
+                            raise RuntimeError("source model asset exceeds pinned size")
+                        failures = 0
+                        yield chunk
+                if offset < size:
+                    raise requests.ConnectionError("model source ended before pinned size")
+        except (requests.ConnectionError, requests.Timeout):
+            failures += 1
+            if failures >= 5:
+                raise
+            time.sleep(min(failures * 2, 10))
 
 
 def _client(endpoint: str, instance_id: str) -> Any:
@@ -110,55 +140,49 @@ def stage_file(client: Any, bucket: str, model: dict[str, Any], spec: dict[str, 
             raise RuntimeError(f"corrupt model asset cannot be repaired without COS versioning: {key}")
 
     url = f"https://huggingface.co/{model['repository']}/resolve/{revision}/{path}"
-    with requests.get(url, stream=True, timeout=(10, 120)) as response:
-        response.raise_for_status()
-        if response.headers.get("Content-Length") and int(response.headers["Content-Length"]) != spec["size"]:
-            raise RuntimeError(f"source model asset size differs: {path}")
-        source, sha256 = _hashes(spec)
-        count = 0
-        metadata = {"source-digest": str(spec["digest"]), "digest-type": str(spec["digest_type"])}
-        if spec["size"] < PART_BYTES:
-            body = response.content
-            count = len(body)
-            source.update(body)
-            sha256.update(body)
-            if count != spec["size"] or source.hexdigest() != spec["digest"]:
-                raise RuntimeError(f"source model asset digest differs: {path}")
-            client.put_object(Bucket=bucket, Key=key, Body=body, Metadata=metadata)
-        else:
-            upload = client.create_multipart_upload(Bucket=bucket, Key=key, Metadata=metadata)
-            parts: list[dict[str, object]] = []
-            buffer = bytearray()
-            try:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if not chunk:
-                        continue
-                    source.update(chunk)
-                    sha256.update(chunk)
-                    count += len(chunk)
-                    buffer.extend(chunk)
-                    if len(buffer) >= PART_BYTES:
-                        part = client.upload_part(
-                            Bucket=bucket, Key=key, UploadId=upload["UploadId"],
-                            PartNumber=len(parts) + 1, Body=bytes(buffer),
-                        )
-                        parts.append({"ETag": part["ETag"], "PartNumber": len(parts) + 1})
-                        buffer.clear()
-                if count != spec["size"] or source.hexdigest() != spec["digest"]:
-                    raise RuntimeError(f"source model asset digest differs: {path}")
-                if buffer:
+    source, sha256 = _hashes(spec)
+    count = 0
+    metadata = {"source-digest": str(spec["digest"]), "digest-type": str(spec["digest_type"])}
+    if spec["size"] < PART_BYTES:
+        body = b"".join(_source_chunks(url, spec["size"]))
+        count = len(body)
+        source.update(body)
+        sha256.update(body)
+        if count != spec["size"] or source.hexdigest() != spec["digest"]:
+            raise RuntimeError(f"source model asset digest differs: {path}")
+        client.put_object(Bucket=bucket, Key=key, Body=body, Metadata=metadata)
+    else:
+        upload = client.create_multipart_upload(Bucket=bucket, Key=key, Metadata=metadata)
+        parts: list[dict[str, object]] = []
+        buffer = bytearray()
+        try:
+            for chunk in _source_chunks(url, spec["size"]):
+                source.update(chunk)
+                sha256.update(chunk)
+                count += len(chunk)
+                buffer.extend(chunk)
+                if len(buffer) >= PART_BYTES:
                     part = client.upload_part(
                         Bucket=bucket, Key=key, UploadId=upload["UploadId"],
                         PartNumber=len(parts) + 1, Body=bytes(buffer),
                     )
                     parts.append({"ETag": part["ETag"], "PartNumber": len(parts) + 1})
-                client.complete_multipart_upload(
+                    buffer.clear()
+            if count != spec["size"] or source.hexdigest() != spec["digest"]:
+                raise RuntimeError(f"source model asset digest differs: {path}")
+            if buffer:
+                part = client.upload_part(
                     Bucket=bucket, Key=key, UploadId=upload["UploadId"],
-                    MultipartUpload={"Parts": parts},
+                    PartNumber=len(parts) + 1, Body=bytes(buffer),
                 )
-            except Exception:
-                client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload["UploadId"])
-                raise
+                parts.append({"ETag": part["ETag"], "PartNumber": len(parts) + 1})
+            client.complete_multipart_upload(
+                Bucket=bucket, Key=key, UploadId=upload["UploadId"],
+                MultipartUpload={"Parts": parts},
+            )
+        except Exception:
+            client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload["UploadId"])
+            raise
     if _verify_remote(client, bucket, key, spec) != sha256.hexdigest():
         raise RuntimeError(f"COS model asset changed after upload: {key}")
     return sha256.hexdigest()

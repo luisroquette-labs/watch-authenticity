@@ -74,6 +74,7 @@ class Response:
     def __init__(self, body: bytes):
         self.content = body
         self.headers = {"Content-Length": str(len(body))}
+        self.status_code = 200
 
     def __enter__(self):
         return self
@@ -129,6 +130,37 @@ def test_multipart_readback_matches_pinned_bytes(monkeypatch):
 
     assert stage.stage_file(cos, "private", model, spec) == digest
     assert b"".join(cos.parts) == body
+
+
+def test_source_recovers_after_midstream_disconnect(monkeypatch):
+    body = b"123456789abcdefgh"
+    digest = hashlib.sha256(body).hexdigest()
+    spec = {"path": "model.safetensors", "size": len(body), "digest_type": "sha256", "digest": digest}
+    model = {"name": "owlv2", "repository": "owner/model", "revision": "b" * 40}
+    cos = COS()
+    cos.digest = digest
+    monkeypatch.setattr(stage, "PART_BYTES", 8)
+    monkeypatch.setattr(stage.time, "sleep", lambda _seconds: None)
+
+    class Interrupted(Response):
+        def iter_content(self, chunk_size):
+            yield body[:8]
+            raise stage.requests.ConnectionError("disconnect")
+
+    class Ranged(Response):
+        def __init__(self):
+            super().__init__(body[8:])
+            self.status_code = 206
+            self.headers["Content-Range"] = f"bytes 8-{len(body)-1}/{len(body)}"
+
+    calls = []
+    def get(*_args, **kwargs):
+        calls.append(kwargs["headers"])
+        return Interrupted(body) if len(calls) == 1 else Ranged()
+
+    monkeypatch.setattr(stage.requests, "get", get)
+    assert stage.stage_file(cos, "private", model, spec) == digest
+    assert calls == [{}, {"Range": "bytes=8-"}]
 
 
 def test_corrupt_existing_asset_is_repaired_as_new_version(monkeypatch):

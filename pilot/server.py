@@ -68,7 +68,8 @@ class PilotService:
             if knowledge_path is not None else ()
         )
         self.assessor = LocalVisionAssessor(checkpoint)
-        self.locator = LocalWatchLocator()
+        detector = os.environ.get("WATCH_AUTH_DETECTOR_CHECKPOINT")
+        self.locator = LocalWatchLocator(detector) if detector else LocalWatchLocator()
 
     def predict(self, body: bytes, content_type: str, angle: str) -> dict[str, object]:
         if angle not in ANGLES:
