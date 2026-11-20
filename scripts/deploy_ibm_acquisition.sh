@@ -28,6 +28,7 @@ acquisition_job="watch-auth-acquisition-${deployment_id}"
 luxury_job="watch-auth-supercloneluxury-${deployment_id}"
 cbp_job="watch-auth-cbp-${deployment_id}"
 goldsmiths_job="watch-auth-goldsmiths-${deployment_id}"
+speedmaster_job="watch-auth-speedmaster-${deployment_id}"
 
 job_args=(
   --name "${acquisition_job}"
@@ -252,6 +253,39 @@ goldsmiths_cron_args[1]=watch-auth-goldsmiths-daily
 goldsmiths_cron_args[5]="${goldsmiths_job}"
 goldsmiths_cron_args[7]='27 3 * * *'
 
+speedmaster_job_args=("${job_args[@]}")
+speedmaster_job_args[1]="${speedmaster_job}"
+speedmaster_job_args+=(--arg=--source --arg=wikimedia-speedmaster)
+if ibmcloud ce job get --name "${speedmaster_job}" --output json >/dev/null 2>&1; then
+  :
+else
+  ibmcloud ce job create "${speedmaster_job_args[@]}"
+fi
+verify_job "${speedmaster_job}" wikimedia-speedmaster
+
+if link_exists "${speedmaster_job}"; then
+  :
+else
+  link_state=$?
+  [[ "${link_state}" -eq 1 ]] || {
+    echo "trusted-profile link inventory failed" >&2
+    exit 2
+  }
+  ibmcloud iam trusted-profile-link-create "${WATCH_AUTH_TRUSTED_PROFILE_ID}" \
+    --name "${speedmaster_job}" \
+    --cr-type CE \
+    --link-crn "${WATCH_AUTH_CE_PROJECT_CRN}" \
+    --link-component-type job \
+    --link-component-name "${speedmaster_job}" \
+    --output json >/dev/null
+  link_exists "${speedmaster_job}" || { echo "trusted-profile link readback failed" >&2; exit 2; }
+fi
+
+speedmaster_cron_args=("${cron_args[@]}")
+speedmaster_cron_args[1]=watch-auth-speedmaster-daily
+speedmaster_cron_args[5]="${speedmaster_job}"
+speedmaster_cron_args[7]='47 3 * * *'
+
 # Activate the dedicated source first; the old daily job remains a safe fallback
 # until the main cron points to an image that omits Goldsmiths.
 if ibmcloud ce sub cron get --name watch-auth-goldsmiths-daily --output json >/dev/null 2>&1; then
@@ -276,4 +310,10 @@ if ibmcloud ce sub cron get --name watch-auth-cbp-daily --output json >/dev/null
   ibmcloud ce sub cron update "${cbp_cron_args[@]}"
 else
   ibmcloud ce sub cron create "${cbp_cron_args[@]}"
+fi
+
+if ibmcloud ce sub cron get --name watch-auth-speedmaster-daily --output json >/dev/null 2>&1; then
+  ibmcloud ce sub cron update "${speedmaster_cron_args[@]}"
+else
+  ibmcloud ce sub cron create "${speedmaster_cron_args[@]}"
 fi
