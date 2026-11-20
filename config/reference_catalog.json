@@ -123,6 +123,19 @@
       "holdout_freeze_sha256": null,
       "status": "pending",
       "head": null
+    },
+    {
+      "reference_id": "audemarspiguet-royaloak-26331stoo1220st02",
+      "brand": "audemarspiguet",
+      "family": "royaloak",
+      "reference": "26331stoo1220st02",
+      "aliases": [],
+      "identity_evidence_sha256": null,
+      "required_angles": ["dial", "crown", "clasp", "caseback"],
+      "gold_freeze_sha256": null,
+      "holdout_freeze_sha256": null,
+      "status": "pending",
+      "head": null
     }
   ]
 }
