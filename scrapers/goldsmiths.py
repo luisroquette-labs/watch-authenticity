@@ -1,4 +1,4 @@
-"""Metadata-only discovery for Goldsmiths Rolex CPO watches."""
+"""Metadata-only discovery for exact-reference Goldsmiths Rolex CPO watches."""
 
 from __future__ import annotations
 
@@ -24,18 +24,22 @@ _ROBOTS_URL = f"https://{_HOST}/robots.txt"
 _SITEMAP_URL = f"https://{_HOST}/sitemap.xml"
 _PRODUCT_SITEMAP_PATH = re.compile(r"/sitemap/product-en-gbp-[0-9]+\.xml$")
 _PRODUCT_PATH = re.compile(
-    r"/Rolex-Certified-Pre\+Owned-Submariner-Date-M?126610LN(?:\+0001)?/p/"
+    r"/Rolex-Certified-Pre\+Owned-(?P<model>Submariner-Date-M?126610LN(?:\+0001)?|Datejust-41-126334)/p/"
     r"(?P<unit_id>[0-9]+)$",
     re.IGNORECASE,
 )
+_DATEJUST_MODEL = "datejust-41-126334"
+_DATEJUST_REFERENCE = "rolex-datejust-126334"
+_SUBMARINER_REFERENCE = "rolex-submariner-126610ln"
 _MAX_ROBOTS_BYTES = 256 * 1024
 _MAX_INDEX_BYTES = 1024 * 1024
 _MAX_PRODUCT_SITEMAP_BYTES = 16 * 1024 * 1024
 _MAX_PRODUCT_PAGE_BYTES = 8 * 1024 * 1024
 _MAX_PRODUCT_SITEMAPS = 8
-_MAX_EXACT_PRODUCTS = 50
+_MAX_EXACT_PRODUCTS = 1000
 _SOURCE_BUDGET_SECONDS = 420
 _CURSOR = re.compile(r"after:(?P<unit_id>[0-9]+)")
+_CURSOR_V2 = re.compile(r"after2:(?P<sub>[0-9]+|-):(?P<datejust>[0-9]+|-)")
 _NS = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
 
@@ -65,10 +69,20 @@ def discover_goldsmiths(
     if access.requests_per_minute is None:
         raise PermissionError("source access request limit is missing")
     cursor = getattr(previous, "next_cursor", None) if previous is not None else None
-    cursor_match = _CURSOR.fullmatch(cursor) if cursor is not None else None
-    if cursor is not None and cursor_match is None:
-        raise GoldsmithsAPIError("CPO discovery continuation cursor is invalid")
-    after_unit = int(cursor_match.group("unit_id")) if cursor_match is not None else None
+    after: dict[str, int | None] = {
+        _SUBMARINER_REFERENCE: None,
+        _DATEJUST_REFERENCE: None,
+    }
+    if cursor is not None:
+        legacy = _CURSOR.fullmatch(cursor)
+        current = _CURSOR_V2.fullmatch(cursor)
+        if legacy is not None:
+            after[_SUBMARINER_REFERENCE] = int(legacy.group("unit_id"))
+        elif current is not None:
+            after[_SUBMARINER_REFERENCE] = _cursor_unit(current.group("sub"))
+            after[_DATEJUST_REFERENCE] = _cursor_unit(current.group("datejust"))
+        else:
+            raise GoldsmithsAPIError("CPO discovery continuation cursor is invalid")
     source_deadline = deadline if deadline is not None else clock() + _SOURCE_BUDGET_SECONDS
 
     fetcher = PacedBoundedHTTP(
@@ -89,7 +103,7 @@ def discover_goldsmiths(
             _SITEMAP_URL, _MAX_INDEX_BYTES, "sitemap index", deadline=source_deadline
         )
     )
-    products: list[tuple[str, str]] = []
+    products: list[tuple[str, str, str]] = []
     for sitemap_url in sitemap_urls:
         root = _xml(
             fetcher.get_bytes(
@@ -104,20 +118,26 @@ def discover_goldsmiths(
             parsed = _approved_source_url(source_url)
             match = _PRODUCT_PATH.fullmatch(parsed.path)
             if match is not None:
-                products.append((source_url, match.group("unit_id")))
-    if len(products) > _MAX_EXACT_PRODUCTS or len(products) != len(set(products)):
+                reference_id = (
+                    _DATEJUST_REFERENCE
+                    if match.group("model").lower() == _DATEJUST_MODEL
+                    else _SUBMARINER_REFERENCE
+                )
+                products.append((source_url, match.group("unit_id"), reference_id))
+    if (len(products) > _MAX_EXACT_PRODUCTS
+            or len(products) != len({unit_id for _, unit_id, _ in products})):
         raise GoldsmithsAPIError("exact-reference product inventory is invalid")
 
     remaining = sorted(
         (
-            (source_url, unit_id)
-            for source_url, unit_id in products
-            if after_unit is None or int(unit_id) > after_unit
+            (source_url, unit_id, reference_id)
+            for source_url, unit_id, reference_id in products
+            if (marker := after[reference_id]) is None or int(unit_id) > marker
         ),
         key=lambda item: int(item[1]),
     )
     records: list[DiscoveryRecord] = []
-    for source_url, unit_id in remaining:
+    for source_url, unit_id, reference_id in remaining:
         if not fetcher.can_complete_before(source_deadline):
             break
         try:
@@ -129,12 +149,13 @@ def discover_goldsmiths(
             )
         except HTTPDeadlineExceeded:
             break
-        records.append(_parse_product_page(source_url, unit_id, body))
+        records.append(_parse_product_page(source_url, unit_id, reference_id, body))
+        after[reference_id] = int(unit_id)
     if remaining and not records:
         raise GoldsmithsAPIError("CPO discovery budget exhausted before progress")
     next_cursor = None
     if len(records) < len(remaining):
-        next_cursor = f"after:{records[-1].source_record_id}"
+        next_cursor = f"after2:{after[_SUBMARINER_REFERENCE] or '-'}:{after[_DATEJUST_REFERENCE] or '-'}"
     return DiscoveryPage(
         source="goldsmiths",
         access_record_id=access.access_record_id,
@@ -143,6 +164,10 @@ def discover_goldsmiths(
         observed_at=now,
         records=tuple(records),
     )
+
+
+def _cursor_unit(value: str) -> int | None:
+    return None if value == "-" else int(value)
 
 
 def _product_sitemap_urls(body: bytes) -> tuple[str, ...]:
@@ -166,18 +191,19 @@ def _product_sitemap_urls(body: bytes) -> tuple[str, ...]:
     return tuple(urls)
 
 
-def _parse_product_page(source_url: str, unit_id: str, body: bytes) -> DiscoveryRecord:
+def _parse_product_page(source_url: str, unit_id: str, reference_id: str, body: bytes) -> DiscoveryRecord:
     try:
         document = html.unescape(body.decode("utf-8", errors="strict"))
     except UnicodeDecodeError as exc:
         raise GoldsmithsAPIError("product page is not UTF-8") from exc
     title_match = re.search(r"<title>\s*([^<]+?)\s*</title>", document, re.IGNORECASE)
     title = title_match.group(1).strip() if title_match is not None else ""
-    if re.fullmatch(
-        r"Rolex Certified Pre-Owned Submariner Date (?:M126610LN-0001|126610LN) "
-        r"\| Goldsmiths",
-        title,
-    ) is None:
+    expected_title = (
+        r"Rolex Certified Pre-Owned Datejust 41 126334 \| Goldsmiths"
+        if reference_id == _DATEJUST_REFERENCE
+        else r"Rolex Certified Pre-Owned Submariner Date (?:M126610LN-0001|126610LN) \| Goldsmiths"
+    )
+    if re.fullmatch(expected_title, title) is None:
         raise GoldsmithsAPIError("product page lacks the exact Rolex CPO declaration")
     canonical = f'<link rel="canonical" href="{source_url}">'
     if canonical not in document:
@@ -204,7 +230,7 @@ def _parse_product_page(source_url: str, unit_id: str, body: bytes) -> Discovery
         source_version=hashlib.sha256(version_input).hexdigest(),
         source_url=source_url,
         seller_group_id="wos-group-cpo",
-        declared_reference="rolex-submariner-126610ln",
+        declared_reference=reference_id,
         image_ids=tuple(hashlib.sha256(url.encode()).hexdigest() for url in images),
         image_urls=images,
         metadata=(
