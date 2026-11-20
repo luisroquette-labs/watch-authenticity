@@ -46,12 +46,13 @@ def _registry():
 
 
 def _http(*, image: str = IMAGE, duplicate: bool = False, product: str = PRODUCT,
+          title: str = "Used Rolex Submariner 126610LN Black Dial",
           lastmod: str = "<lastmod>2026-11-20T00:00:00Z</lastmod>"):
     index = f'''<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <sitemap><loc>{SITEMAP}</loc></sitemap></sitemapindex>'''
     entry = f'''<url><loc>{product}</loc>{lastmod}
       <image:image><image:loc>{image}</image:loc>
-      <image:title>Used Rolex Submariner 126610LN Black Dial</image:title></image:image></url>'''
+      <image:title>{title}</image:title></image:image></url>'''
     products = f'''<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
     xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
     {entry}{entry if duplicate else ''}
@@ -101,6 +102,25 @@ def test_skips_non_product_paths_and_accepts_missing_lastmod():
     assert _discover(_http(product=f"{HOST}/rolex-blog/126610ln.html")).records == ()
     record = _discover(_http(lastmod="")).records[0]
     assert "last_modified" not in dict(record.metadata)
+
+
+@pytest.mark.parametrize(("product", "image", "title", "expected"), [
+    (f"{HOST}/193694-pre-owned-rolex-datejust-41-ref-126334.html",
+     f"{HOST}/images/zUsed-Rolex-Datejust-41-126334-SKU193694.jpg",
+     "193694 Pre-Owned Rolex Datejust 41 Ref 126334 Black Diamond Dial",
+     "rolex-datejust-126334"),
+    (f"{HOST}/cartier/pre-owned-santos-de-cartier-wssa0061.html",
+     f"{HOST}/cartier/images/zUsed-Cartier-Santos-WSSA0061-SKU185936.jpg",
+     "Pre-Owned Santos De Cartier WSSA0061 Medium Model Green Dial",
+     "cartier-santos-wssa0061"),
+])
+def test_discovers_other_catalog_references_without_authentication(
+    product, image, title, expected,
+):
+    record = _discover(_http(product=product, image=image, title=title)).records[0]
+    assert record.declared_reference == expected
+    assert record.source_record_id in {"193694", "185936"}
+    assert dict(record.metadata)["independent_confirmation"] == "not_established"
 
 
 def test_denies_wrong_access_host_and_continuation():
