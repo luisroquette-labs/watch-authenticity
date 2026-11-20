@@ -45,6 +45,7 @@ from infra.ibm_cos import (
     verify_no_public_access_policies,
     verify_private_versioned_bucket,
 )
+from scrapers.bobswatches import BobsWatchesDiscoveryError, discover_bobswatches
 from scrapers.cbp import CBPDiscoveryError, discover_cbp
 from scrapers.goldsmiths import GoldsmithsAPIError, discover_goldsmiths
 from scrapers.metadata_http import HTTPDeadlineExceeded
@@ -71,6 +72,7 @@ _OWNER_PUBLIC_DOWNLOAD_DIRECTIVE = (
     "images privately; do not treat download as permission to train or proof of authenticity"
 )
 _RECOVERABLE_METADATA_ERRORS = (
+    BobsWatchesDiscoveryError,
     CBPDiscoveryError,
     GoldsmithsAPIError,
     HTTPDeadlineExceeded,
@@ -778,7 +780,7 @@ def main(source: str = "all") -> None:
     root = Path(__file__).resolve().parents[1]
     policies = load_source_policies(root / "config/source_policies.json")
     access_registry = load_source_access_registry(root / "config/source_access.json")
-    if source not in {"all", "supercloneluxury", "cbp", "goldsmiths", "wikimedia-speedmaster", "research-census"}:
+    if source not in {"all", "supercloneluxury", "cbp", "goldsmiths", "bobswatches", "wikimedia-speedmaster", "research-census"}:
         raise ValueError("unsupported acquisition source")
     logging.basicConfig(level=logging.INFO)
     now = datetime.now(timezone.utc)
@@ -842,6 +844,17 @@ def main(source: str = "all") -> None:
                 now=now,
                 previous=previous,
                 deadline=job_deadline,
+            ),
+        )
+        return
+    if source == "bobswatches":
+        bobs_policy = get_source_policy(policies, source)
+        bobs_access = access_registry[source]
+        run_metadata_discovery_resilient(
+            cos, bucket, prefix, source, now=now,
+            discover=lambda previous: discover_bobswatches(
+                requests.Session(), bobs_policy, bobs_access,
+                now=now, previous=previous, deadline=job_deadline,
             ),
         )
         return
@@ -979,8 +992,7 @@ def main(source: str = "all") -> None:
         ),
     )
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", choices=("all", "supercloneluxury", "cbp", "goldsmiths", "wikimedia-speedmaster", "research-census"), default="all")
+    parser.add_argument("--source", choices=("all", "supercloneluxury", "cbp", "goldsmiths", "bobswatches", "wikimedia-speedmaster", "research-census"), default="all")
     main(parser.parse_args().source)

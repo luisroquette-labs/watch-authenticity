@@ -196,5 +196,15 @@
     ],
     "requires_rightsholder_permission": false,
     "policy_evidence_sha256": "a94c5a75f9347d8fca0d7becdfd95122ed3a8b0f46398b29e078a808172b19cb"
+  },
+  {
+    "policy_id": "bobswatches-metadata-only-v1",
+    "source": "bobswatches",
+    "allowed_methods": ["public-sitemap"],
+    "may_download": false,
+    "may_train": false,
+    "required_rights_purposes": [],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "2e15471a0eb99b65b8e2059c16f4b34b42ae27ede52d81fc12adaaa743c8d961"
   }
 ]
