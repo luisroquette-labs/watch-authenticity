@@ -600,8 +600,10 @@ def test_pilot_service_no_face_does_not_claim_reference_checks_or_repeat_front_v
 
     assert result["model_invoked"] is False
     assert result["online_checks"] == []
-    assert "confirme marca e referência presencialmente" in result["next_photo"]
-    assert "senão, envie outra foto frontal nítida" in result["next_photo"]
+    next_photo = result["next_photo"]
+    assert isinstance(next_photo, str)
+    assert "confirme marca e referência presencialmente" in next_photo
+    assert "senão, envie outra foto frontal nítida" in next_photo
 
 
 def test_untrained_pilot_separates_seen_photos_uncertainty_and_fake_quality() -> None:
