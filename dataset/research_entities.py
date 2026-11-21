@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -14,6 +15,7 @@ class ResearchEntityReport:
     manifest_sha256: str
     source: str
     candidate_ids: tuple[str, ...]
+    source_record_ids: tuple[str, ...]
     file_count: int
     probable_watch_count: int
     confirmed_watch_count: int
@@ -50,6 +52,7 @@ def read_research_entity_manifest(
         raise ValueError("research entity counts are inconsistent")
 
     candidate_ids: list[str] = []
+    source_record_ids: list[str] = []
     receipt_hashes: set[str] = set()
     for file in files:
         if not isinstance(file, dict):
@@ -84,13 +87,18 @@ def read_research_entity_manifest(
         if not isinstance(file.get("role"), str) or not file["role"]:
             raise ValueError("research entity file role is required")
         candidate_ids.append(receipt["candidate_id"])
+        record_id = receipt["source_record_id"]
+        match = re.fullmatch(r"q\d+:(\d+)", record_id)
+        source_record_ids.append(match[1] if match else record_id)
         receipt_hashes.add(digest)
-    if len(set(candidate_ids)) != len(files) or len(receipt_hashes) != len(files):
+    if (len(set(candidate_ids)) != len(files) or len(set(source_record_ids)) != len(files)
+            or len(receipt_hashes) != len(files)):
         raise ValueError("research entity files must be distinct")
     return ResearchEntityReport(
         manifest_sha256=hashlib.sha256(body).hexdigest(),
         source=source,
         candidate_ids=tuple(sorted(candidate_ids)),
+        source_record_ids=tuple(sorted(source_record_ids)),
         file_count=len(files),
         probable_watch_count=probable,
         confirmed_watch_count=0,
