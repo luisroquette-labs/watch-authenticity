@@ -9,6 +9,7 @@ import logging
 import os
 import time
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping
@@ -169,6 +170,37 @@ def run_wikimedia_once(
     _persist_status(cos_client, bucket, prefix, status)
     _LOG.info("acquisition_terminal %s", _canonical(status).decode())
     return status
+
+
+def run_wikimedia_replica_lanes(
+    cos_client: Any,
+    bucket: str,
+    prefix: str,
+    policy: SourcePolicy,
+    access: SourceAccessRecord,
+    *,
+    now: datetime,
+) -> None:
+    """Advance Datejust and Daytona independently within one source request budget."""
+    if access.requests_per_minute is None or access.requests_per_minute < 8:
+        raise RuntimeError("Wikimedia rate limit cannot cover both replica lanes")
+    lane_limit = access.requests_per_minute // 2
+    lane_access = replace(access, requests_per_minute=lane_limit)
+    errors: list[Exception] = []
+    for lane, query_range in (("daytona", (10, 12)), ("datejust", (7, 8))):
+        try:
+            run_wikimedia_once(
+                cos_client, bucket, f"{prefix}/lanes/{lane}/replica-research",
+                policy, lane_access, now=now, api_client=requests.Session(),
+                image_client=PinnedRequestsClient(requests_per_minute=lane_limit - 1),
+                discover=lambda *args, _query_range=query_range, **kwargs: discover_wikimedia(
+                    *args, **kwargs, query_range=_query_range
+                ),
+            )
+        except Exception as exc:
+            errors.append(exc)
+    if errors:
+        raise ExceptionGroup("Wikimedia replica lanes failed", errors)
 
 
 def _active_cycle(
@@ -904,14 +936,8 @@ def main(source: str = "all") -> None:
         return
     if source == "wikimedia-daytona":
         access = access_registry["wikimedia"]
-        if access.requests_per_minute is None or access.requests_per_minute < 4:
-            raise RuntimeError("Wikimedia rate limit cannot cover API and image retries")
-        run_wikimedia_once(
-            cos, bucket, f"{prefix}/lanes/daytona/replica-research",
-            get_source_policy(policies, "wikimedia"), access,
-            now=now, api_client=requests.Session(),
-            image_client=PinnedRequestsClient(requests_per_minute=access.requests_per_minute - 1),
-            discover=lambda *args, **kwargs: discover_wikimedia(*args, **kwargs, query_range=(10, 12)),
+        run_wikimedia_replica_lanes(
+            cos, bucket, prefix, get_source_policy(policies, "wikimedia"), access, now=now,
         )
         return
     image_requests_per_minute = access_registry["wikimedia"].requests_per_minute

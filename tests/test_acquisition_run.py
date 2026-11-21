@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,8 +16,10 @@ from acquisition.run import (
     run_metadata_discovery_resilient,
     run_public_image_collection_once,
     run_wikimedia_once,
+    run_wikimedia_replica_lanes,
 )
-from acquisition.types import CollectionAuthorizationRecord
+from acquisition.source_policy import load_source_access_registry
+from acquisition.types import CollectionAuthorizationRecord, SourcePolicy
 from scrapers.metadata_http import HTTPDeadlineExceeded
 from scrapers.replica_sitemap import ReplicaSitemapError
 from scrapers.wikimedia import WikimediaAPIError, WikimediaCandidate, WikimediaDiscovery
@@ -151,6 +154,58 @@ def test_wikimedia_lane_has_independent_checkpoint(cos, monkeypatch):
     )
     assert auckland_lane["state"] == "complete"
     assert "datasets/lanes/auckland-oyster/research/discovery/2026-11-10/wikimedia/children/root.json" in cos.bodies
+
+
+def test_replica_job_advances_datejust_and_daytona_with_separate_cursors(cos, monkeypatch):
+    access = load_source_access_registry(Path(__file__).resolve().parents[1] / "config/source_access.json")["wikimedia"]
+    observed = []
+
+    def discover(*_args, query_range, **_kwargs):
+        return query_range
+
+    def run(_cos, _bucket, prefix, _policy, lane_access, **kwargs):
+        observed.append((prefix, lane_access.requests_per_minute, kwargs["discover"]()))
+        return {"state": "complete"}
+
+    monkeypatch.setattr("acquisition.run.discover_wikimedia", discover)
+    monkeypatch.setattr("acquisition.run.run_wikimedia_once", run)
+    run_wikimedia_replica_lanes(
+        cos, "private", "datasets", cast(SourcePolicy, SimpleNamespace()), access, now=NOW,
+    )
+
+    assert observed == [
+        ("datasets/lanes/daytona/replica-research", 10, (10, 12)),
+        ("datasets/lanes/datejust/replica-research", 10, (7, 8)),
+    ]
+    with pytest.raises(RuntimeError, match="rate limit"):
+        run_wikimedia_replica_lanes(
+            cos, "private", "datasets", cast(SourcePolicy, SimpleNamespace()),
+            replace(access, requests_per_minute=7), now=NOW,
+        )
+    assert len(observed) == 2
+
+
+def test_replica_job_attempts_datejust_after_daytona_failure(cos, monkeypatch):
+    access = load_source_access_registry(Path(__file__).resolve().parents[1] / "config/source_access.json")["wikimedia"]
+    observed = []
+
+    def run(_cos, _bucket, prefix, _policy, _access, **_kwargs):
+        observed.append(prefix)
+        if "/daytona/" in prefix:
+            raise WikimediaAPIError("Daytona source failed")
+
+    monkeypatch.setattr("acquisition.run.run_wikimedia_once", run)
+    with pytest.raises(ExceptionGroup) as error:
+        run_wikimedia_replica_lanes(
+            cos, "private", "datasets", cast(SourcePolicy, SimpleNamespace()), access, now=NOW,
+        )
+
+    assert observed == [
+        "datasets/lanes/daytona/replica-research",
+        "datasets/lanes/datejust/replica-research",
+    ]
+    assert len(error.value.exceptions) == 1
+    assert isinstance(error.value.exceptions[0], WikimediaAPIError)
 
 
 def test_metadata_only_source_commits_without_downloading(cos):
