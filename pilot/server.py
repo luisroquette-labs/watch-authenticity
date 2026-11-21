@@ -302,11 +302,9 @@ def analyze_batch(
         )
     dial, dial_count = consensus([str(result.get("observed_dial_color", "uncertain")) for result in unique_evidence.values()])
     bezel, bezel_count = consensus([str(result.get("observed_bezel_color", "uncertain")) for result in unique_evidence.values()])
-    # shortcut: no validated brand gate exists; restore reference suggestions only after one is tested.
     if model_checked_images and verdict == "inconclusivo":
         message = "Cores observadas; marca, referência e autenticidade inconclusivas."
     missing_angles = sorted(ANGLES - observed_angles)
-    # The visual preview currently verifies only dial and bezel, even when another view is selected.
     next_useful_angle = "dial"
     cited_facts = {
         (check["field"], check["url"])

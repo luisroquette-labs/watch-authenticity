@@ -16,26 +16,15 @@ from collections.abc import Mapping
 
 from core.types import Grade, Label, ModelClass
 
-# Confidence is structurally forbidden from reading as an absolute verdict
-# (Requirements item 2): clamping away from the 0.0/1.0 extremes is what
-# makes "0.1%-99.9%" true for every reported score, not just the typical one.
 CONFIDENCE_FLOOR = 0.001
 CONFIDENCE_CEILING = 0.999
 
-# ponytail: a fixed policy value from the owner's brief ("~60%"), not a
-# figure derived from measured superclone-detection accuracy. Revisit once
-# real held-out-factory evaluation data exists for grade-4 samples.
 GRADE4_GENUINE_CEILING = 0.60
 
-# Marketplaces where a seller's own listing text decides genuine-vs-replica;
-# an "original" claim here is the single pitfall CK-13/CK-18 exist to block.
 _MARKETPLACE_SOURCES = frozenset({"olx", "mercadolivre"})
 
-# Owner-forum sources retained only as candidate-discovery identifiers.
 _OWNER_FORUM_SOURCES = frozenset({"chrono24", "watchuseek"})
 
-# Dedicated replica-forum / replica-site sources — a named factory or site
-# that sells/discusses replicas, as opposed to an ambiguous marketplace ad.
 _REPLICA_DISCOVERY_SOURCES = frozenset({"reptime", "chinese_replica"})
 
 REPLICA_VENDOR_SOURCES = frozenset({
@@ -53,13 +42,8 @@ _KNOWN_CANDIDATE_SOURCES = (
     | _REDDIT_SOURCES
 )
 
-# Named superclone factories (Requirements item 3: "Clean, VSF — clone até
-# do movimento"). ponytail: extend this set as new factories surface; any
-# other named factory defaults to HIGH_GRADE_REP, the conservative choice.
 _SUPERCLONE_FACTORIES = frozenset({"clean", "vsf"})
 
-# Below this listing price, an anonymous marketplace fake is assumed to be
-# street-fake territory (quartz movement, no-magnification lupa).
 PRICE_GRADE_1_CEILING = 50.0
 
 

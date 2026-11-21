@@ -30,13 +30,8 @@ from dataset.crop import ANGLE_CROP_FRACTIONS
 
 GUIDED_ANGLES: tuple[str, ...] = tuple(ANGLE_CROP_FRACTIONS)
 
-# The canonical vocabulary contains genuine + grades 1-4 + rejection.
-# Deriving the size from `ModelClass` keeps indices and head width together.
 NUM_CLASSES = len(ModelClass)
 
-# Class-index convention the per-angle heads' output follows; `model/
-# rejection.py` (step 07a) and `calibration` (step 07b) read this same
-# position instead of each re-deriving their own layout.
 GENUINE_CLASS_INDEX = ModelClass.GENUINE.value
 
 
