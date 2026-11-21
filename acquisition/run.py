@@ -186,15 +186,21 @@ def run_wikimedia_replica_lanes(
         raise RuntimeError("Wikimedia rate limit cannot cover both replica lanes")
     lane_limit = access.requests_per_minute // 2
     lane_access = replace(access, requests_per_minute=lane_limit)
+    errors: list[Exception] = []
     for lane, query_range in (("daytona", (10, 12)), ("datejust", (7, 8))):
-        run_wikimedia_once(
-            cos_client, bucket, f"{prefix}/lanes/{lane}/replica-research",
-            policy, lane_access, now=now, api_client=requests.Session(),
-            image_client=PinnedRequestsClient(requests_per_minute=lane_limit - 1),
-            discover=lambda *args, _query_range=query_range, **kwargs: discover_wikimedia(
-                *args, **kwargs, query_range=_query_range
-            ),
-        )
+        try:
+            run_wikimedia_once(
+                cos_client, bucket, f"{prefix}/lanes/{lane}/replica-research",
+                policy, lane_access, now=now, api_client=requests.Session(),
+                image_client=PinnedRequestsClient(requests_per_minute=lane_limit - 1),
+                discover=lambda *args, _query_range=query_range, **kwargs: discover_wikimedia(
+                    *args, **kwargs, query_range=_query_range
+                ),
+            )
+        except Exception as exc:
+            errors.append(exc)
+    if errors:
+        raise ExceptionGroup("Wikimedia replica lanes failed", errors)
 
 
 def _active_cycle(

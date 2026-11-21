@@ -185,6 +185,29 @@ def test_replica_job_advances_datejust_and_daytona_with_separate_cursors(cos, mo
     assert len(observed) == 2
 
 
+def test_replica_job_attempts_datejust_after_daytona_failure(cos, monkeypatch):
+    access = load_source_access_registry(Path(__file__).resolve().parents[1] / "config/source_access.json")["wikimedia"]
+    observed = []
+
+    def run(_cos, _bucket, prefix, _policy, _access, **_kwargs):
+        observed.append(prefix)
+        if "/daytona/" in prefix:
+            raise WikimediaAPIError("Daytona source failed")
+
+    monkeypatch.setattr("acquisition.run.run_wikimedia_once", run)
+    with pytest.raises(ExceptionGroup) as error:
+        run_wikimedia_replica_lanes(
+            cos, "private", "datasets", cast(SourcePolicy, SimpleNamespace()), access, now=NOW,
+        )
+
+    assert observed == [
+        "datasets/lanes/daytona/replica-research",
+        "datasets/lanes/datejust/replica-research",
+    ]
+    assert len(error.value.exceptions) == 1
+    assert isinstance(error.value.exceptions[0], WikimediaAPIError)
+
+
 def test_metadata_only_source_commits_without_downloading(cos):
     page = DiscoveryPage(
         source="vsfactoryusa",
