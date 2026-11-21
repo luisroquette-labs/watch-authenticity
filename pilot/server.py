@@ -6,13 +6,18 @@ import argparse
 import base64
 import binascii
 import hashlib
+import hmac
 import io
 import json
+import os
+import socket
+import threading
+import time
 from dataclasses import dataclass
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image, UnidentifiedImageError
@@ -30,6 +35,8 @@ MAX_BATCH_IMAGES = 6
 MAX_BATCH_DECODED_BYTES = MAX_BATCH_IMAGES * MAX_UPLOAD_BYTES
 MAX_BATCH_ENCODED_BYTES = ((MAX_BATCH_DECODED_BYTES + 2) // 3) * 4
 MAX_BATCH_REQUEST_BYTES = MAX_BATCH_ENCODED_BYTES + 16_384
+MAX_HEADER_SECONDS = 10
+MAX_REQUEST_SECONDS = 120
 ALLOWED_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 ANGLES = frozenset({"dial", "cyclops", "rehaut", "crown", "clasp", "caseback"})
 _HTML = r"""<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Prévia visual de relógios</title><style>body{font:16px system-ui;max-width:680px;margin:40px auto;padding:0 18px;background:#101214;color:#f5f5f5}main{background:#1a1e21;padding:24px;border-radius:16px}button,input,select{font:inherit;margin:8px 0;padding:10px}button{cursor:pointer}.item{border:1px solid #444;padding:8px;margin:8px 0}#r{white-space:pre-wrap;padding:16px;background:#0b0d0e;border-radius:10px}.warn{color:#ffcc66}</style><main><h1>Prévia visual de relógios</h1><p class="warn">Ainda não detecta falsificações: não há classificador de autenticidade treinado e validado neste serviço. Esta prévia descreve cores do mostrador e aro somente quando a vista informada é mostrador; outras vistas são recebidas, mas não examinadas. Não identifica marca ou referência nem confirma autenticidade.</p><label>Fotos (1 a 6, até 15 MB cada)<br><input id="f" type="file" multiple accept="image/jpeg,image/png,image/webp"></label><div id="angles"></div><button id="b">Analisar</button><div id="r">Escolha fotos nítidas.</div></main><script>
@@ -52,13 +59,17 @@ class _VisualInspection:
 
 
 class PilotService:
-    def __init__(self, checkpoint: Path, knowledge_path: Path) -> None:
+    def __init__(self, checkpoint: Path, knowledge_path: Path | None = None) -> None:
         from pilot.online_assessor import LocalVisionAssessor
         from pilot.watch_locator import LocalWatchLocator
 
-        self.claims = load_knowledge(knowledge_path, "rolex-submariner-126610ln")
+        self.claims = (
+            load_knowledge(knowledge_path, "rolex-submariner-126610ln")
+            if knowledge_path is not None else ()
+        )
         self.assessor = LocalVisionAssessor(checkpoint)
-        self.locator = LocalWatchLocator()
+        detector = os.environ.get("WATCH_AUTH_DETECTOR_CHECKPOINT")
+        self.locator = LocalWatchLocator(detector) if detector else LocalWatchLocator()
 
     def predict(self, body: bytes, content_type: str, angle: str) -> dict[str, object]:
         if angle not in ANGLES:
@@ -344,9 +355,51 @@ def analyze_batch(
     }
 
 
-def handler(service: PredictService) -> type[BaseHTTPRequestHandler]:
+def handler(service: PredictService, password: str | None = None) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
+        def setup(self) -> None:
+            super().setup()
+            self.connection.settimeout(MAX_HEADER_SECONDS)
+            self._header_timer = threading.Timer(MAX_HEADER_SECONDS, self._abort_connection)
+            self._header_timer.daemon = True
+            self._header_timer.start()
+
+        def parse_request(self) -> bool:
+            try:
+                return super().parse_request()
+            finally:
+                self._header_timer.cancel()
+
+        def finish(self) -> None:
+            self._header_timer.cancel()
+            super().finish()
+
+        def _abort_connection(self) -> None:
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+        def _authorized(self) -> bool:
+            if password is None:
+                return True
+            authorization = self.headers.get("Authorization", "")
+            if authorization.startswith("Basic "):
+                try:
+                    supplied = base64.b64decode(authorization[6:], validate=True).decode()
+                    if hmac.compare_digest(supplied, f"watch:{password}"):
+                        return True
+                except (binascii.Error, UnicodeDecodeError, ValueError):
+                    pass
+            self.send_response(HTTPStatus.UNAUTHORIZED)
+            self.send_header("WWW-Authenticate", 'Basic realm="Watch Auth Pilot"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return False
+
         def do_GET(self) -> None:  # noqa: N802
+            if not self._authorized():
+                return
             if urlsplit(self.path).path != "/":
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
@@ -357,6 +410,8 @@ def handler(service: PredictService) -> type[BaseHTTPRequestHandler]:
             self.wfile.write(_HTML)
 
         def do_POST(self) -> None:  # noqa: N802
+            if not self._authorized():
+                return
             parsed = urlsplit(self.path)
             if parsed.path not in {"/predict", "/predict/batch"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
@@ -366,7 +421,20 @@ def handler(service: PredictService) -> type[BaseHTTPRequestHandler]:
                 limit = MAX_BATCH_REQUEST_BYTES if parsed.path == "/predict/batch" else MAX_UPLOAD_BYTES
                 if length <= 0 or length > limit:
                     raise ValueError("imagem vazia ou maior que 15 MB")
-                body = self.rfile.read(length)
+                deadline = time.monotonic() + MAX_REQUEST_SECONDS
+                chunks: list[bytes] = []
+                remaining = length
+                while remaining:
+                    seconds = deadline - time.monotonic()
+                    if seconds <= 0:
+                        raise TimeoutError("tempo de envio excedido")
+                    self.connection.settimeout(min(10, seconds))
+                    chunk = self.rfile.read(min(65_536, remaining))
+                    if not chunk:
+                        raise ValueError("envio da imagem incompleto")
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                body = b"".join(chunks)
                 if parsed.path == "/predict/batch":
                     if self.headers.get("Content-Type", "").split(";", 1)[0] != "application/json":
                         raise ValueError("o lote deve usar application/json")
@@ -377,6 +445,8 @@ def handler(service: PredictService) -> type[BaseHTTPRequestHandler]:
                 self._json(HTTPStatus.OK, payload)
             except (ValueError, json.JSONDecodeError) as exc:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            except (TimeoutError, socket.timeout):
+                self._json(HTTPStatus.REQUEST_TIMEOUT, {"error": "tempo de envio excedido"})
 
         def _json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode()
@@ -392,20 +462,58 @@ def handler(service: PredictService) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
+class PilotHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    request_queue_size = 8
+
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        handler_class: Callable[..., BaseHTTPRequestHandler],
+        bind_and_activate: bool = True,
+    ) -> None:
+        self._slots = threading.BoundedSemaphore(2)
+        super().__init__(server_address, handler_class, bind_and_activate)
+
+    def process_request(
+        self, request: socket.socket | tuple[bytes, socket.socket], client_address: Any
+    ) -> None:
+        if not self._slots.acquire(blocking=False):
+            self.close_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(
+        self, request: socket.socket | tuple[bytes, socket.socket], client_address: Any
+    ) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument(
         "--knowledge", type=Path,
-        default=Path("config/references/rolex-submariner-126610ln.json"),
+        default=None,
     )
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         raise SystemExit("port must be between 1024 and 65535")
+    password = os.environ.get("WATCH_AUTH_PILOT_PASSWORD")
+    if args.host != "127.0.0.1" and (not password or len(password) < 24):
+        raise SystemExit("public bind requires WATCH_AUTH_PILOT_PASSWORD (24+ characters)")
     service = PilotService(args.checkpoint, args.knowledge)
-    server = HTTPServer(("127.0.0.1", args.port), handler(service))
-    print(f"Prévia visual local: http://127.0.0.1:{args.port}", flush=True)
+    server = PilotHTTPServer((args.host, args.port), handler(service, password))
+    print(f"Prévia visual: {args.host}:{args.port}", flush=True)
     server.serve_forever()
 
 

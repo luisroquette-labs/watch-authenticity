@@ -1,0 +1,141 @@
+{
+  "models": [
+    {
+      "files": [
+        {
+          "digest": "71dc811700b6aa9274d3697ee7d4fb2d5375e766",
+          "digest_type": "git-sha1",
+          "path": "added_tokens.json",
+          "size": 4739
+        },
+        {
+          "digest": "510ce0da08797a605b226604f558662fbba02b7c",
+          "digest_type": "git-sha1",
+          "path": "chat_template.json",
+          "size": 516
+        },
+        {
+          "digest": "d2a7bdf9e204095994fa15a3160a28e4c1fbd505",
+          "digest_type": "git-sha1",
+          "path": "config.json",
+          "size": 7339
+        },
+        {
+          "digest": "14051e31eab5938a09976bf8c3e4769491f53a80",
+          "digest_type": "git-sha1",
+          "path": "generation_config.json",
+          "size": 136
+        },
+        {
+          "digest": "69503b13f727ba3812b6803e97442a6de05ef5eb",
+          "digest_type": "git-sha1",
+          "path": "merges.txt",
+          "size": 466391
+        },
+        {
+          "digest": "d05b567eeaf534e83d375551f068ed57b5f52d37c657197f644af5ef9db091a2",
+          "digest_type": "sha256",
+          "path": "model.safetensors",
+          "size": 1015025832
+        },
+        {
+          "digest": "893236748032d4bf033823d6a4a0d62b78b6bc0e",
+          "digest_type": "git-sha1",
+          "path": "preprocessor_config.json",
+          "size": 486
+        },
+        {
+          "digest": "b3b1deadd0e6e18c2070fdb0c29074892ea58ffe",
+          "digest_type": "git-sha1",
+          "path": "processor_config.json",
+          "size": 68
+        },
+        {
+          "digest": "647565708c361dc42350b5c7b79c46a4ff153b18",
+          "digest_type": "git-sha1",
+          "path": "special_tokens_map.json",
+          "size": 1069
+        },
+        {
+          "digest": "a4005d1cf3170a31600a5c96f95768166cbc2b28",
+          "digest_type": "git-sha1",
+          "path": "tokenizer.json",
+          "size": 3548256
+        },
+        {
+          "digest": "232c583dd25339ca8d9b30ca71e6703e69ab26ae",
+          "digest_type": "git-sha1",
+          "path": "tokenizer_config.json",
+          "size": 28336
+        },
+        {
+          "digest": "0ad5ecc2035b7031b88afb544ee95e2d49baa484",
+          "digest_type": "git-sha1",
+          "path": "vocab.json",
+          "size": 800662
+        }
+      ],
+      "license": "apache-2.0",
+      "name": "smolvlm",
+      "repository": "HuggingFaceTB/SmolVLM-500M-Instruct",
+      "revision": "753c1752602b5e739af7a7fa6947a635051897a3"
+    },
+    {
+      "files": [
+        {
+          "digest": "5ff4ac542d5e800dd3aadbdcda354868b5f24ddd",
+          "digest_type": "git-sha1",
+          "path": "added_tokens.json",
+          "size": 67
+        },
+        {
+          "digest": "dfc1049705d082052a81e7d18bde6d11fc137a0d",
+          "digest_type": "git-sha1",
+          "path": "config.json",
+          "size": 414
+        },
+        {
+          "digest": "76e821f1b6f0a9709293c3b6b51ed90980b3166b",
+          "digest_type": "git-sha1",
+          "path": "merges.txt",
+          "size": 524619
+        },
+        {
+          "digest": "e1e130b9e404cf91a75ad45644c1da9d7fa5284085eecc864266a6923efb99e7",
+          "digest_type": "sha256",
+          "path": "model.safetensors",
+          "size": 619918824
+        },
+        {
+          "digest": "b24bfd579e8682df31c7794a3e1c3ef6a9a22a7a",
+          "digest_type": "git-sha1",
+          "path": "preprocessor_config.json",
+          "size": 425
+        },
+        {
+          "digest": "39808ac074d69141c0b2f065d16f56dfa5194cac",
+          "digest_type": "git-sha1",
+          "path": "special_tokens_map.json",
+          "size": 121
+        },
+        {
+          "digest": "1c4c373d81adc0c63bb3368a89f4a92574395c2c",
+          "digest_type": "git-sha1",
+          "path": "tokenizer_config.json",
+          "size": 1100
+        },
+        {
+          "digest": "469be27c5c010538f845f518c4f5e8574c78f7c8",
+          "digest_type": "git-sha1",
+          "path": "vocab.json",
+          "size": 1059962
+        }
+      ],
+      "license": "apache-2.0",
+      "name": "owlv2",
+      "repository": "google/owlv2-base-patch16-ensemble",
+      "revision": "cfd3195ba4ea9592eec887ded089f4c08eff231d"
+    }
+  ],
+  "schema": "pilot-model-source-v1"
+}
