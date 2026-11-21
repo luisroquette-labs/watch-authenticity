@@ -105,13 +105,13 @@ valid = (
     and "watch-auth-pilot-basic" in secrets
     and pod.get("imagePullSecrets") == [{"name": os.environ["WATCH_AUTH_REGISTRY_SECRET"]}]
     and pod.get("serviceAccountName") == app.get("metadata", {}).get("namespace", "") + "-none"
-    and pod.get("mountComputeResourceToken") is True
+    and annotations.get("codeengine.cloud.ibm.com/mount-compute-resource-token") == "true"
     and pod.get("containerConcurrency") == 1
     and pod.get("timeoutSeconds") == 300
     and resources == {"cpu": "2", "memory": "8G", "ephemeral-storage": "4G"}
     and annotations.get("autoscaling.knative.dev/minScale") == "0"
     and annotations.get("autoscaling.knative.dev/maxScale") == "1"
-    and annotations.get("autoscaling.knative.dev/scale-down-delay") == "120"
+    and annotations.get("autoscaling.knative.dev/scale-down-delay") == "120s"
 )
 if not valid:
     raise SystemExit("pilot app readback differs from protected bounded configuration")
