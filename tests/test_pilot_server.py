@@ -540,6 +540,30 @@ def test_batch_does_not_infer_reference_from_colors_without_brand_identification
     assert "marca, referência e autenticidade inconclusivas" in joint["message"]
 
 
+def test_batch_next_photo_preserves_examined_guidance() -> None:
+    class Guidance:
+        def predict(self, _body: bytes, _content_type: str, angle: str) -> dict[str, object]:
+            if angle == "dial":
+                return {
+                    "verdict": "inconclusivo",
+                    "model_invoked": True,
+                    "next_photo": "Mostrador em macro, com marca e índices legíveis.",
+                }
+            return {
+                "verdict": "inconclusivo",
+                "model_invoked": False,
+                "next_photo": "Envie o mostrador de frente.",
+            }
+
+    joint = analyze_batch(
+        Guidance(), {"images": [_batch_item(angle="clasp"), _batch_item(angle="dial")]}
+    )["joint"]
+
+    assert joint["next_useful_angle"] == "dial"
+    assert joint["next_useful_photo"] == "Mostrador em macro, com marca e índices legíveis."
+    assert "Próxima verificação útil: '+j.joint.next_useful_photo" in _HTML.decode("utf-8")
+
+
 def test_black_dial_and_bezel_on_non_target_watch_never_suggest_rolex() -> None:
     class NonTargetWatch:
         def predict(self, *_args: object) -> dict[str, object]:
@@ -595,10 +619,10 @@ def test_unexamined_front_photo_does_not_request_same_view_or_analog_details() -
     joint = analyze_batch(Unassessed(), {"images": [_batch_item("dial")]})["joint"]
 
     assert joint["next_useful_angle"] is None
+    assert "confirme marca e referência presencialmente" in joint["next_useful_photo"]
     assert joint["unverified"] == [
         "marca, referência e autenticidade; nenhum detalhe foi examinado pelo modelo"
     ]
-    assert "confirme marca e referência presencialmente" in _HTML.decode("utf-8")
 
 
 def test_pilot_service_no_face_does_not_claim_reference_checks_or_repeat_front_view() -> None:
@@ -635,7 +659,7 @@ def test_untrained_pilot_separates_seen_photos_uncertainty_and_fake_quality() ->
     assert "Fotos usadas:" in page
     assert "confiança calibrada:" in page
     assert "Qualidade da falsificação (somente após confirmação):" in page
-    assert "confirme marca e referência presencialmente" in page
+    assert "Próxima verificação útil: '+j.joint.next_useful_photo" in page
 
 
 def test_rejected_photo_cannot_supply_cited_facts_or_fake_quality() -> None:
