@@ -40,6 +40,7 @@ _FAMILY_SEARCHES = (
     ("Omega Speedmaster Professional Moonwatch", "omega", "speedmaster"),
     ("replica Rolex Daytona", "rolex", "daytona"),
     ("fake Rolex Daytona watch", "rolex", "daytona"),
+    ("Audemars Piguet Royal Oak", "audemars piguet", "royal oak"),
 )
 _REPLICA_SEARCHES = frozenset({6, 7, 10, 11})
 _DEFAULT_SEARCH_STOP = 8
