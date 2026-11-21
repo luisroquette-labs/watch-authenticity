@@ -175,6 +175,27 @@ def test_default_discovery_does_not_enter_auckland_lane(cos):
     assert result.page.next_cursor is None
     assert http.get.call_args.kwargs["params"]["gsrsearch"] == "fake Rolex Datejust"
 
+
+def test_classic_speedmaster_photos_remain_unverified_research_candidates(cos):
+    http = MagicMock()
+    page = _page(license_name="CC BY 2.0", license_url="https://creativecommons.org/licenses/by/2.0/")
+    page["pageid"] = 97460531
+    page["title"] = "File:Classic Speedy (24067321725).jpg"
+    page["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Classic_Speedy_(24067321725).jpg"
+    page["imageinfo"][0]["extmetadata"]["ImageDescription"] = {
+        "value": "Omega Speedmaster Professional Moonwatch (Ref.: 311.30.42.30.01.005)"
+    }
+    http.get.return_value = _Response({"query": {"pages": [page]}})
+
+    result = _discover(http, cos, query_range=(9, 10))
+
+    assert http.get.call_args.kwargs["params"]["gsrsearch"] == "Omega Speedmaster Professional Moonwatch"
+    assert len(result.candidates) == 1
+    assert result.candidates[0].rights.allowed_purposes == ("download",)
+    assert result.candidates[0].metadata.declared_reference == "unverified"
+    assert result.candidates[0].evidence_tier is EvidenceTier.INCONCLUSIVE
+    assert result.page.next_cursor is None
+
 def test_real_commons_license_shapes_are_normalized():
     http = MagicMock()
     http.get.return_value = _Response(

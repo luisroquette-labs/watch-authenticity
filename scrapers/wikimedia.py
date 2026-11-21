@@ -37,6 +37,7 @@ _FAMILY_SEARCHES = (
     ("replica Omega Speedmaster", "omega", "speedmaster"),
     ("fake Rolex Datejust", "rolex", "datejust"),
     ("1953 Rolex Oyster Perpetual Auckland Museum", "rolex", "oyster perpetual"),
+    ("Omega Speedmaster Professional Moonwatch", "omega", "speedmaster"),
 )
 _REPLICA_SEARCHES = frozenset({6, 7})
 _DEFAULT_SEARCH_STOP = 8
