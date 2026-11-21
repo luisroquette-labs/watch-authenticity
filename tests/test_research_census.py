@@ -36,9 +36,9 @@ class COS:
         return True
 
 
-def _seed(cos):
+def _seed(cos, *, offset=0):
     files = []
-    for index in range(2):
+    for index in range(offset, offset + 2):
         receipt = {
             "candidate_id": f"candidate-{index}",
             "source_record_id": f"q6:{index}",
@@ -98,6 +98,28 @@ def test_census_refuses_a_second_terminal_for_the_same_date():
 
     with pytest.raises(RuntimeError, match="already closed"):
         run_research_census_once(cos, "private", "datasets", now=NOW)
+
+
+def test_late_manifest_creates_immutable_revision_without_rewriting_terminal():
+    cos = COS()
+    _seed(cos)
+    first = run_research_census_once(cos, "private", "datasets", now=NOW)
+    terminal_key = next(key for key in cos.bodies if key.endswith("/terminal.json"))
+    terminal = cos.bodies[terminal_key]
+    _seed(cos, offset=2)
+
+    revised = run_research_census_once(cos, "private", "datasets", now=NOW)
+    repeated = run_research_census_once(cos, "private", "datasets", now=NOW)
+
+    assert revised == repeated
+    assert revised["file_count"] == 4
+    assert revised["probable_watch_count"] == 2
+    assert revised["training_admission_count"] == 0
+    assert cos.bodies[terminal_key] == terminal
+    assert json.loads(terminal)["file_count"] == first["file_count"] == 2
+    revisions = [key for key in cos.bodies if "/research-census/" in key and "/revisions/" in key]
+    assert len(revisions) == 1
+    assert json.loads(cos.bodies[revisions[0]]) == revised
 
 
 def test_census_fails_before_persisting_corrupt_receipt():
