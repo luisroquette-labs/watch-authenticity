@@ -234,6 +234,24 @@ def test_classic_speedmaster_photos_remain_unverified_research_candidates(cos):
     assert result.candidates[0].evidence_tier is EvidenceTier.INCONCLUSIVE
     assert result.page.next_cursor is None
 
+
+def test_royal_oak_research_keeps_licensed_photo_unverified(cos):
+    http = MagicMock()
+    page = _page(license_name="CC BY-SA 4.0")
+    page["pageid"] = 124097422
+    page["title"] = "File:Audemars Piguet Royal Oak ref. 15202.jpg"
+    page["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Audemars_Piguet_Royal_Oak_ref._15202.jpg"
+    http.get.return_value = _Response({"query": {"pages": [page]}})
+
+    result = _discover(http, cos, query_range=(12, 13))
+
+    assert http.get.call_args.kwargs["params"]["gsrsearch"] == "Audemars Piguet Royal Oak"
+    assert len(result.candidates) == 1
+    assert result.candidates[0].metadata.declared_reference == "unverified"
+    assert result.candidates[0].rights.allowed_purposes == ("download",)
+    assert result.candidates[0].evidence_tier is EvidenceTier.INCONCLUSIVE
+    assert result.page.next_cursor is None
+
 def test_real_commons_license_shapes_are_normalized():
     http = MagicMock()
     http.get.return_value = _Response(
