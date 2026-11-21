@@ -575,6 +575,37 @@ def test_submitted_but_unchecked_photos_are_reported_separately() -> None:
     assert "nenhuma foi enviada ao modelo" in result["joint"]["message"]
 
 
+def test_unexamined_front_photo_does_not_request_same_view_or_analog_details() -> None:
+    class Unassessed:
+        def predict(self, *_args: object) -> dict[str, object]:
+            return {"verdict": "inconclusivo", "model_invoked": False}
+
+    joint = analyze_batch(Unassessed(), {"images": [_batch_item("dial")]})["joint"]
+
+    assert joint["next_useful_angle"] is None
+    assert joint["unverified"] == [
+        "marca, referência e autenticidade; nenhum detalhe foi examinado pelo modelo"
+    ]
+    assert "confirme marca e referência presencialmente" in _HTML.decode("utf-8")
+
+
+def test_pilot_service_no_face_does_not_claim_reference_checks_or_repeat_front_view() -> None:
+    service = PilotService.__new__(PilotService)
+    service.claims = load_knowledge(
+        Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln"
+    )
+    service.locator = cast(Any, type("NoWatch", (), {"locate": lambda self, image: None})())
+
+    result = service.predict(_jpeg(), "image/jpeg", "dial")
+
+    assert result["model_invoked"] is False
+    assert result["online_checks"] == []
+    next_photo = result["next_photo"]
+    assert isinstance(next_photo, str)
+    assert "confirme marca e referência presencialmente" in next_photo
+    assert "senão, envie outra foto frontal nítida" in next_photo
+
+
 def test_untrained_pilot_separates_seen_photos_uncertainty_and_fake_quality() -> None:
     result = analyze_batch(
         _StubService(["inconclusivo"]),
@@ -592,7 +623,7 @@ def test_untrained_pilot_separates_seen_photos_uncertainty_and_fake_quality() ->
     assert "Fotos usadas:" in page
     assert "confiança calibrada:" in page
     assert "Qualidade da falsificação (somente após confirmação):" in page
-    assert "nenhuma foto adicional desta prévia comprova autenticidade" in page
+    assert "confirme marca e referência presencialmente" in page
 
 
 def test_rejected_photo_cannot_supply_cited_facts_or_fake_quality() -> None:
