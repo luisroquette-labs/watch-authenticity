@@ -502,6 +502,7 @@ def _parse_freeze(
         "exclusions",
         "blocked",
         "asset_rights",
+        "asset_raw_sha256s",
     }
     if not isinstance(raw, dict) or set(raw) != fields:
         raise TrainingDataRefused("dataset freeze schema is invalid")
@@ -518,6 +519,7 @@ def _parse_freeze(
             exclusions=tuple(tuple(item) for item in raw["exclusions"]),
             blocked=raw["blocked"],
             asset_rights=tuple(tuple(item) for item in raw["asset_rights"]),
+            asset_raw_sha256s=tuple(tuple(item) for item in raw["asset_raw_sha256s"]),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise TrainingDataRefused("dataset freeze is invalid") from exc
@@ -538,6 +540,7 @@ def _parse_freeze(
     split_digest = hashlib.sha256(_canonical(source_splits)).hexdigest()
     asset_ids = {record.asset_id for record in records}
     rights_by_asset = {record.asset_id: record.rights_record_id for record in records}
+    raw_by_asset = {item["asset_id"]: item["original_sha256"] for item in source_records}
     if freeze.blocked:
         raise TrainingDataRefused("dataset freeze is blocked")
     if freeze.readiness_sha256 is None or freeze.rights_sha256 is None:
@@ -546,6 +549,8 @@ def _parse_freeze(
         raise TrainingDataRefused("dataset freeze hashes do not match canonical source artifacts")
     if set(freeze.eligible_asset_ids) != asset_ids or dict(freeze.asset_rights) != rights_by_asset:
         raise TrainingDataRefused("dataset freeze eligibility does not match training records")
+    if dict(freeze.asset_raw_sha256s) != raw_by_asset:
+        raise TrainingDataRefused("dataset freeze raw image bindings do not match source records")
     source_by_asset = {item["asset_id"]: item for item in source_records}
     if set(source_by_asset) != asset_ids:
         raise TrainingDataRefused("canonical source records do not match eligible assets")

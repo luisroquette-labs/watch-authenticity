@@ -326,6 +326,44 @@ def test_replay_rechecks_expected_hash_before_accepting_existing_receipt(
     http.get_pinned.assert_not_called()
 
 
+def test_scoped_rights_reject_fresh_and_resumed_raw_mismatch(
+    allowed_policy, rights, cos
+):
+    body = _png("green")
+    wrong = replace(rights, asset_sha256="0" * 64)
+    with pytest.raises(AcquisitionRefused, match="downloaded raw image"):
+        _collect_body(body, allowed_policy, wrong, cos)
+    assert cos.write_count == 0
+
+    first = _collect_body(body, allowed_policy, rights, cos)
+    writes = cos.write_count
+    with pytest.raises(AcquisitionRefused, match="stored raw image"):
+        _collect_body(body, allowed_policy, wrong, cos)
+    assert cos.write_count == writes
+    assert len(_receipt_keys(cos, first.accepted_candidate_ids[0])) == 1
+
+
+def test_partner_import_rejects_image_outside_scoped_rights_before_cos(
+    tmp_path: Path, allowed_policy, rights, cos
+):
+    image = tmp_path / "image.png"
+    image.write_bytes(_png("green"))
+    manifest = tmp_path / "export.jsonl"
+    manifest.write_text(json.dumps(_partner_row(image.name)) + "\n")
+    evidence_path = tmp_path / "rights-evidence.json"
+    evidence_path.write_text("{}")
+    scoped = replace(
+        rights, asset_sha256="0" * 64,
+        evidence_sha256=hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+    )
+    with pytest.raises(AcquisitionRefused, match="partner raw image"):
+        collect_partner_batch(
+            manifest, evidence_path, allowed_policy, scoped, cos_client=cos,
+            bucket="private", batch_id="partner-batch-1", now=NOW,
+        )
+    assert cos.write_count == 0
+
+
 def test_missing_rights_refuses_before_network(allowed_policy, http_client, cos):
     with pytest.raises(AcquisitionRefused, match="rights missing"):
         collect_batch(

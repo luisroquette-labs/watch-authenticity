@@ -304,6 +304,10 @@ def _valid_payloads(spec: RunSpec) -> tuple[dict[str, object], dict[str, object]
         "asset_rights": sorted(
             [str(record["asset_id"]), str(record["rights_record_id"])] for record in records
         ),
+        "asset_raw_sha256s": sorted(
+            [str(record["asset_id"]), str(source["original_sha256"])]
+            for record, source in zip(records, source_records)
+        ),
     }
     manifest = {
         "schema_version": 2,
@@ -338,6 +342,10 @@ def _seed(
         freeze["eligible_asset_ids"] = sorted(str(record["asset_id"]) for record in records)
         freeze["asset_rights"] = sorted(
             [str(record["asset_id"]), str(record["rights_record_id"])] for record in records
+        )
+        freeze["asset_raw_sha256s"] = sorted(
+            [str(source["asset_id"]), str(source["original_sha256"])]
+            for source in source_records
         )
     manifest_bytes = _canonical(manifest)
     splits_bytes = _canonical(splits)
@@ -378,6 +386,14 @@ def test_loader_accepts_complete_content_addressed_freeze(training_fixture):
     assert bundle.manifest_sha256 == spec.manifest_sha256
     assert bundle.splits_sha256 == spec.splits_sha256
     assert bundle.freeze.split_sha256 == _sha256(_canonical(manifest["source_splits"]))
+
+
+def test_loader_refuses_frozen_raw_binding_mismatch(training_fixture):
+    _cos, _spec, manifest, splits, images = training_fixture
+    manifest["freeze"]["asset_raw_sha256s"][0][1] = "0" * 64
+    cos, spec = _seed(manifest, splits, images, refresh_freeze=False)
+    with pytest.raises(TrainingDataRefused, match="raw image bindings"):
+        load_training_data(cos, spec)
 
 
 def test_loader_refuses_style_shortcut_even_with_rehashed_freeze(training_fixture):

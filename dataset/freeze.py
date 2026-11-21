@@ -58,8 +58,9 @@ def require_launchable_freeze(
         raise FrozenDatasetRefused("dataset freeze is blocked")
     if not freeze.asset_rights:
         raise FrozenDatasetRefused("dataset freeze lacks current rights bindings")
-    for _, rights_id in freeze.asset_rights:
-        _require_current_rights(rights_id, rights, policies, now)
+    raw_by_asset = dict(freeze.asset_raw_sha256s)
+    for asset_id, rights_id in freeze.asset_rights:
+        _require_current_rights(rights_id, rights, policies, now, raw_by_asset.get(asset_id))
 
 
 def require_frozen_asset_read(
@@ -74,7 +75,7 @@ def require_frozen_asset_read(
     if asset_id not in freeze.eligible_asset_ids:
         raise FrozenDatasetRefused("asset is not eligible in this freeze")
     rights_id = dict(freeze.asset_rights)[asset_id]
-    _require_current_rights(rights_id, rights, policies, now)
+    _require_current_rights(rights_id, rights, policies, now, dict(freeze.asset_raw_sha256s).get(asset_id))
 
 
 def _require_current_rights(
@@ -82,6 +83,7 @@ def _require_current_rights(
     rights: Mapping[str, RightsRecord],
     policies: Mapping[str, SourcePolicy],
     now: datetime,
+    raw_sha256: str | None,
 ) -> None:
     record = rights.get(rights_id)
     if record is None:
@@ -89,6 +91,8 @@ def _require_current_rights(
     decision = authorize_candidate(_policy_for_rights(policies, record), record, now=now)
     if not decision.may_train:
         raise FrozenDatasetRefused("current rights do not permit training access")
+    if not record.covers_asset(raw_sha256):
+        raise FrozenDatasetRefused("current rights do not cover frozen raw image")
 
 
 def freeze_dataset(
@@ -134,6 +138,8 @@ def freeze_dataset(
             if rights_record is None
             else authorize_candidate(policy, rights_record, now=now).reasons
         )
+        if rights_record is not None and not rights_record.covers_asset(record.original_sha256):
+            reasons = (*reasons, "rights do not cover raw image")
         if reasons:
             reason = "; ".join(reasons)
             exclusions[record.asset_id] = reason
@@ -217,6 +223,9 @@ def freeze_dataset(
         blocked=not readiness.ready,
         asset_rights=tuple(
             (record.asset_id, record.rights_record_id) for record in eligible_records
+        ),
+        asset_raw_sha256s=tuple(
+            (record.asset_id, record.original_sha256) for record in eligible_records
         ),
     )
     impacted = _impacted_report(
