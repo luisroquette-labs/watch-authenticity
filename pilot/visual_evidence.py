@@ -57,6 +57,8 @@ def bezel_color_hint(face: Image.Image) -> str:
         }
         ranked = sorted(coverage, key=coverage.get, reverse=True)  # type: ignore[arg-type]
         if coverage[ranked[0]] >= 6 and coverage[ranked[0]] - coverage[ranked[1]] >= 2:
+            if ranked[0] == "black" and np.mean(lightness[ring] > 160) > 0.25:
+                return "uncertain"
             return ranked[0]
     return "uncertain"
 

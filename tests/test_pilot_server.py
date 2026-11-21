@@ -189,6 +189,18 @@ def test_dial_without_visible_bezel_cannot_supply_bezel_color() -> None:
     assert bezel_color_hint(face) == "uncertain"
 
 
+def test_bright_fluted_bezel_does_not_look_black() -> None:
+    face = Image.new("RGB", (300, 300), "white")
+    draw = ImageDraw.Draw(face)
+    for stripe in range(72):
+        draw.pieslice(
+            (5, 5, 295, 295), stripe * 5, (stripe + 1) * 5,
+            fill="#333333" if stripe % 2 else "#dddddd",
+        )
+    draw.ellipse((48, 48, 252, 252), fill="white")
+    assert bezel_color_hint(face) == "uncertain"
+
+
 def test_partly_cropped_bezel_uses_dial_boundary_and_rejects_green_backdrop() -> None:
     photo = Image.new("RGB", (360, 360), "#dadbd5")
     draw = ImageDraw.Draw(photo)
