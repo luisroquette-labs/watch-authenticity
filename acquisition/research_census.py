@@ -35,6 +35,7 @@ def run_research_census_once(cos: Any, bucket: str, prefix: str, *, now: datetim
     candidate_ids: set[str] = set()
     raw_hashes: set[str] = set()
     manifest_hashes: list[str] = []
+    manifest_counts: dict[str, tuple[int, int]] = {}
     files = 0
     probable = 0
     for key in manifest_keys:
@@ -61,6 +62,7 @@ def run_research_census_once(cos: Any, bucket: str, prefix: str, *, now: datetim
             raise ValueError("research groups reuse a candidate")
         candidate_ids.update(report.candidate_ids)
         manifest_hashes.append(report.manifest_sha256)
+        manifest_counts[report.manifest_sha256] = (report.file_count, report.probable_watch_count)
         files += report.file_count
         probable += report.probable_watch_count
 
@@ -83,10 +85,48 @@ def run_research_census_once(cos: Any, bucket: str, prefix: str, *, now: datetim
         Bucket=bucket, Key=key, Body=payload, ContentType="application/json",
         Metadata={"sha256": digest, "length": str(len(payload))},
     )
-    if _read_bytes(cos, bucket, key) != payload:
-        raise RuntimeError("research census already closed with different inputs")
-    _LOG.info("research_census_terminal %s", payload.decode())
+    terminal = _read_bytes(cos, bucket, key)
+    if terminal != payload:
+        _validate_prior_terminal(terminal, status, manifest_counts)
+        revision_key = f"{root}/research-census/{now.date().isoformat()}/revisions/{digest}.json"
+        cos.put_object_if_absent(
+            Bucket=bucket, Key=revision_key, Body=payload, ContentType="application/json",
+            Metadata={"sha256": digest, "length": str(len(payload))},
+        )
+        if _read_bytes(cos, bucket, revision_key) != payload:
+            raise RuntimeError("research census revision differs from current inputs")
+        _LOG.info("research_census_revision %s %s", revision_key, payload.decode())
+    else:
+        _LOG.info("research_census_terminal %s", payload.decode())
     return status
+
+
+def _validate_prior_terminal(
+    body: bytes, current: dict[str, object], manifest_counts: dict[str, tuple[int, int]]
+) -> None:
+    try:
+        prior = json.loads(body)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("research census already closed with invalid terminal") from exc
+    if (
+        not isinstance(prior, dict)
+        or prior.get("schema") != current["schema"]
+        or prior.get("cycle") != current["cycle"]
+        or prior.get("confirmed_watch_count") != 0
+        or prior.get("training_admission_count") != 0
+        or not isinstance(prior.get("manifest_sha256s"), list)
+        or not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in prior["manifest_sha256s"])
+        or len(set(prior["manifest_sha256s"])) != len(prior["manifest_sha256s"])
+        or not set(prior["manifest_sha256s"]).issubset(manifest_counts)
+        or prior.get("manifest_count") != len(prior["manifest_sha256s"])
+        or not isinstance(prior.get("file_count"), int)
+        or isinstance(prior["file_count"], bool)
+        or not isinstance(prior.get("probable_watch_count"), int)
+        or isinstance(prior["probable_watch_count"], bool)
+        or prior["file_count"] != sum(manifest_counts[digest][0] for digest in prior["manifest_sha256s"])
+        or prior["probable_watch_count"] != sum(manifest_counts[digest][1] for digest in prior["manifest_sha256s"])
+    ):
+        raise RuntimeError("research census already closed with incompatible terminal")
 
 
 def _list_keys(cos: Any, bucket: str, prefix: str) -> list[str]:
