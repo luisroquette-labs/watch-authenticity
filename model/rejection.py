@@ -31,9 +31,6 @@ import torch
 from core.types import ModelClass, Rejection
 from model.heads import build_model
 
-# The per-angle heads reserve their highest class index for "rejection"
-# (SKILL.md:150's "genuine + grade1-4 + rejection" ordering places it
-# last; `model.heads.GENUINE_CLASS_INDEX` is 0, the opposite end).
 REJECTION_CLASS_INDEX = ModelClass.REJECTION.value
 
 
@@ -74,7 +71,7 @@ def classify_logits(logits_per_angle: dict[str, torch.Tensor]) -> Rejection | No
     rejected_angles = [_predicted_class(logits) == REJECTION_CLASS_INDEX for logits in logits_per_angle.values()]
 
     if not any(rejected_angles):
-        return None  # every angle recognizes a scoreable class — not OOD
+        return None
 
     if all(rejected_angles):
         return Rejection(

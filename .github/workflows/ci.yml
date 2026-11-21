@@ -4,6 +4,8 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - ".gitignore"
+      - ".requirements-*.in"
       - ".github/workflows/ci.yml"
       - "scripts/preflight-ci.sh"
       - "acquisition/**"

@@ -230,7 +230,6 @@ def _verify_monitoring(evidence: dict[str, Any], probe: RoutingProbe) -> None:
              and (not permitted or probe.region in permitted),
              "Metrics Routing default targets or permitted regions are absent or divergent")
     assert isinstance(defaults, list)
-    # shortcut: single-destination routing only, extend when an authorized account needs complex rules.
     _require(len(routes) <= 1, "multiple Metrics Routing routes need independent verification")
     if not routes:
         _require(len(defaults) == 1 and isinstance(defaults[0], dict)

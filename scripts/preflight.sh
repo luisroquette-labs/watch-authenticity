@@ -5,6 +5,11 @@ if [ -x .venv/bin/ruff ]; then
     PATH="$PWD/.venv/bin:$PATH"
 fi
 
+if command -v python3 >/dev/null; then
+    python3 "${BASH_SOURCE[0]%/*}/check_comments.py"
+else
+    /usr/bin/python3 "${BASH_SOURCE[0]%/*}/check_comments.py"
+fi
 echo "=== Phase 1: Code formatting check (ruff) ==="
 if command -v ruff >/dev/null; then ruff check .; else python3 -m ruff check .; fi
 
