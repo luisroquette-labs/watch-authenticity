@@ -95,7 +95,7 @@ esac
     }
     first = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=10)
     assert first.returncode == 0, first.stderr
-    assert first.stdout.strip().endswith("https://pilot.example")
+    assert first.stdout.strip() == "https://pilot.example"
     calls = (tmp_path / "calls").read_text()
     assert "--env-from-secret watch-auth-pilot-basic" in calls
     assert "--min-scale 0 --max-scale 1 --concurrency 1" in calls
