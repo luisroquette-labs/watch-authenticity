@@ -1,6 +1,6 @@
 # Cobertura de autenticidade — 19 de novembro de 2026, atualizada em 20 de novembro
 
-**Resultado disponível:** nenhuma referência está liberada para concluir que um relógio é original ou falso. Todas as dez entradas do catálogo estão `pending`, sem head de autenticidade, calibração ou teste independente aprovado. A prévia local recebe até seis fotos, mas só examina indícios visuais limitados do mostrador e retorna parecer inconclusivo.
+**Resultado disponível:** nenhuma referência está liberada para concluir que um relógio é original ou falso. Todas as onze entradas do catálogo estão `pending`, sem head de autenticidade, calibração ou teste independente aprovado. A prévia local recebe até seis fotos, mas só examina indícios visuais limitados do mostrador e retorna parecer inconclusivo.
 
 | Referência no catálogo | Originais confirmados / fotos admitidas | Falsificações confirmadas / fotos admitidas | Teste independente | Parecer de autenticidade |
 | --- | ---: | ---: | --- | --- |
@@ -11,9 +11,12 @@
 | Patek Philippe Nautilus 5811/1G-001 | 0 / 0 | 0 / 0 | Ausente | Indisponível |
 | Omega Seamaster 210.30.42.20.01.001 | 0 / 0 | 0 / 0 | Ausente | Indisponível |
 | Omega Seamaster 210.90.42.20.01.001 | 0 / 0 | 0 / 0 | Ausente | Indisponível |
+| Omega Speedmaster 310.30.42.50.01.001 | 0 / 0 | 0 / 0 | Ausente | Indisponível |
 | Seiko Prospex SPB453J1 | 0 / 0 | 0 / 0 | Ausente | Indisponível |
 | Richard Mille RM 88 Smiley | 0 / 0 | 0 / 0 | Ausente | Indisponível |
 | Audemars Piguet Royal Oak 26331ST.OO.1220ST.02 | 0 / 0 | 0 / 0 | Ausente | Indisponível |
+
+**Speedmaster 310.30.42.50.01.001:** a [ficha técnica oficial da Omega](https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/31030425001001-en-gb.pdf) identifica hesalite, calibre 3861 de corda manual, caixa de aço de 42 mm e resistência de 5 bar. A [página oficial](https://www.omegawatches.com/watch-omega-speedmaster-moonwatch-professional-co-axial-master-chronometer-chronograph-42-mm-31030425001001) descreve mostrador preto escalonado e medalhão Seahorse na tampa. Um [anúncio Goldsmiths de usado certificado](https://www.goldsmiths.co.uk/Pre%2BOwned-Omega-Speedmaster-Moonwatch-Professional-Mens-Watch-310.30.42.50.01.001-null/p/406701203490) descreve safira para a mesma referência; essa divergência exige checar a variante e o anúncio, não autoriza concluir falsificação. Calibre, material do cristal e resistência à água não foram examinados nas fotos de pesquisa. A referência permanece `pending`.
 
 Os zeros significam **exemplos admitidos com confirmação suficiente**, não ausência de fotos arquivadas. Não há métricas válidas de falsos originais, falsos falsos, superclones, fontes inéditas ou taxa de respostas inconclusivas por referência. A nota de qualidade de falsificação de 0 a 1.000 também não está disponível.
 
@@ -55,7 +58,7 @@ O índice privado mais recente classifica 485 fotos em grupo provisório único,
 
 O Victoria and Albert Museum registra um Rolex falso adquirido já como falsificação (`O351927`, acesso `T.127-1994`): uma imagem mostra o relógio de frente; outra mostra o traje da exposição sem relógio visível. A ficha não confirma a referência Rolex exata. O museu também atribui a Cartier dois relógios de peças físicas distintas (`O153750` e `O299091`), cada um com duas vistas. Essa atribuição é curatorial, não uma perícia nossa. São relógios históricos de variantes diferentes do Santos WSSA0061; não formam pares de teste com o Rolex nem com os falsos Cartier coletados. As imagens do museu têm direitos reservados e não foram admitidas para treino.
 
-O CBP forneceu imagens de apreensões atribuídas a Rolex, Audemars Piguet e Cartier. Quatro candidatos adicionais coletados em 19/11 vieram de duas notícias oficiais: duas fotos mostram um relógio com detalhe legível (inscrições Rolex e Omega), e duas mostram lotes de relógios. A declaração oficial de apreensão diz respeito ao lote; não confirma individualmente cada peça, referência exata ou qualidade de superclone. Nenhuma foto foi admitida para treino ou teste. Assim, este acervo institucional amplia a pesquisa multimarcas sem alterar os zeros de admissão ou liberar parecer de autenticidade para nenhuma das dez referências.
+O CBP forneceu imagens de apreensões atribuídas a Rolex, Audemars Piguet e Cartier. Quatro candidatos adicionais coletados em 19/11 vieram de duas notícias oficiais: duas fotos mostram um relógio com detalhe legível (inscrições Rolex e Omega), e duas mostram lotes de relógios. A declaração oficial de apreensão diz respeito ao lote; não confirma individualmente cada peça, referência exata ou qualidade de superclone. Nenhuma foto foi admitida para treino ou teste. Assim, este acervo institucional amplia a pesquisa multimarcas sem alterar os zeros de admissão ou liberar parecer de autenticidade para nenhuma das onze referências.
 
 ### Revisões de peças e vistas em 20/11/2026
 

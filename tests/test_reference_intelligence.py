@@ -142,6 +142,20 @@ def test_omega_seamaster_knowledge_cites_official_sources_without_authenticity_c
     assert not result.authenticates_watch
 
 
+def test_speedmaster_001_official_facts_do_not_authenticate_or_conflate_sapphire_variant() -> None:
+    reference = "omega-speedmaster-31030425001001"
+    claims = load_knowledge(Path(f"config/references/{reference}.json"), reference)
+    assert len(claims) == 12
+    assert all(claim.source_class is SourceClass.OFFICIAL_BRAND for claim in claims)
+    assert all(claim.source_url.startswith("https://www.omegawatches.com/") for claim in claims)
+    assert next(claim.value for claim in claims if claim.field == "crystal_material").startswith("hesalite")
+    assert next(claim.value for claim in claims if claim.field == "movement_type") == "manual-winding chronograph"
+    assert not next(claim for claim in claims if claim.field == "calibre").applicable_angles
+    assessment = assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER)
+    assert assessment.status is AssessmentStatus.INCONCLUSIVE
+    assert not assessment.authenticates_watch
+
+
 def test_omega_007_official_identity_is_distinct_from_standard_seamaster() -> None:
     edition = "omega-seamaster-21090422001001"
     claims = load_knowledge(Path(f"config/references/{edition}.json"), edition)

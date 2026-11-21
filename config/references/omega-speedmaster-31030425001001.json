@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "reference_id": "omega-speedmaster-31030425001001",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "310.30.42.50.01.001",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/31030425001001-en-gb.pdf",
+      "citation": "Product sheet > Reference",
+      "observed_at": "2026-11-20",
+      "applicable_angles": []
+    },
+    {
+      "field": "dial_color",
+      "value": "black",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/31030425001001-en-gb.pdf",
+      "citation": "Product sheet > Watch case & dial > Dial Colour",
+      "observed_at": "2026-11-20",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "dial_style",
+      "value": "black step dial",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/watch-omega-speedmaster-moonwatch-professional-co-axial-master-chronometer-chronograph-42-mm-31030425001001",
+      "citation": "Description > black step dial",
+      "observed_at": "2026-11-20",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "caseback_type",
+      "value": "embossed Seahorse medallion",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/watch-omega-speedmaster-moonwatch-professional-co-axial-master-chronometer-chronograph-42-mm-31030425001001",
+      "citation": "Description > embossed Seahorse medallion",
+      "observed_at": "2026-11-20",
+      "applicable_angles": [
+        "caseback"
+      ]
+    },
+    {
+      "field": "crystal_material",
+      "value": "hesalite with OMEGA logo in centre",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/31030425001001-en-gb.pdf",
+      "citation": "Product sheet > Crystal",
+      "observed_at": "2026-11-20",
+      "applicable_angles": []
+    },
+    {
+      "field": "case_material",
+      "value": "steel",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/31030425001001-en-gb.pdf",
+      "citation": "Product sheet > Watch case & dial > Case",
+      "observed_at": "2026-11-20",
+      "applicable_angles": []
+    },
+    {
+      "field": "diameter_mm",
+      "value": "42",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/31030425001001-en-gb.pdf",
+      "citation": "Product sheet > Watch case & dial > Case Diameter",
+      "observed_at": "2026-11-20",
+      "applicable_angles": []
+    },
+    {
+      "field": "thickness_mm",
+      "value": "13.54",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/31030425001001-en-gb.pdf",
+      "citation": "Product sheet > Watch case & dial > Thickness",
+      "observed_at": "2026-11-20",
+      "applicable_angles": []
+    },
+    {
+      "field": "calibre",
+      "value": "Omega 3861",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/31030425001001-en-gb.pdf",
+      "citation": "Product sheet > Movement > Calibre",
+      "observed_at": "2026-11-20",
+      "applicable_angles": []
+    },
+    {
+      "field": "movement_type",
+      "value": "manual-winding chronograph",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/31030425001001-en-gb.pdf",
+      "citation": "Product sheet > Movement",
+      "observed_at": "2026-11-20",
+      "applicable_angles": []
+    },
+    {
+      "field": "water_resistance",
+      "value": "5 bar (50 metres / 165 feet)",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/31030425001001-en-gb.pdf",
+      "citation": "Product sheet > Water resistance",
+      "observed_at": "2026-11-20",
+      "applicable_angles": []
+    },
+    {
+      "field": "clasp_type",
+      "value": "foldover with comfort setting",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/31030425001001-en-gb.pdf",
+      "citation": "Product sheet > Bracelet > Type of Clasp",
+      "observed_at": "2026-11-20",
+      "applicable_angles": [
+        "clasp"
+      ]
+    }
+  ]
+}

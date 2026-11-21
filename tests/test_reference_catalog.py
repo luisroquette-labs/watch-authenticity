@@ -100,6 +100,18 @@ def test_omega_007_variant_is_catalogued_but_not_released(catalog_fixture):
         catalog_fixture.catalog.head_for(entry.reference_id)
 
 
+def test_speedmaster_moonwatch_001_is_pending_without_authenticity_head(catalog_fixture):
+    entry = catalog_fixture.catalog.entry_for("omega-speedmaster-31030425001001")
+    assert (entry.brand, entry.family, entry.reference) == (
+        "omega", "speedmaster", "31030425001001"
+    )
+    assert entry.status == "pending"
+    assert entry.gold_freeze_sha256 is None
+    assert entry.holdout_freeze_sha256 is None
+    with pytest.raises(ReferenceNotAdmitted):
+        catalog_fixture.catalog.head_for(entry.reference_id)
+
+
 def test_seiko_spb453j1_is_research_only_without_admitted_head(catalog_fixture):
     entry = catalog_fixture.catalog.entry_for("seiko-prospex-spb453j1")
 
