@@ -201,6 +201,8 @@ def collect_batch(
         )
         if metadata.expected_sha256 is not None and raw_sha256 != metadata.expected_sha256:
             raise IntegrityError("downloaded image hash does not match expected_sha256")
+        if isinstance(rights, RightsRecord) and not rights.covers_asset(raw_sha256):
+            raise AcquisitionRefused("rights do not cover downloaded raw image")
         derivative, phash = sanitize_image(payload)
         derivative_sha256 = hashlib.sha256(derivative).hexdigest()
         candidate = CandidateRecord(
@@ -312,6 +314,8 @@ def _resume_candidate_if_present(
         and receipt.get("raw_sha256") != metadata.expected_sha256
     ):
         raise IntegrityError("stored image hash does not match expected_sha256")
+    if isinstance(rights, RightsRecord) and not rights.covers_asset(receipt.get("raw_sha256")):
+        raise AcquisitionRefused("rights do not cover stored raw image")
     for kind in ("raw", "derivative"):
         value = receipt.get(f"{kind}_sha256")
         key_value = receipt.get(f"{kind}_key")

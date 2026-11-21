@@ -148,6 +148,9 @@ def _import_partner_payloads(
     for row in rows:
         image_path = declared[str(row["file"])]
         payload = _read_regular_file(image_path)
+        raw_sha256 = hashlib.sha256(payload).hexdigest()
+        if not declaration.covers_asset(raw_sha256):
+            raise AcquisitionRefused("rights do not cover partner raw image")
         derivative, phash = sanitize_image(payload)
         listing_text = row.get("listing_text")
         if listing_text is not None and not isinstance(listing_text, str):
@@ -170,7 +173,7 @@ def _import_partner_payloads(
                 proposed_grade=None,
                 factory=_optional(row, "factory"),
                 price_usd=None if price is None else Decimal(str(price)),
-                raw_sha256=hashlib.sha256(payload).hexdigest(),
+                raw_sha256=raw_sha256,
                 derivative_sha256=hashlib.sha256(derivative).hexdigest(),
                 phash=phash,
                 rights_record_id=declaration.rights_record_id,

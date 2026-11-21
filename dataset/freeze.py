@@ -91,7 +91,7 @@ def _require_current_rights(
     decision = authorize_candidate(_policy_for_rights(policies, record), record, now=now)
     if not decision.may_train:
         raise FrozenDatasetRefused("current rights do not permit training access")
-    if record.asset_sha256 is not None and record.asset_sha256 != raw_sha256:
+    if not record.covers_asset(raw_sha256):
         raise FrozenDatasetRefused("current rights do not cover frozen raw image")
 
 
@@ -138,7 +138,7 @@ def freeze_dataset(
             if rights_record is None
             else authorize_candidate(policy, rights_record, now=now).reasons
         )
-        if rights_record is not None and rights_record.asset_sha256 is not None and rights_record.asset_sha256 != record.original_sha256:
+        if rights_record is not None and not rights_record.covers_asset(record.original_sha256):
             reasons = (*reasons, "rights do not cover raw image")
         if reasons:
             reason = "; ".join(reasons)

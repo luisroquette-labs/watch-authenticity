@@ -244,6 +244,9 @@ class RightsRecord:
         if not isinstance(self.status, RightsStatus):
             raise ValueError("status must be RightsStatus")
 
+    def covers_asset(self, raw_sha256: str | None) -> bool:
+        return self.asset_sha256 is None or self.asset_sha256 == raw_sha256
+
 
 @dataclass(frozen=True)
 class CollectionAuthorizationRecord:
@@ -518,7 +521,7 @@ def validate_contract_bundle(
         raise ValueError("rights lineage differs")
     if training.original_sha256 != candidate.raw_sha256:
         raise ValueError("raw image lineage differs")
-    if rights.asset_sha256 is not None and rights.asset_sha256 != candidate.raw_sha256:
+    if not rights.covers_asset(candidate.raw_sha256):
         raise ValueError("rights do not cover raw image")
     if evidence.evidence_record_id != training.evidence_record_id:
         raise ValueError("evidence lineage differs")
