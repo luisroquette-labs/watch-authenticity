@@ -39,6 +39,10 @@ def test_training_refuses_frozen_source_with_copied_official_media(training_fixt
     manifest["source_records"][0]["original_sha256"] = (
         "f6552812a866a41d8285ef2b5997aa66b9370414ea26bd5e3cb55faf0f112c98"
     )
+    manifest["freeze"]["asset_raw_sha256s"] = sorted(
+        [record["asset_id"], record["original_sha256"]]
+        for record in manifest["source_records"]
+    )
     manifest["freeze"]["manifest_sha256"] = hashlib.sha256(
         _canonical(manifest["source_records"])
     ).hexdigest()
