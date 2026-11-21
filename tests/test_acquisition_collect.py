@@ -80,6 +80,51 @@ def test_repeated_batch_reuses_verified_raw_derivative_and_receipt(collector_fix
     assert cos.write_count == writes
 
 
+@pytest.mark.parametrize(("source", "legacy_allowed"), [("vsfactoryusa", True), ("olx", False)])
+def test_replica_vendor_claim_is_weak_and_only_vendor_legacy_null_resumes(
+    source, legacy_allowed, allowed_policy, rights, cos, monkeypatch
+):
+    policy = replace(allowed_policy, source=source)
+    vendor_rights = replace(rights, source=source)
+    access = replace(_access(vendor_rights), source=source)
+    record = {
+        "source_record_id": "listing-1#image-1",
+        "source_url": "https://partner.example/listing-1",
+        "image_url": "https://partner.example/image-1.png",
+        "declared_reference": "rolex-submariner-126610ln",
+        "listing_text": "replica",
+    }
+    http = MagicMock()
+    http.get_pinned.return_value = _Response(_png("green"), "image/png")
+
+    def collect(batch_id):
+        return collect_batch(
+            [record], policy, vendor_rights, access=access, http_client=http,
+            cos_client=cos, bucket="private", batch_id=batch_id, now=NOW,
+            dns_resolver=_public_dns,
+        )
+
+    original = collect_module.propose_source_label
+    monkeypatch.setattr(collect_module, "propose_source_label", lambda **_kwargs: None)
+    legacy = collect("legacy")
+    monkeypatch.setattr(collect_module, "propose_source_label", original)
+    writes = cos.write_count
+    http.reset_mock()
+    if legacy_allowed:
+        assert collect("legacy") == legacy
+    else:
+        with pytest.raises(IntegrityError, match="receipt label differs"):
+            collect("legacy")
+    assert cos.write_count == writes
+    http.get_pinned.assert_not_called()
+
+    fresh = collect("new")
+    [key] = [key for key in cos.bodies if key.startswith(f"datasets/receipts/new/{fresh.accepted_candidate_ids[0]}-")]
+    receipt = json.loads(cos.bodies[key])
+    assert receipt["proposed_label"] == "fake"
+    assert receipt["proposed_grade"] is None
+
+
 def test_concurrent_identical_receipt_create_is_idempotent(
     allowed_policy, rights, cos
 ):

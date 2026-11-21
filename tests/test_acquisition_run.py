@@ -198,8 +198,17 @@ def test_metadata_only_source_commits_without_downloading(cos):
     assert cos.write_count == writes
 
 
+@pytest.mark.parametrize(
+    ("classification", "expected_listing_text"),
+    [
+        ("watch_candidate_unverified", None),
+        ("replica_candidate_unverified", None),
+        ("replica_candidate_vendor_declared", "replica"),
+        ("vendor_declared_replica", "replica"),
+    ],
+)
 def test_public_collection_downloads_every_discovered_image_before_committing(
-    cos, monkeypatch
+    classification, expected_listing_text, cos, monkeypatch
 ):
     page = DiscoveryPage(
         source="richfactoryus",
@@ -222,7 +231,7 @@ def test_public_collection_downloads_every_discovered_image_before_committing(
                     "https://richfactoryus.com/images/three.webp",
                 ),
                 metadata=(
-                    ("classification", "replica_candidate_vendor_declared"),
+                    ("classification", classification),
                     ("factory_claim", "RICH Factory"),
                 ),
             ),
@@ -262,7 +271,7 @@ def test_public_collection_downloads_every_discovered_image_before_committing(
 
     assert len(calls) == 3
     assert [record.image_url for call in calls for record in call] == list(page.records[0].image_urls)
-    assert all(record.listing_text == "replica" for call in calls for record in call)
+    assert all(record.listing_text == expected_listing_text for call in calls for record in call)
     assert all(record.factory == "RICH Factory" for call in calls for record in call)
     assert result["accepted_count"] == 3
     assert result["rejected_images"] == []

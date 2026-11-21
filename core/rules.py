@@ -38,12 +38,18 @@ _OWNER_FORUM_SOURCES = frozenset({"chrono24", "watchuseek"})
 # that sells/discusses replicas, as opposed to an ambiguous marketplace ad.
 _REPLICA_DISCOVERY_SOURCES = frozenset({"reptime", "chinese_replica"})
 
+REPLICA_VENDOR_SOURCES = frozenset({
+    "richfactoryus", "supercloneluxury", "superclonerolex",
+    "vsfactoryusa", "vsfwatcheshub",
+})
+
 _REDDIT_SOURCES = frozenset({"reddit"})
 
 _KNOWN_CANDIDATE_SOURCES = (
     _MARKETPLACE_SOURCES
     | _OWNER_FORUM_SOURCES
     | _REPLICA_DISCOVERY_SOURCES
+    | REPLICA_VENDOR_SOURCES
     | _REDDIT_SOURCES
 )
 
@@ -129,6 +135,8 @@ def propose_source_label(
     if normalized_source not in _KNOWN_CANDIDATE_SOURCES or not listing_text:
         return None
     normalized_text = unicodedata.normalize("NFKD", listing_text).encode("ascii", "ignore").decode()
+    if normalized_source in REPLICA_VENDOR_SOURCES:
+        return Label.FAKE if normalized_text.strip().lower() == "replica" else None
     if re.search(r"\bnao\s+(?:e\s+)?replica\b", normalized_text, flags=re.IGNORECASE):
         return None
     if re.search(r"\b(replica|inspirado)\b", normalized_text, flags=re.IGNORECASE):
