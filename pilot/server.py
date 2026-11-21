@@ -107,7 +107,6 @@ class PilotService:
                 "model_invoked": False,
                 "online_checks": [],
             }
-        checks = checks_for_angle(self.claims, angle)
         if visual.status == "no_face":
             return {
                 "verdict": "inconclusivo",
@@ -127,7 +126,7 @@ class PilotService:
                 "message": "O mostrador localizado nao tem nitidez suficiente.",
                 "next_photo": "Mostrador de frente e sem movimento.",
                 "model_invoked": False,
-                "online_checks": checks,
+                "online_checks": [],
             }
         color = visual.dial_color
         bezel_color = visual.bezel_color

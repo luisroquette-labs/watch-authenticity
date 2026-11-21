@@ -304,6 +304,19 @@ def test_online_checks_keep_official_facts_and_forum_leads_distinct() -> None:
     assert all(item["url"].startswith("https://") for item in checks)
 
 
+def test_blurry_unidentified_photo_has_no_reference_checks() -> None:
+    service = PilotService.__new__(PilotService)
+    service.claims = load_knowledge(
+        Path("config/references/rolex-submariner-126610ln.json"),
+        "rolex-submariner-126610ln",
+    )
+
+    result = service.render(_VisualInspection("blurry"), "dial")
+
+    assert result["verdict"] == "foto_invalida"
+    assert result["online_checks"] == []
+
+
 def test_pilot_ci_is_bounded_and_does_not_build() -> None:
     preflight = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert not Path(".github/workflows/pilot-ci.yml").exists()
