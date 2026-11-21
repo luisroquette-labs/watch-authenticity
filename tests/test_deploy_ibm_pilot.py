@@ -59,12 +59,12 @@ case "$*" in
     [[ -f "$APP_STATE" ]] || exit 1
     if [[ "$*" == *"--output url"* ]]; then printf 'https://pilot.example\\n';
     else cat <<JSON
-{"metadata":{"namespace":"test"},"status":{"conditions":[{"type":"Ready","status":"$(if [[ -f "$UNREADY_STATE" ]]; then printf Unknown; else printf True; fi)"}]},"spec":{"template":{"metadata":{"annotations":{"autoscaling.knative.dev/minScale":"${DRIFT_MIN_SCALE:-0}","autoscaling.knative.dev/maxScale":"1","autoscaling.knative.dev/scale-down-delay":"120"}},"spec":{"containers":[{"image":"${DRIFT_IMAGE:-$WATCH_AUTH_PILOT_IMAGE_DIGEST}","resources":{"requests":{"cpu":"2","memory":"8G","ephemeral-storage":"4G"}},"env":[{"name":"WATCH_AUTH_COS_BUCKET","value":"$WATCH_AUTH_COS_BUCKET"},{"name":"WATCH_AUTH_COS_ENDPOINT","value":"$WATCH_AUTH_COS_ENDPOINT"},{"name":"WATCH_AUTH_COS_SERVICE_INSTANCE_ID","value":"$WATCH_AUTH_COS_SERVICE_INSTANCE_ID"},{"name":"WATCH_AUTH_TRUSTED_PROFILE_ID","value":"$WATCH_AUTH_TRUSTED_PROFILE_ID"}],"envFrom":[{"secretRef":{"name":"${DRIFT_SECRET:-watch-auth-pilot-basic}"}}]}],"imagePullSecrets":[{"name":"$WATCH_AUTH_REGISTRY_SECRET"}],"serviceAccountName":"test-none","mountComputeResourceToken":true,"containerConcurrency":1,"timeoutSeconds":300}}}}
+{"metadata":{"namespace":"test"},"status":{"conditions":[{"type":"Ready","status":"$(if [[ -f "$UNREADY_STATE" ]]; then printf Unknown; else printf True; fi)"}]},"spec":{"template":{"metadata":{"annotations":{"autoscaling.knative.dev/minScale":"${DRIFT_MIN_SCALE:-0}","autoscaling.knative.dev/maxScale":"1","autoscaling.knative.dev/scale-down-delay":"120"}},"spec":{"containers":[{"image":"$(if [[ -f "$OLD_IMAGE_STATE" ]]; then printf old:image; else printf '%s' "${DRIFT_IMAGE:-$WATCH_AUTH_PILOT_IMAGE_DIGEST}"; fi)","resources":{"requests":{"cpu":"2","memory":"8G","ephemeral-storage":"4G"}},"env":[{"name":"WATCH_AUTH_COS_BUCKET","value":"$WATCH_AUTH_COS_BUCKET"},{"name":"WATCH_AUTH_COS_ENDPOINT","value":"$WATCH_AUTH_COS_ENDPOINT"},{"name":"WATCH_AUTH_COS_SERVICE_INSTANCE_ID","value":"$WATCH_AUTH_COS_SERVICE_INSTANCE_ID"},{"name":"WATCH_AUTH_TRUSTED_PROFILE_ID","value":"$WATCH_AUTH_TRUSTED_PROFILE_ID"}],"envFrom":[{"secretRef":{"name":"${DRIFT_SECRET:-watch-auth-pilot-basic}"}}]}],"imagePullSecrets":[{"name":"$WATCH_AUTH_REGISTRY_SECRET"}],"serviceAccountName":"test-none","mountComputeResourceToken":true,"containerConcurrency":1,"timeoutSeconds":300}}}}
 JSON
     fi
     ;;
   "ce app create"*) touch "$APP_STATE" ;;
-  "ce app update"*) rm -f "$UNREADY_STATE" ;;
+  "ce app update"*) rm -f "$UNREADY_STATE" "$OLD_IMAGE_STATE" ;;
   "iam trusted-profile-links"*)
     if [[ -f "$LINK_STATE" ]]; then
       printf '[{"cr_type":"CE","link":{"crn":"crn:v1:project","component_type":"application","component_name":"watch-auth-pilot"}}]'
@@ -84,6 +84,7 @@ esac
         "SECRET_STATE": str(tmp_path / "secret"),
         "APP_STATE": str(tmp_path / "app"),
         "UNREADY_STATE": str(tmp_path / "unready"),
+        "OLD_IMAGE_STATE": str(tmp_path / "old-image"),
         "LINK_STATE": str(tmp_path / "link"),
         "WATCH_AUTH_CE_PROJECT": "watch-authenticity",
         "WATCH_AUTH_CE_PROJECT_CRN": "crn:v1:project",
@@ -124,6 +125,11 @@ esac
     assert "--image " + env["WATCH_AUTH_PILOT_IMAGE_DIGEST"] in calls
     assert not (tmp_path / "unready").exists()
 
+    (tmp_path / "old-image").touch()
+    upgraded = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=10)
+    assert upgraded.returncode == 0, upgraded.stderr
+    assert (tmp_path / "calls").read_text().count("ce app update") == 2
+
     password.write_text("q" * 32)
     mismatch = subprocess.run(
         ["bash", str(script)], env=env, capture_output=True, text=True, timeout=10,
@@ -138,7 +144,7 @@ esac
         capture_output=True, text=True, timeout=10,
     )
     assert drift.returncode != 0
-    assert "app readback differs" in drift.stderr
+    assert "app image differs" in drift.stderr
 
     scale_drift = subprocess.run(
         ["bash", str(script)], env={**env, "DRIFT_MIN_SCALE": "2"},

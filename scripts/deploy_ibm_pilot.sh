@@ -101,8 +101,7 @@ expected_env = {
     "WATCH_AUTH_TRUSTED_PROFILE_ID": os.environ["WATCH_AUTH_TRUSTED_PROFILE_ID"],
 }
 valid = (
-    container.get("image") == os.environ["WATCH_AUTH_PILOT_IMAGE_DIGEST"]
-    and set(expected_env.items()) <= set(env.items())
+    set(expected_env.items()) <= set(env.items())
     and "watch-auth-pilot-basic" in secrets
     and pod.get("imagePullSecrets") == [{"name": os.environ["WATCH_AUTH_REGISTRY_SECRET"]}]
     and pod.get("serviceAccountName") == app.get("metadata", {}).get("namespace", "") + "-none"
@@ -121,11 +120,13 @@ if not valid:
 if ! ibmcloud ce app get --name "${app}" --output json | python3 -c '
 import json, sys
 app = json.load(sys.stdin)
-raise SystemExit(0 if any(
+ready = any(
     item.get("type") == "Ready" and item.get("status") == "True"
     for item in app.get("status", {}).get("conditions", [])
-) else 1)
-'; then
+)
+image = app.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [{}])[0].get("image")
+raise SystemExit(0 if ready and image == sys.argv[1] else 1)
+' "${WATCH_AUTH_PILOT_IMAGE_DIGEST}"; then
   ibmcloud ce app update --name "${app}" --image "${WATCH_AUTH_PILOT_IMAGE_DIGEST}" \
     --revision-name "${app}-repair-$(date -u +%Y%m%d%H%M%S)" --wait --wait-timeout 600
 fi
@@ -135,6 +136,9 @@ app = json.load(sys.stdin)
 if not any(item.get("type") == "Ready" and item.get("status") == "True"
            for item in app.get("status", {}).get("conditions", [])):
     raise SystemExit("pilot app is not ready")
-'
+image = app.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [{}])[0].get("image")
+if image != sys.argv[1]:
+    raise SystemExit("pilot app image differs from pinned digest")
+' "${WATCH_AUTH_PILOT_IMAGE_DIGEST}"
 
 ibmcloud ce app get --name "${app}" --output url
