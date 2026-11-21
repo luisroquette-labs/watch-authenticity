@@ -36,8 +36,10 @@ _FAMILY_SEARCHES = (
     ("Omega Speedmaster watch", "omega", "speedmaster"),
     ("replica Omega Speedmaster", "omega", "speedmaster"),
     ("fake Rolex Datejust", "rolex", "datejust"),
+    ("1953 Rolex Oyster Perpetual Auckland Museum", "rolex", "oyster perpetual"),
 )
 _REPLICA_SEARCHES = frozenset({6, 7})
+_DEFAULT_SEARCH_STOP = 8
 _REPLICA_RESEARCH = "commons_replica_keyword_research_unverified"
 _CLASSIFICATION = "brand_family_candidate_unverified"
 _CURSOR = re.compile(r"^q:(\d+):(\d+)$")
@@ -47,6 +49,7 @@ _ALLOWED_LICENSES = frozenset(
         "CC0",
         "Public domain",
         "CC BY 2.0",
+        "CC BY 4.0",
         "CC BY-SA 3.0",
         "CC BY-SA 4.0",
     }
@@ -96,7 +99,7 @@ def discover_wikimedia(
 
     if query_range is not None and not (0 <= query_range[0] < query_range[1] <= len(_FAMILY_SEARCHES)):
         raise ValueError("Wikimedia query range is invalid")
-    start, stop = query_range or (0, len(_FAMILY_SEARCHES))
+    start, stop = query_range or (0, _DEFAULT_SEARCH_STOP)
     cursor = previous.next_cursor if previous is not None else None
     if previous is not None and cursor is None:
         raise WikimediaAPIError("Wikimedia discovery ledger is already complete")
