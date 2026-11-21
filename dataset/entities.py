@@ -280,6 +280,21 @@ def detect_cluster_conflicts(
     _validate_records(records)
     _validate_mapping_keys(records, content_clusters, "content clusters")
     _validate_evidence(records, evidence)
+    by_content: dict[str, list[CandidateRecord]] = defaultdict(list)
+    for record in records:
+        by_content[content_clusters[record.candidate_id]].append(record)
+    conflicts: dict[str, ClusterConflict] = {}
+    for cluster_id, members in by_content.items():
+        if len({record.source_url for record in members}) > 1:
+            conflicts[cluster_id] = ClusterConflict(
+                candidate_ids=tuple(sorted(record.candidate_id for record in members)),
+                evidence_ids=tuple(sorted({
+                    item.evidence_record_id
+                    for record in members
+                    if (item := evidence.get(record.candidate_id)) is not None
+                    and item.evidence_record_id is not None
+                })),
+            )
     similarity = _UnionFind(record.candidate_id for record in records)
     _union_shared_value(similarity, records, lambda record: content_clusters[record.candidate_id])
     _union_near_phashes(similarity, records)
@@ -287,7 +302,6 @@ def detect_cluster_conflicts(
     for record in records:
         by_cluster[similarity.find(record.candidate_id)].append(record)
 
-    conflicts: dict[str, ClusterConflict] = {}
     for members in by_cluster.values():
         labels: set[tuple[Label, int | None]] = set()
         conflict_candidates: list[str] = []
