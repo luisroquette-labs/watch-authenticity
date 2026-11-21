@@ -8,6 +8,8 @@ WORKDIR /opt/watch-auth
 
 COPY requirements-pilot.lock ./
 RUN python -m pip install --no-cache-dir --require-hashes -r requirements-pilot.lock
+COPY requirements-pilot-scipy.lock ./
+RUN python -m pip install --no-cache-dir --no-deps --require-hashes -r requirements-pilot-scipy.lock
 RUN python -c "from PIL import Image; from transformers import Owlv2ImageProcessor; assert Owlv2ImageProcessor(size={'height': 32, 'width': 32})(images=Image.new('RGB', (32, 32)), return_tensors='pt')['pixel_values'].shape == (1, 3, 32, 32)"
 
 ENV HOME=/home/watch-auth
