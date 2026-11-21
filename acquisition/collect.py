@@ -29,7 +29,7 @@ from acquisition.types import (
     SourceAccessRecord,
     SourcePolicy,
 )
-from core.rules import propose_source_label
+from core.rules import REPLICA_VENDOR_SOURCES, propose_source_label
 from infra.ibm_cos import IntegrityError, upload_verified
 
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
@@ -294,8 +294,19 @@ def _resume_candidate_if_present(
         "source_record_id": metadata.source_record_id,
         "source_url": metadata.source_url,
     }
-    if not isinstance(receipt, dict) or any(receipt.get(name) != value for name, value in expected.items()):
+    if not isinstance(receipt, dict) or any(
+        receipt.get(name) != value for name, value in expected.items() if name != "proposed_label"
+    ):
         raise IntegrityError("receipt lineage differs from replayed candidate")
+    # Immutable receipts from these vendors predate weak claim extraction.
+    legacy_null_vendor_claim = (
+        metadata.source in REPLICA_VENDOR_SOURCES
+        and expected["proposed_label"] == "fake"
+        and "proposed_label" in receipt
+        and receipt["proposed_label"] is None
+    )
+    if receipt.get("proposed_label") != expected["proposed_label"] and not legacy_null_vendor_claim:
+        raise IntegrityError("receipt label differs from replayed candidate")
     if (
         metadata.expected_sha256 is not None
         and receipt.get("raw_sha256") != metadata.expected_sha256
