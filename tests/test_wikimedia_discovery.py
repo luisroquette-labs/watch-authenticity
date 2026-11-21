@@ -108,6 +108,7 @@ def test_commits_allowed_license_as_unverified_candidate(cos):
     assert candidate.observed_at.isoformat() == "2020-01-02T03:04:05+00:00"
     assert candidate.metadata.listing_text == "brand_family_candidate_unverified"
     assert candidate.metadata.declared_reference == "unverified"
+
     assert propose_source_label(
         candidate.metadata.source, listing_text=candidate.metadata.listing_text
     ) is None
@@ -136,6 +137,43 @@ def test_commits_allowed_license_as_unverified_candidate(cos):
     assert "mime" in params["iiprop"]
     assert params["iiurlwidth"] == 1280
 
+
+def test_auckland_museum_cc_by_photos_remain_unverified_research_candidates(cos):
+    http = MagicMock()
+    pages = []
+    for number in (2, 22):
+        page = _page(license_name="CC BY 4.0", license_url="https://creativecommons.org/licenses/by/4.0/")
+        page["pageid"] = 65962680 + number
+        page["title"] = f"File:Watch, wrist (AM 2014.7.70-{number}).jpg"
+        page["imageinfo"][0]["sha1"] = f"sha-{number}"
+        page["imageinfo"][0]["extmetadata"]["ImageDescription"] = {
+            "value": "Rolex Oyster Perpetual, dating from 1953, Auckland Museum"
+        }
+        pages.append(page)
+    http.get.return_value = _Response({"query": {"pages": pages}})
+
+    result = _discover(http, cos, query_range=(8, 9))
+
+    assert http.get.call_args.kwargs["params"]["gsrsearch"] == "1953 Rolex Oyster Perpetual Auckland Museum"
+    assert len(result.candidates) == 2
+    assert {candidate.rights.allowed_purposes for candidate in result.candidates} == {("download",)}
+    assert all(candidate.evidence_tier is EvidenceTier.INCONCLUSIVE for candidate in result.candidates)
+    assert all(candidate.metadata.declared_reference == "unverified" for candidate in result.candidates)
+    assert result.page.next_cursor is None
+
+
+def test_default_discovery_does_not_enter_auckland_lane(cos):
+    http = MagicMock()
+    page = _page()
+    page["title"] = "File:Fake Rolex Datejust.jpg"
+    page["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Fake_Rolex_Datejust.jpg"
+    http.get.return_value = _Response({"query": {"pages": [page]}})
+    prior = DiscoveryCommit("wikimedia", _access().access_record_id, None, "0" * 64, "q:7:0", (), "0" * 64)
+
+    result = _discover(http, cos, previous=prior)
+
+    assert result.page.next_cursor is None
+    assert http.get.call_args.kwargs["params"]["gsrsearch"] == "fake Rolex Datejust"
 
 def test_real_commons_license_shapes_are_normalized():
     http = MagicMock()

@@ -142,6 +142,16 @@ def test_wikimedia_lane_has_independent_checkpoint(cos, monkeypatch):
     assert replica_lane["state"] == "complete"
     assert "datasets/lanes/speedmaster/replica-research/discovery/2026-11-10/wikimedia/children/root.json" in cos.bodies
 
+    auckland_lane = run_wikimedia_once(
+        cos, "private", "datasets/lanes/auckland-oyster/research", SimpleNamespace(), SimpleNamespace(),
+        now=NOW, api_client=object(), image_client=object(),
+        discover=lambda *_args, **kwargs: _result(
+            cursor=kwargs["previous"].next_cursor if kwargs["previous"] else None
+        ),
+    )
+    assert auckland_lane["state"] == "complete"
+    assert "datasets/lanes/auckland-oyster/research/discovery/2026-11-10/wikimedia/children/root.json" in cos.bodies
+
 
 def test_metadata_only_source_commits_without_downloading(cos):
     page = DiscoveryPage(
@@ -743,6 +753,7 @@ case "$*" in
     if [[ "$5" == watch-auth-goldsmiths-* ]]; then args='["-m","acquisition.run","--source","goldsmiths"]'; fi
     if [[ "$5" == watch-auth-bobswatches-* ]]; then args='["-m","acquisition.run","--source","bobswatches"]'; fi
     if [[ "$5" == watch-auth-speedmaster-* ]]; then args='["-m","acquisition.run","--source","wikimedia-speedmaster"]'; fi
+    if [[ "$5" == watch-auth-auckland-* ]]; then args='["-m","acquisition.run","--source","wikimedia-auckland"]'; fi
     if [[ "$5" == watch-auth-research-census-* ]]; then args='["-m","acquisition.run","--source","research-census"]'; fi
     image="$WATCH_AUTH_ACQUISITION_IMAGE_DIGEST"
     cpu='0.25'
@@ -834,8 +845,8 @@ esac
     assert result.returncode == 0, result.stderr
     calls = log.read_text()
     assert "ce job create" in calls
-    assert calls.count("iam trusted-profile-links") == 14
-    assert calls.count("iam trusted-profile-link-create") == 7
+    assert calls.count("iam trusted-profile-links") == 16
+    assert calls.count("iam trusted-profile-link-create") == 8
     assert "ce job create --name watch-auth-supercloneluxury-" in calls
     assert "--arg=--source --arg=supercloneluxury" in calls
     cron_action = "update" if existing_cron else "create"
@@ -853,6 +864,9 @@ esac
     assert "ce job create --name watch-auth-speedmaster-" in calls
     assert "--arg=--source --arg=wikimedia-speedmaster" in calls
     assert f"ce sub cron {cron_action} --name watch-auth-speedmaster-daily" in calls
+    assert "ce job create --name watch-auth-auckland-" in calls
+    assert "--arg=--source --arg=wikimedia-auckland" in calls
+    assert f"ce sub cron {cron_action} --name watch-auth-auckland-daily" in calls
     assert "ce job create --name watch-auth-research-census-" in calls
     assert "--arg=--source --arg=research-census" in calls
     assert f"ce sub cron {cron_action} --name watch-auth-research-census-daily" in calls
