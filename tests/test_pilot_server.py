@@ -589,6 +589,21 @@ def test_unexamined_front_photo_does_not_request_same_view_or_analog_details() -
     assert "confirme marca e referência presencialmente" in _HTML.decode("utf-8")
 
 
+def test_pilot_service_no_face_does_not_claim_reference_checks_or_repeat_front_view() -> None:
+    service = PilotService.__new__(PilotService)
+    service.claims = load_knowledge(
+        Path("config/references/rolex-submariner-126610ln.json"), "rolex-submariner-126610ln"
+    )
+    service.locator = cast(Any, type("NoWatch", (), {"locate": lambda self, image: None})())
+
+    result = service.predict(_jpeg(), "image/jpeg", "dial")
+
+    assert result["model_invoked"] is False
+    assert result["online_checks"] == []
+    assert "confirme marca e referência presencialmente" in result["next_photo"]
+    assert "senão, envie outra foto frontal nítida" in result["next_photo"]
+
+
 def test_untrained_pilot_separates_seen_photos_uncertainty_and_fake_quality() -> None:
     result = analyze_batch(
         _StubService(["inconclusivo"]),

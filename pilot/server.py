@@ -113,9 +113,12 @@ class PilotService:
                 "verdict": "inconclusivo",
                 "replica_probability": None,
                 "message": "Nao localizei um mostrador com confianca suficiente nesta foto.",
-                "next_photo": "Mostrador inteiro, de frente e em foco.",
+                "next_photo": (
+                    "Se a foto está nítida, confirme marca e referência presencialmente; "
+                    "senão, envie outra foto frontal nítida."
+                ),
                 "model_invoked": False,
-                "online_checks": checks,
+                "online_checks": [],
             }
         if visual.status == "blurry":
             return {
