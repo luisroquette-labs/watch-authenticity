@@ -472,6 +472,44 @@ def test_prior_freeze_rechecks_current_rights(policy_set, rights):
         )
 
 
+def test_frozen_read_rechecks_asset_scoped_rights(policy_set, rights):
+    record = replace(_record(1), rights_record_id=rights.rights_record_id)
+    scoped = replace(rights, asset_sha256=record.original_sha256)
+    freeze = DatasetFreeze(
+        "a" * 64, "b" * 64, "c" * 64, (record.asset_id,), (), (),
+        asset_rights=((record.asset_id, scoped.rights_record_id),),
+        asset_raw_sha256s=((record.asset_id, record.original_sha256),),
+    )
+    require_frozen_asset_read(
+        freeze, record.asset_id, {scoped.rights_record_id: scoped}, policy_set, now=NOW
+    )
+    with pytest.raises(FrozenDatasetRefused, match="frozen raw image"):
+        require_frozen_asset_read(
+            replace(freeze, asset_raw_sha256s=()), record.asset_id,
+            {scoped.rights_record_id: scoped}, policy_set, now=NOW,
+        )
+    with pytest.raises(FrozenDatasetRefused, match="frozen raw image"):
+        require_frozen_asset_read(
+            freeze, record.asset_id,
+            {scoped.rights_record_id: replace(scoped, asset_sha256="0" * 64)},
+            policy_set, now=NOW,
+        )
+
+
+def test_freeze_excludes_raw_image_outside_scoped_rights(policy_set, rights, catalog_fixture):
+    record = replace(_record(1), rights_record_id=rights.rights_record_id)
+    splits = build_splits([record], seed=42, held_out_factories=set())
+    scoped = replace(rights, asset_sha256="0" * 64, required_disposition="retain")
+    result = freeze_dataset(
+        [record], splits, policy_set, {scoped.rights_record_id: scoped},
+        previous_freeze=None, published_artifact_hashes=set(), now=NOW,
+        object_inventory={}, artifact_lineage={}, reference_catalog=catalog_fixture.catalog,
+    )
+    assert result.freeze.eligible_asset_ids == ()
+    assert result.freeze.excluded_asset_ids == (record.asset_id,)
+    assert "rights do not cover raw image" in result.freeze.exclusions[0][1]
+
+
 def test_freeze_hashes_do_not_depend_on_record_order(policy_set, rights, catalog_fixture):
     records = [
         replace(_record(index), rights_record_id=rights.rights_record_id)

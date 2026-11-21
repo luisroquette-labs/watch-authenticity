@@ -218,6 +218,7 @@ class RightsRecord:
     rightsholder: str
     evidence_sha256: str
     status: RightsStatus
+    asset_sha256: str | None = None
 
     def __post_init__(self) -> None:
         for field, value in (
@@ -238,6 +239,8 @@ class RightsRecord:
         if self.required_disposition not in _DISPOSITIONS:
             raise ValueError("required_disposition must be retain, quarantine or delete")
         _sha256(self.evidence_sha256, "evidence_sha256")
+        if self.asset_sha256 is not None:
+            _sha256(self.asset_sha256, "asset_sha256")
         if not isinstance(self.status, RightsStatus):
             raise ValueError("status must be RightsStatus")
 
@@ -513,6 +516,10 @@ def validate_contract_bundle(
         raise ValueError("acquisition batch lineage differs")
     if candidate.rights_record_id != rights.rights_record_id or rights.rights_record_id != training.rights_record_id:
         raise ValueError("rights lineage differs")
+    if training.original_sha256 != candidate.raw_sha256:
+        raise ValueError("raw image lineage differs")
+    if rights.asset_sha256 is not None and rights.asset_sha256 != candidate.raw_sha256:
+        raise ValueError("rights do not cover raw image")
     if evidence.evidence_record_id != training.evidence_record_id:
         raise ValueError("evidence lineage differs")
     if (
@@ -560,6 +567,7 @@ class DatasetFreeze:
     exclusions: tuple[tuple[str, str], ...] = ()
     blocked: bool = False
     asset_rights: tuple[tuple[str, str], ...] = ()
+    asset_raw_sha256s: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         _sha256(self.manifest_sha256, "manifest_sha256")
@@ -602,6 +610,13 @@ class DatasetFreeze:
         for asset_id, rights_id in self.asset_rights:
             _nonempty(asset_id, "rights asset")
             _nonempty(rights_id, "rights record")
+        if len({asset_id for asset_id, _ in self.asset_raw_sha256s}) != len(self.asset_raw_sha256s):
+            raise ValueError("freeze raw hashes must contain unique assets")
+        if self.asset_raw_sha256s and {asset_id for asset_id, _ in self.asset_raw_sha256s} != set(self.eligible_asset_ids):
+            raise ValueError("freeze raw hashes must match eligible assets")
+        for asset_id, raw_sha256 in self.asset_raw_sha256s:
+            _nonempty(asset_id, "raw asset")
+            _sha256(raw_sha256, "raw asset sha256")
 
 
 @dataclass(frozen=True)

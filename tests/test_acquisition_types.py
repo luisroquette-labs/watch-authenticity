@@ -95,6 +95,22 @@ def test_cross_record_lineage_must_match(valid_contract_bundle):
         )
 
 
+def test_asset_scoped_rights_cover_only_the_archived_raw_image(valid_contract_bundle):
+    candidate, rights, evidence, training = valid_contract_bundle
+    scoped = replace(rights, asset_sha256=candidate.raw_sha256)
+    validate_contract_bundle(candidate, scoped, evidence, training)
+    with pytest.raises(ValueError, match="asset_sha256"):
+        replace(rights, asset_sha256="invalid")
+    with pytest.raises(ValueError, match="rights do not cover raw image"):
+        validate_contract_bundle(
+            candidate, replace(scoped, asset_sha256="0" * 64), evidence, training
+        )
+    with pytest.raises(ValueError, match="raw image lineage"):
+        validate_contract_bundle(
+            candidate, scoped, evidence, replace(training, original_sha256="0" * 64)
+        )
+
+
 def test_rights_fixture_preserves_expired_status(expired_rights):
     assert expired_rights.status is RightsStatus.EXPIRED
     assert expired_rights.expires_at < expired_rights.disposition_deadline
