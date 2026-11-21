@@ -36,12 +36,12 @@ class COS:
         return True
 
 
-def _seed(cos, *, offset=0):
+def _seed(cos, *, offset=0, source_offset=None, query=6):
     files = []
     for index in range(offset, offset + 2):
         receipt = {
             "candidate_id": f"candidate-{index}",
-            "source_record_id": f"q6:{index}",
+            "source_record_id": f"q{query}:{index if source_offset is None else source_offset + index - offset}",
             "source_url": f"https://commons.wikimedia.org/wiki/File:Example_{index}.jpg",
             "policy_id": "wikimedia-commons-licensed-v1",
             "raw_sha256": f"{index + 1:064x}",
@@ -87,6 +87,16 @@ def test_census_reads_paginated_receipts_and_persists_research_only_counts():
     assert report["confirmed_watch_count"] == 0
     assert report["training_admission_count"] == 0
     assert len([key for key in cos.bodies if "/research-census/" in key]) == 1
+
+
+def test_census_rejects_reacquired_source_records_before_persisting():
+    cos = COS()
+    _seed(cos)
+    _seed(cos, offset=2, source_offset=0, query=9)
+
+    with pytest.raises(ValueError, match="reuse a source record"):
+        run_research_census_once(cos, "private", "datasets", now=NOW)
+    assert not any("/research-census/" in key for key in cos.bodies)
 
 
 def test_census_refuses_a_second_terminal_for_the_same_date():

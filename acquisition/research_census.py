@@ -33,6 +33,7 @@ def run_research_census_once(cos: Any, bucket: str, prefix: str, *, now: datetim
         receipt_index[match[1]] = key
 
     candidate_ids: set[str] = set()
+    source_record_ids: set[str] = set()
     raw_hashes: set[str] = set()
     manifest_hashes: list[str] = []
     manifest_counts: dict[str, tuple[int, int]] = {}
@@ -60,7 +61,10 @@ def run_research_census_once(cos: Any, bucket: str, prefix: str, *, now: datetim
             raw_hashes.add(raw)
         if candidate_ids.intersection(report.candidate_ids):
             raise ValueError("research groups reuse a candidate")
+        if source_record_ids.intersection(report.source_record_ids):
+            raise ValueError("research groups reuse a source record")
         candidate_ids.update(report.candidate_ids)
+        source_record_ids.update(report.source_record_ids)
         manifest_hashes.append(report.manifest_sha256)
         manifest_counts[report.manifest_sha256] = (report.file_count, report.probable_watch_count)
         files += report.file_count
