@@ -82,6 +82,23 @@ def test_discovers_rich_factory_qc_images_for_private_download_only():
     }
 
 
+@pytest.mark.parametrize(
+    ("title", "classification"),
+    [
+        ("Submariner Date 126610LN Super Clone", "replica_candidate_vendor_declared"),
+        ("Submariner Date 126610LN Not a Super Clone", "watch_candidate_unverified"),
+    ],
+)
+def test_rich_factory_classifies_only_affirmative_title_claim(title, classification):
+    policy, access = _registry()
+    http = MagicMock()
+    http.get.return_value = _Response(_sitemap(title=title))
+
+    page = discover_richfactoryus(http, policy, access, now=NOW)
+
+    assert dict(page.records[0].metadata)["classification"] == classification
+
+
 def test_rich_factory_unapproved_image_host_fails_closed():
     policy, access = _registry()
     http = MagicMock()

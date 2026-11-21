@@ -187,6 +187,9 @@ def _parse_entry(
         )
 
     version_input = "\0".join((last_modified, *images, *titles)).encode()
+    declared_replica = bool(config.required_title_markers or config.required_page_title_markers) or any(
+        _has_affirmative_marker(title, ("replica", "super clone")) for title in titles
+    )
     return DiscoveryRecord(
         source=config.source,
         source_record_id=slug,
@@ -200,7 +203,7 @@ def _parse_entry(
             (
                 "classification",
                 "replica_candidate_vendor_declared"
-                if config.required_title_markers or config.required_page_title_markers
+                if declared_replica
                 else "watch_candidate_unverified",
             ),
             ("evidence_tier", "c"),
