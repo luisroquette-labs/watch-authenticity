@@ -99,6 +99,19 @@
       "head": null
     },
     {
+      "reference_id": "omega-speedmaster-31030425001001",
+      "brand": "omega",
+      "family": "speedmaster",
+      "reference": "31030425001001",
+      "aliases": ["omega-speedmaster-moonwatch-31030425001001"],
+      "identity_evidence_sha256": null,
+      "required_angles": ["dial", "crown", "clasp", "caseback"],
+      "gold_freeze_sha256": null,
+      "holdout_freeze_sha256": null,
+      "status": "pending",
+      "head": null
+    },
+    {
       "reference_id": "seiko-prospex-spb453j1",
       "brand": "seiko",
       "family": "prospex",
