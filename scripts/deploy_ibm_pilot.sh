@@ -40,6 +40,32 @@ else
 fi
 
 app=watch-auth-pilot
+links=$(ibmcloud iam trusted-profile-links "${WATCH_AUTH_TRUSTED_PROFILE_ID}" --output json)
+if ! printf '%s' "${links}" | python3 -c '
+import json, sys
+links = json.load(sys.stdin)
+items = links.get("links", links) if isinstance(links, dict) else links
+raise SystemExit(0 if any(x.get("cr_type") == "CE" and x.get("link", {}).get("crn") == sys.argv[1] and x.get("link", {}).get("component_type") == "application" and x.get("link", {}).get("component_name") == "watch-auth-pilot" for x in items) else 1)
+' "${WATCH_AUTH_CE_PROJECT_CRN}"; then
+  ibmcloud iam trusted-profile-link-create "${WATCH_AUTH_TRUSTED_PROFILE_ID}" \
+    --name "${app}" --cr-type CE --link-crn "${WATCH_AUTH_CE_PROJECT_CRN}" \
+    --link-component-type application --link-component-name "${app}" --output json >/dev/null
+fi
+
+ibmcloud iam trusted-profile-links "${WATCH_AUTH_TRUSTED_PROFILE_ID}" --output json | python3 -c '
+import json, sys
+links = json.load(sys.stdin)
+items = links.get("links", links) if isinstance(links, dict) else links
+if not isinstance(items, list) or not any(
+    isinstance(x, dict) and x.get("cr_type") == "CE"
+    and x.get("link", {}).get("crn") == sys.argv[1]
+    and x.get("link", {}).get("component_type") == "application"
+    and x.get("link", {}).get("component_name") == "watch-auth-pilot"
+    for x in items
+):
+    raise SystemExit("pilot trusted-profile link readback differs")
+' "${WATCH_AUTH_CE_PROJECT_CRN}"
+
 if ! ibmcloud ce app get --name "${app}" --output json >/dev/null 2>&1; then
   ibmcloud ce app create \
     --name "${app}" --image "${WATCH_AUTH_PILOT_IMAGE_DIGEST}" \
@@ -92,30 +118,23 @@ if not valid:
     raise SystemExit("pilot app readback differs from protected bounded configuration")
 '
 
-links=$(ibmcloud iam trusted-profile-links "${WATCH_AUTH_TRUSTED_PROFILE_ID}" --output json)
-if ! printf '%s' "${links}" | python3 -c '
+if ! ibmcloud ce app get --name "${app}" --output json | python3 -c '
 import json, sys
-links = json.load(sys.stdin)
-items = links.get("links", links) if isinstance(links, dict) else links
-raise SystemExit(0 if any(x.get("cr_type") == "CE" and x.get("link", {}).get("crn") == sys.argv[1] and x.get("link", {}).get("component_type") == "application" and x.get("link", {}).get("component_name") == "watch-auth-pilot" for x in items) else 1)
-' "${WATCH_AUTH_CE_PROJECT_CRN}"; then
-  ibmcloud iam trusted-profile-link-create "${WATCH_AUTH_TRUSTED_PROFILE_ID}" \
-    --name "${app}" --cr-type CE --link-crn "${WATCH_AUTH_CE_PROJECT_CRN}" \
-    --link-component-type application --link-component-name "${app}" --output json >/dev/null
+app = json.load(sys.stdin)
+raise SystemExit(0 if any(
+    item.get("type") == "Ready" and item.get("status") == "True"
+    for item in app.get("status", {}).get("conditions", [])
+) else 1)
+'; then
+  ibmcloud ce app update --name "${app}" --image "${WATCH_AUTH_PILOT_IMAGE_DIGEST}" \
+    --revision-name "${app}-repair-$(date -u +%Y%m%d%H%M%S)" --wait --wait-timeout 600
 fi
-
-ibmcloud iam trusted-profile-links "${WATCH_AUTH_TRUSTED_PROFILE_ID}" --output json | python3 -c '
+ibmcloud ce app get --name "${app}" --output json | python3 -c '
 import json, sys
-links = json.load(sys.stdin)
-items = links.get("links", links) if isinstance(links, dict) else links
-if not isinstance(items, list) or not any(
-    isinstance(x, dict) and x.get("cr_type") == "CE"
-    and x.get("link", {}).get("crn") == sys.argv[1]
-    and x.get("link", {}).get("component_type") == "application"
-    and x.get("link", {}).get("component_name") == "watch-auth-pilot"
-    for x in items
-):
-    raise SystemExit("pilot trusted-profile link readback differs")
-' "${WATCH_AUTH_CE_PROJECT_CRN}"
+app = json.load(sys.stdin)
+if not any(item.get("type") == "Ready" and item.get("status") == "True"
+           for item in app.get("status", {}).get("conditions", [])):
+    raise SystemExit("pilot app is not ready")
+'
 
 ibmcloud ce app get --name "${app}" --output url
