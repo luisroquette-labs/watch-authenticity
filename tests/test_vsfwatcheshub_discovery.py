@@ -121,6 +121,14 @@ def test_discovers_ten_exact_standard_vsf_images_for_private_download_only():
     ]
 
 
+def test_negated_product_title_cannot_become_vendor_declared():
+    policy, access = _registry()
+    http = _http(page=_page(title="VSF Submariner 126610LN Not a Super Clone"))
+
+    with pytest.raises(ReplicaSitemapError, match="lacks an exact replica declaration"):
+        discover_vsfwatcheshub(http, policy, access, now=NOW)
+
+
 def test_rejects_unapproved_image_host_or_unproven_replica_declaration():
     policy, access = _registry()
     with pytest.raises(ReplicaSitemapError, match="approved host"):

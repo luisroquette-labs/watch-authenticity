@@ -93,6 +93,17 @@ def test_discovers_exact_replica_reference_as_candidate_only():
     )
 
 
+def test_negated_replica_title_cannot_become_vendor_declared():
+    policy, access = _registry()
+    http = MagicMock()
+    http.get.return_value = _Response(
+        _sitemap().replace("126610LN Super Clone", "126610LN Not a Super Clone")
+    )
+
+    with pytest.raises(VSFactoryAPIError, match="lacks a replica declaration"):
+        discover_vsfactoryusa(http, policy, access, now=NOW)
+
+
 def test_missing_lastmod_uses_images_for_version_without_inventing_a_date():
     policy, access = _registry()
     http = MagicMock()

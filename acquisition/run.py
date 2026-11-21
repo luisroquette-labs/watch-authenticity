@@ -422,7 +422,11 @@ def run_public_image_collection_once(
     for record in page.records:
         metadata = dict(record.metadata)
         listing_text = (
-            "replica" if "replica" in metadata.get("classification", "").lower() else None
+            "replica"
+            if metadata.get("classification") in {
+                "replica_candidate_vendor_declared", "vendor_declared_replica"
+            }
+            else None
         )
         for index, (image_id, image_url) in enumerate(
             zip(record.image_ids, record.image_urls, strict=True), start=1

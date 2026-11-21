@@ -74,7 +74,7 @@ def test_discovers_rich_factory_qc_images_for_private_download_only():
         "https://richfactoryus.com/images/qc-126610ln-01.webp",
     )
     assert dict(record.metadata) == {
-        "classification": "replica_candidate_vendor_declared",
+        "classification": "watch_candidate_unverified",
         "evidence_tier": "c",
         "factory_claim": "RICH Factory",
         "last_modified": "2026-11-12",

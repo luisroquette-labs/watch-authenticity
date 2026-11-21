@@ -161,8 +161,8 @@ def _parse_entry(
             raise ReplicaSitemapError(
                 f"{config.source} exact-reference image title lacks the reference"
             )
-        if config.required_title_markers and not any(
-            marker in title.lower() for marker in config.required_title_markers
+        if config.required_title_markers and not _has_affirmative_marker(
+            title, config.required_title_markers
         ):
             raise ReplicaSitemapError(
                 f"{config.source} exact-reference image lacks a replica declaration"
@@ -197,7 +197,12 @@ def _parse_entry(
         image_ids=tuple(hashlib.sha256(url.encode()).hexdigest() for url in images),
         image_urls=tuple(images),
         metadata=(
-            ("classification", "replica_candidate_vendor_declared"),
+            (
+                "classification",
+                "replica_candidate_vendor_declared"
+                if config.required_title_markers or config.required_page_title_markers
+                else "watch_candidate_unverified",
+            ),
             ("evidence_tier", "c"),
             ("factory_claim", config.factory_claim),
             *((("last_modified", last_modified),) if last_modified else ()),
@@ -249,10 +254,7 @@ def _verify_product_page(
     if (
         _REFERENCE_TOKEN.search(title) is None
         or "submariner" not in normalized_title
-        or not any(
-            marker in normalized_title
-            for marker in config.required_page_title_markers
-        )
+        or not _has_affirmative_marker(title, config.required_page_title_markers)
     ):
         raise ReplicaSitemapError(
             f"{config.source} product page lacks an exact replica declaration"
@@ -267,6 +269,16 @@ def _verify_product_page(
             f"{config.source} product page canonical URL is missing or invalid"
         )
     return title
+
+
+def _has_affirmative_marker(title: str, markers: tuple[str, ...]) -> bool:
+    lowered = title.lower()
+    for marker in markers:
+        for match in re.finditer(rf"\b{re.escape(marker)}\b", lowered):
+            prefix = lowered[max(0, match.start() - 16):match.start()]
+            if not re.search(r"\b(?:not|no|nao|não)(?:\s+(?:a|an|e|is))?(?:\s+super)?\s*$", prefix):
+                return True
+    return False
 
 
 def _read_bounded(

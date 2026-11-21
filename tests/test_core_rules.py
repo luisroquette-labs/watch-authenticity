@@ -142,6 +142,8 @@ def test_replica_vendor_claim_is_proposed_only_when_explicit(source):
     assert propose_source_label(source=source, listing_text="replica") is Label.FAKE
     assert propose_source_label(source=source, listing_text="original") is None
     assert propose_source_label(source=source, listing_text="não é réplica") is None
+    assert propose_source_label(source=source, listing_text="not a replica") is None
+    assert propose_source_label(source=source, listing_text="inspirado") is None
 
 
 # --- CK-19: aggregate_angles ------------------------------------------------
