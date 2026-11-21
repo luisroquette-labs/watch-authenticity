@@ -28,6 +28,10 @@ acquisition_job="watch-auth-acquisition-${deployment_id}"
 luxury_job="watch-auth-supercloneluxury-${deployment_id}"
 cbp_job="watch-auth-cbp-${deployment_id}"
 goldsmiths_job="watch-auth-goldsmiths-${deployment_id}"
+bobs_job="watch-auth-bobswatches-${deployment_id}"
+speedmaster_job="watch-auth-speedmaster-${deployment_id}"
+auckland_job="watch-auth-auckland-${deployment_id}"
+census_job="watch-auth-research-census-${deployment_id}"
 
 job_args=(
   --name "${acquisition_job}"
@@ -252,6 +256,133 @@ goldsmiths_cron_args[1]=watch-auth-goldsmiths-daily
 goldsmiths_cron_args[5]="${goldsmiths_job}"
 goldsmiths_cron_args[7]='27 3 * * *'
 
+bobs_job_args=("${job_args[@]}")
+bobs_job_args[1]="${bobs_job}"
+bobs_job_args+=(--arg=--source --arg=bobswatches)
+if ibmcloud ce job get --name "${bobs_job}" --output json >/dev/null 2>&1; then
+  :
+else
+  ibmcloud ce job create "${bobs_job_args[@]}"
+fi
+verify_job "${bobs_job}" bobswatches
+
+if link_exists "${bobs_job}"; then
+  :
+else
+  link_state=$?
+  [[ "${link_state}" -eq 1 ]] || {
+    echo "trusted-profile link inventory failed" >&2
+    exit 2
+  }
+  ibmcloud iam trusted-profile-link-create "${WATCH_AUTH_TRUSTED_PROFILE_ID}" \
+    --name "${bobs_job}" \
+    --cr-type CE \
+    --link-crn "${WATCH_AUTH_CE_PROJECT_CRN}" \
+    --link-component-type job \
+    --link-component-name "${bobs_job}" \
+    --output json >/dev/null
+  link_exists "${bobs_job}" || { echo "trusted-profile link readback failed" >&2; exit 2; }
+fi
+
+bobs_cron_args=("${cron_args[@]}")
+bobs_cron_args[1]=watch-auth-bobswatches-daily
+bobs_cron_args[5]="${bobs_job}"
+bobs_cron_args[7]='7 4 * * *'
+
+speedmaster_job_args=("${job_args[@]}")
+speedmaster_job_args[1]="${speedmaster_job}"
+speedmaster_job_args+=(--arg=--source --arg=wikimedia-speedmaster)
+if ibmcloud ce job get --name "${speedmaster_job}" --output json >/dev/null 2>&1; then
+  :
+else
+  ibmcloud ce job create "${speedmaster_job_args[@]}"
+fi
+verify_job "${speedmaster_job}" wikimedia-speedmaster
+
+if link_exists "${speedmaster_job}"; then
+  :
+else
+  link_state=$?
+  [[ "${link_state}" -eq 1 ]] || {
+    echo "trusted-profile link inventory failed" >&2
+    exit 2
+  }
+  ibmcloud iam trusted-profile-link-create "${WATCH_AUTH_TRUSTED_PROFILE_ID}" \
+    --name "${speedmaster_job}" \
+    --cr-type CE \
+    --link-crn "${WATCH_AUTH_CE_PROJECT_CRN}" \
+    --link-component-type job \
+    --link-component-name "${speedmaster_job}" \
+    --output json >/dev/null
+  link_exists "${speedmaster_job}" || { echo "trusted-profile link readback failed" >&2; exit 2; }
+fi
+
+speedmaster_cron_args=("${cron_args[@]}")
+speedmaster_cron_args[1]=watch-auth-speedmaster-daily
+speedmaster_cron_args[5]="${speedmaster_job}"
+speedmaster_cron_args[7]='47 3 * * *'
+
+auckland_job_args=("${job_args[@]}")
+auckland_job_args[1]="${auckland_job}"
+auckland_job_args+=(--arg=--source --arg=wikimedia-auckland)
+if ibmcloud ce job get --name "${auckland_job}" --output json >/dev/null 2>&1; then
+  :
+else
+  ibmcloud ce job create "${auckland_job_args[@]}"
+fi
+verify_job "${auckland_job}" wikimedia-auckland
+
+if link_exists "${auckland_job}"; then
+  :
+else
+  link_state=$?
+  [[ "${link_state}" -eq 1 ]] || { echo "trusted-profile link inventory failed" >&2; exit 2; }
+  ibmcloud iam trusted-profile-link-create "${WATCH_AUTH_TRUSTED_PROFILE_ID}" \
+    --name "${auckland_job}" --cr-type CE \
+    --link-crn "${WATCH_AUTH_CE_PROJECT_CRN}" \
+    --link-component-type job --link-component-name "${auckland_job}" \
+    --output json >/dev/null
+  link_exists "${auckland_job}" || { echo "trusted-profile link readback failed" >&2; exit 2; }
+fi
+
+auckland_cron_args=("${cron_args[@]}")
+auckland_cron_args[1]=watch-auth-auckland-daily
+auckland_cron_args[5]="${auckland_job}"
+auckland_cron_args[7]='17 4 * * *'
+
+census_job_args=("${job_args[@]}")
+census_job_args[1]="${census_job}"
+census_job_args+=(--arg=--source --arg=research-census)
+if ibmcloud ce job get --name "${census_job}" --output json >/dev/null 2>&1; then
+  :
+else
+  ibmcloud ce job create "${census_job_args[@]}"
+fi
+verify_job "${census_job}" research-census
+
+if link_exists "${census_job}"; then
+  :
+else
+  link_state=$?
+  [[ "${link_state}" -eq 1 ]] || {
+    echo "trusted-profile link inventory failed" >&2
+    exit 2
+  }
+  ibmcloud iam trusted-profile-link-create "${WATCH_AUTH_TRUSTED_PROFILE_ID}" \
+    --name "${census_job}" \
+    --cr-type CE \
+    --link-crn "${WATCH_AUTH_CE_PROJECT_CRN}" \
+    --link-component-type job \
+    --link-component-name "${census_job}" \
+    --output json >/dev/null
+  link_exists "${census_job}" || { echo "trusted-profile link readback failed" >&2; exit 2; }
+fi
+
+census_cron_args=("${cron_args[@]}")
+census_cron_args[1]=watch-auth-research-census-daily
+census_cron_args[5]="${census_job}"
+census_cron_args[7]='27 4 * * *'
+
 # Activate the dedicated source first; the old daily job remains a safe fallback
 # until the main cron points to an image that omits Goldsmiths.
 if ibmcloud ce sub cron get --name watch-auth-goldsmiths-daily --output json >/dev/null 2>&1; then
@@ -276,4 +407,28 @@ if ibmcloud ce sub cron get --name watch-auth-cbp-daily --output json >/dev/null
   ibmcloud ce sub cron update "${cbp_cron_args[@]}"
 else
   ibmcloud ce sub cron create "${cbp_cron_args[@]}"
+fi
+
+if ibmcloud ce sub cron get --name watch-auth-bobswatches-daily --output json >/dev/null 2>&1; then
+  ibmcloud ce sub cron update "${bobs_cron_args[@]}"
+else
+  ibmcloud ce sub cron create "${bobs_cron_args[@]}"
+fi
+
+if ibmcloud ce sub cron get --name watch-auth-speedmaster-daily --output json >/dev/null 2>&1; then
+  ibmcloud ce sub cron update "${speedmaster_cron_args[@]}"
+else
+  ibmcloud ce sub cron create "${speedmaster_cron_args[@]}"
+fi
+
+if ibmcloud ce sub cron get --name watch-auth-auckland-daily --output json >/dev/null 2>&1; then
+  ibmcloud ce sub cron update "${auckland_cron_args[@]}"
+else
+  ibmcloud ce sub cron create "${auckland_cron_args[@]}"
+fi
+
+if ibmcloud ce sub cron get --name watch-auth-research-census-daily --output json >/dev/null 2>&1; then
+  ibmcloud ce sub cron update "${census_cron_args[@]}"
+else
+  ibmcloud ce sub cron create "${census_cron_args[@]}"
 fi

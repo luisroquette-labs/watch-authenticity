@@ -24,6 +24,7 @@ from acquisition.collect import (
 from acquisition.cos import AtomicCOSClient
 from acquisition.discovery import DiscoveryCommit, DiscoveryPage, append_discovery_page
 from acquisition.http import PinnedRequestsClient
+from acquisition.research_census import run_research_census_once
 from acquisition.source_policy import (
     authorize_candidate,
     authorize_discovery,
@@ -44,6 +45,7 @@ from infra.ibm_cos import (
     verify_no_public_access_policies,
     verify_private_versioned_bucket,
 )
+from scrapers.bobswatches import BobsWatchesDiscoveryError, discover_bobswatches
 from scrapers.cbp import CBPDiscoveryError, discover_cbp
 from scrapers.goldsmiths import GoldsmithsAPIError, discover_goldsmiths
 from scrapers.metadata_http import HTTPDeadlineExceeded
@@ -70,6 +72,7 @@ _OWNER_PUBLIC_DOWNLOAD_DIRECTIVE = (
     "images privately; do not treat download as permission to train or proof of authenticity"
 )
 _RECOVERABLE_METADATA_ERRORS = (
+    BobsWatchesDiscoveryError,
     CBPDiscoveryError,
     GoldsmithsAPIError,
     HTTPDeadlineExceeded,
@@ -777,11 +780,14 @@ def main(source: str = "all") -> None:
     root = Path(__file__).resolve().parents[1]
     policies = load_source_policies(root / "config/source_policies.json")
     access_registry = load_source_access_registry(root / "config/source_access.json")
-    if source not in {"all", "supercloneluxury", "cbp", "goldsmiths"}:
+    if source not in {"all", "supercloneluxury", "cbp", "goldsmiths", "bobswatches", "wikimedia-speedmaster", "wikimedia-auckland", "research-census"}:
         raise ValueError("unsupported acquisition source")
     logging.basicConfig(level=logging.INFO)
     now = datetime.now(timezone.utc)
     job_deadline = time.monotonic() + 420
+    if source == "research-census":
+        run_research_census_once(cos, bucket, prefix, now=now)
+        return
     if source == "supercloneluxury":
         luxury_policy = get_source_policy(policies, source)
         luxury_access = access_registry[source]
@@ -839,6 +845,45 @@ def main(source: str = "all") -> None:
                 previous=previous,
                 deadline=job_deadline,
             ),
+        )
+        return
+    if source == "bobswatches":
+        bobs_policy = get_source_policy(policies, source)
+        bobs_access = access_registry[source]
+        run_metadata_discovery_resilient(
+            cos, bucket, prefix, source, now=now,
+            discover=lambda previous: discover_bobswatches(
+                requests.Session(), bobs_policy, bobs_access,
+                now=now, previous=previous, deadline=job_deadline,
+            ),
+        )
+        return
+    if source == "wikimedia-speedmaster":
+        access = access_registry["wikimedia"]
+        if access.requests_per_minute is None or access.requests_per_minute < 4:
+            raise RuntimeError("Wikimedia rate limit cannot cover API and image retries")
+        run_wikimedia_once(
+            cos,
+            bucket,
+            f"{prefix}/lanes/speedmaster/replica-research",
+            get_source_policy(policies, "wikimedia"),
+            access,
+            now=now,
+            api_client=requests.Session(),
+            image_client=PinnedRequestsClient(requests_per_minute=access.requests_per_minute - 1),
+            discover=lambda *args, **kwargs: discover_wikimedia(*args, **kwargs, query_range=(6, 7)),
+        )
+        return
+    if source == "wikimedia-auckland":
+        access = access_registry["wikimedia"]
+        if access.requests_per_minute is None or access.requests_per_minute < 4:
+            raise RuntimeError("Wikimedia rate limit cannot cover API and image retries")
+        run_wikimedia_once(
+            cos, bucket, f"{prefix}/lanes/auckland-oyster/research",
+            get_source_policy(policies, "wikimedia"), access,
+            now=now, api_client=requests.Session(),
+            image_client=PinnedRequestsClient(requests_per_minute=access.requests_per_minute - 1),
+            discover=lambda *args, **kwargs: discover_wikimedia(*args, **kwargs, query_range=(8, 9)),
         )
         return
     image_requests_per_minute = access_registry["wikimedia"].requests_per_minute
@@ -959,8 +1004,7 @@ def main(source: str = "all") -> None:
         ),
     )
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", choices=("all", "supercloneluxury", "cbp", "goldsmiths"), default="all")
+    parser.add_argument("--source", choices=("all", "supercloneluxury", "cbp", "goldsmiths", "bobswatches", "wikimedia-speedmaster", "wikimedia-auckland", "research-census"), default="all")
     main(parser.parse_args().source)

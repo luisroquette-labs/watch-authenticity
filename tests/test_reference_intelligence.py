@@ -83,6 +83,34 @@ def test_patek_5740_perpetual_calendar_stays_research_only() -> None:
     assert not result.authenticates_watch
 
 
+def test_ap_26331_official_claims_remain_research_only(catalog_fixture) -> None:
+    reference = "audemarspiguet-royaloak-26331stoo1220st02"
+    claims = load_knowledge(Path(f"config/references/{reference}.json"), reference)
+    entry = catalog_fixture.catalog.entry_for(reference)
+
+    assert entry.status == "pending"
+    assert len(claims) == 5
+    assert all(claim.source_class is SourceClass.OFFICIAL_BRAND for claim in claims)
+    assert {claim.field for claim in claims if claim.applicable_angles} == {
+        "dial_color", "dial_texture"
+    }
+    assert assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER).status is AssessmentStatus.INCONCLUSIVE
+
+
+def test_ap_official_claim_rejects_impersonated_domain() -> None:
+    with pytest.raises(ValueError, match="approved domain"):
+        TechnicalClaim(
+            reference_id="audemarspiguet-royaloak-26331stoo1220st02",
+            field="dial_color",
+            value="black",
+            source_class=SourceClass.OFFICIAL_BRAND,
+            source_url="https://audemarspiguet.com.evil.example/watch",
+            citation="False official claim",
+            observed_at=date.today(),
+            applicable_angles=(Angle.DIAL,),
+        )
+
+
 def test_patek_official_claim_rejects_impersonated_domain() -> None:
     with pytest.raises(ValueError, match="approved domain"):
         TechnicalClaim(

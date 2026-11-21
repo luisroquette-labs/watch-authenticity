@@ -6,6 +6,7 @@ import http.client
 import io
 import json
 import math
+import socket
 import subprocess
 import sys
 import threading
@@ -24,6 +25,7 @@ from pilot.server import (
     MAX_BATCH_DECODED_BYTES,
     MAX_BATCH_IMAGES,
     MAX_UPLOAD_BYTES,
+    PilotHTTPServer,
     PilotService,
     _VisualInspection,
     analyze_batch,
@@ -692,6 +694,108 @@ def test_individual_endpoint_remains_compatible() -> None:
     assert response.status == 200
     assert service.calls == [(b"legacy-body", "image/jpeg", "dial")]
     assert payload["verdict"] == "inconclusivo"
+
+
+def test_password_protects_page_and_upload_before_service_call() -> None:
+    service = _StubService(["inconclusivo"])
+    server = HTTPServer(("127.0.0.1", 0), handler(service, "a" * 24))
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        host, port = cast(tuple[str, int], server.server_address)
+        connection = http.client.HTTPConnection(host, port, timeout=2)
+        connection.request("GET", "/")
+        denied_page = connection.getresponse()
+        assert denied_page.status == 401
+        assert denied_page.getheader("WWW-Authenticate") == 'Basic realm="Watch Auth Pilot"'
+        assert denied_page.read() == b""
+        connection.request("POST", "/predict?angle=dial", body=b"private")
+        denied_upload = connection.getresponse()
+        assert denied_upload.status == 401
+        assert denied_upload.read() == b""
+        assert service.calls == []
+        authorization = "Basic " + base64.b64encode(("watch:" + "a" * 24).encode()).decode()
+        connection.request("GET", "/", headers={"Authorization": authorization})
+        allowed = connection.getresponse()
+        assert allowed.status == 200
+        assert b"Pr\xc3\xa9via visual" in allowed.read()
+        connection.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+
+def test_partial_upload_times_out_without_blocking_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("pilot.server.MAX_REQUEST_SECONDS", .2)
+    service = _StubService([])
+    server = PilotHTTPServer(("127.0.0.1", 0), handler(service, "a" * 24))
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    host, port = cast(tuple[str, int], server.server_address)
+    authorization = "Basic " + base64.b64encode(("watch:" + "a" * 24).encode()).decode()
+    stalled = http.client.HTTPConnection(host, port, timeout=2)
+    healthy = http.client.HTTPConnection(host, port, timeout=2)
+    try:
+        stalled.putrequest("POST", "/predict?angle=dial")
+        stalled.putheader("Authorization", authorization)
+        stalled.putheader("Content-Type", "image/jpeg")
+        stalled.putheader("Content-Length", "100")
+        stalled.endheaders()
+        stalled.send(b"partial")
+        healthy.request("GET", "/", headers={"Authorization": authorization})
+        response = healthy.getresponse()
+        assert response.status == 200
+        response.read()
+        timed_out = stalled.getresponse()
+        assert timed_out.status == 408
+        assert "tempo de envio excedido" in timed_out.read().decode()
+        assert service.calls == []
+    finally:
+        stalled.close()
+        healthy.close()
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+
+def test_partial_headers_release_connection_slot(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("pilot.server.MAX_HEADER_SECONDS", .2)
+    server = PilotHTTPServer(("127.0.0.1", 0), handler(_StubService([]), "a" * 24))
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    host, port = cast(tuple[str, int], server.server_address)
+    connection = socket.create_connection((host, port), timeout=2)
+    connection.settimeout(2)
+    try:
+        connection.sendall(b"GET / HTTP/1.1\r\nHost: incomplete")
+        assert connection.recv(1) == b""
+    finally:
+        connection.close()
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+
+def test_public_bind_refuses_missing_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("WATCH_AUTH_PILOT_PASSWORD", raising=False)
+    result = subprocess.run(
+        [sys.executable, "-m", "pilot.server", "--host", "0.0.0.0", "--checkpoint", "/missing"],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode != 0
+    assert "public bind requires WATCH_AUTH_PILOT_PASSWORD" in result.stderr
+
+
+def test_pilot_without_selected_reference_has_no_reference_claims(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("pilot.online_assessor.LocalVisionAssessor", lambda _path: object())
+    monkeypatch.setattr("pilot.watch_locator.LocalWatchLocator", lambda: object())
+    service = PilotService(Path("/unused"))
+    assert service.claims == ()
 
 
 def test_html_supports_six_files_per_image_angles_and_recovers_after_error() -> None:
