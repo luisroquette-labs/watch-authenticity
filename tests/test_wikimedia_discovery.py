@@ -162,6 +162,44 @@ def test_auckland_museum_cc_by_photos_remain_unverified_research_candidates(cos)
     assert result.page.next_cursor is None
 
 
+def test_daytona_replica_queries_skip_genuine_search_hits_and_keep_weak_labels(cos):
+    http = MagicMock()
+    genuine = _page()
+    genuine["pageid"] = 101
+    genuine["title"] = "File:Rolex Le Mans Daytona 126528LN.jpg"
+    genuine["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Rolex_Le_Mans_Daytona_126528LN.jpg"
+    genuine["imageinfo"][0]["extmetadata"]["ImageDescription"] = {"value": "Rolex Daytona wristwatch"}
+    replica = _page(license_name="Public domain", license_url=None)
+    replica["pageid"] = 102
+    replica["title"] = "File:Rolex Daytona 126500LN Panda Replica.jpg"
+    replica["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Rolex_Daytona_126500LN_Panda_Replica.jpg"
+    http.get.return_value = _Response({"query": {"pages": [genuine, replica]}})
+
+    first = _discover(http, cos, query_range=(10, 12))
+
+    assert http.get.call_args.kwargs["params"]["gsrsearch"] == "replica Rolex Daytona"
+    assert len(first.candidates) == 1
+    assert first.page.records[0].source_record_id == "q10:102"
+    assert first.candidates[0].evidence_tier is EvidenceTier.INCONCLUSIVE
+    assert first.candidates[0].rights.allowed_purposes == ("download",)
+    assert first.page.next_cursor == "q:11:0"
+
+    fake = _page(license_name="Public domain", license_url=None)
+    fake["pageid"] = 103
+    fake["title"] = "File:Illegally copied wristwatch which shall look like Rolex Daytona.jpg"
+    fake["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Illegally_copied_wristwatch_which_shall_look_like_Rolex_Daytona.jpg"
+    fake["imageinfo"][0]["extmetadata"]["ImageDescription"] = {"value": "Fake Rolex Daytona watch"}
+    http.get.return_value = _Response({"query": {"pages": [fake]}})
+    prior = DiscoveryCommit("wikimedia", _access().access_record_id, None, "0" * 64, "q:11:0", (), "0" * 64)
+
+    second = _discover(http, cos, query_range=(10, 12), previous=prior)
+
+    assert http.get.call_args.kwargs["params"]["gsrsearch"] == "fake Rolex Daytona watch"
+    assert second.page.records[0].source_record_id == "q11:103"
+    assert second.page.next_cursor is None
+    assert second.candidates[0].metadata.declared_reference == "unverified"
+
+
 def test_default_discovery_does_not_enter_auckland_lane(cos):
     http = MagicMock()
     page = _page()

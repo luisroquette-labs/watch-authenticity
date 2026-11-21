@@ -38,8 +38,10 @@ _FAMILY_SEARCHES = (
     ("fake Rolex Datejust", "rolex", "datejust"),
     ("1953 Rolex Oyster Perpetual Auckland Museum", "rolex", "oyster perpetual"),
     ("Omega Speedmaster Professional Moonwatch", "omega", "speedmaster"),
+    ("replica Rolex Daytona", "rolex", "daytona"),
+    ("fake Rolex Daytona watch", "rolex", "daytona"),
 )
-_REPLICA_SEARCHES = frozenset({6, 7})
+_REPLICA_SEARCHES = frozenset({6, 7, 10, 11})
 _DEFAULT_SEARCH_STOP = 8
 _REPLICA_RESEARCH = "commons_replica_keyword_research_unverified"
 _CLASSIFICATION = "brand_family_candidate_unverified"

@@ -31,6 +31,7 @@ goldsmiths_job="watch-auth-goldsmiths-${deployment_id}"
 bobs_job="watch-auth-bobswatches-${deployment_id}"
 speedmaster_job="watch-auth-speedmaster-${deployment_id}"
 auckland_job="watch-auth-auckland-${deployment_id}"
+daytona_job="watch-auth-daytona-${deployment_id}"
 census_job="watch-auth-research-census-${deployment_id}"
 
 job_args=(
@@ -350,6 +351,34 @@ auckland_cron_args[1]=watch-auth-auckland-daily
 auckland_cron_args[5]="${auckland_job}"
 auckland_cron_args[7]='17 4 * * *'
 
+daytona_job_args=("${job_args[@]}")
+daytona_job_args[1]="${daytona_job}"
+daytona_job_args+=(--arg=--source --arg=wikimedia-daytona)
+if ibmcloud ce job get --name "${daytona_job}" --output json >/dev/null 2>&1; then
+  :
+else
+  ibmcloud ce job create "${daytona_job_args[@]}"
+fi
+verify_job "${daytona_job}" wikimedia-daytona
+
+if link_exists "${daytona_job}"; then
+  :
+else
+  link_state=$?
+  [[ "${link_state}" -eq 1 ]] || { echo "trusted-profile link inventory failed" >&2; exit 2; }
+  ibmcloud iam trusted-profile-link-create "${WATCH_AUTH_TRUSTED_PROFILE_ID}" \
+    --name "${daytona_job}" --cr-type CE \
+    --link-crn "${WATCH_AUTH_CE_PROJECT_CRN}" \
+    --link-component-type job --link-component-name "${daytona_job}" \
+    --output json >/dev/null
+  link_exists "${daytona_job}" || { echo "trusted-profile link readback failed" >&2; exit 2; }
+fi
+
+daytona_cron_args=("${cron_args[@]}")
+daytona_cron_args[1]=watch-auth-daytona-daily
+daytona_cron_args[5]="${daytona_job}"
+daytona_cron_args[7]='37 4 * * *'
+
 census_job_args=("${job_args[@]}")
 census_job_args[1]="${census_job}"
 census_job_args+=(--arg=--source --arg=research-census)
@@ -425,6 +454,12 @@ if ibmcloud ce sub cron get --name watch-auth-auckland-daily --output json >/dev
   ibmcloud ce sub cron update "${auckland_cron_args[@]}"
 else
   ibmcloud ce sub cron create "${auckland_cron_args[@]}"
+fi
+
+if ibmcloud ce sub cron get --name watch-auth-daytona-daily --output json >/dev/null 2>&1; then
+  ibmcloud ce sub cron update "${daytona_cron_args[@]}"
+else
+  ibmcloud ce sub cron create "${daytona_cron_args[@]}"
 fi
 
 if ibmcloud ce sub cron get --name watch-auth-research-census-daily --output json >/dev/null 2>&1; then
