@@ -10,7 +10,7 @@ required=(
 for name in "${required[@]}"; do
   [[ -n "${!name:-}" ]] || { echo "missing required environment variable: ${name}" >&2; exit 2; }
 done
-[[ "${WATCH_AUTH_PILOT_IMAGE_DIGEST}" == us.icr.io/watch-authenticity-3235996/pilot@sha256:* ]] || {
+[[ "${WATCH_AUTH_PILOT_IMAGE_DIGEST}" =~ ^us\.icr\.io/watch-authenticity-3235996/pilot@sha256:[0-9a-f]{64}$ ]] || {
   echo 'pilot image must be pinned to the project Registry digest' >&2; exit 2;
 }
 python3 - "${WATCH_AUTH_PILOT_PASSWORD_FILE}" <<'PY'
@@ -60,10 +60,36 @@ import json, os, sys
 app = json.load(sys.stdin)
 spec = app.get("spec", {})
 template = spec.get("template", {})
-containers = template.get("containers", [])
+pod = template.get("spec", template)
+annotations = template.get("metadata", {}).get("annotations", {})
+containers = pod.get("containers", [])
 container = containers[0] if len(containers) == 1 else {}
-if container.get("image") != os.environ["WATCH_AUTH_PILOT_IMAGE_DIGEST"]:
-    raise SystemExit("pilot image readback differs")
+resources = container.get("resources", {}).get("requests", {})
+env = {item.get("name"): item.get("value") for item in container.get("env", []) if isinstance(item, dict)}
+secrets = [item.get("secretRef", {}).get("name") for item in container.get("envFrom", []) if isinstance(item, dict)]
+secrets += [item.get("valueFrom", {}).get("secretKeyRef", {}).get("name") for item in container.get("env", []) if isinstance(item, dict)]
+expected_env = {
+    "WATCH_AUTH_COS_BUCKET": os.environ["WATCH_AUTH_COS_BUCKET"],
+    "WATCH_AUTH_COS_ENDPOINT": os.environ["WATCH_AUTH_COS_ENDPOINT"],
+    "WATCH_AUTH_COS_SERVICE_INSTANCE_ID": os.environ["WATCH_AUTH_COS_SERVICE_INSTANCE_ID"],
+    "WATCH_AUTH_TRUSTED_PROFILE_ID": os.environ["WATCH_AUTH_TRUSTED_PROFILE_ID"],
+}
+valid = (
+    container.get("image") == os.environ["WATCH_AUTH_PILOT_IMAGE_DIGEST"]
+    and set(expected_env.items()) <= set(env.items())
+    and "watch-auth-pilot-basic" in secrets
+    and pod.get("imagePullSecrets") == [{"name": os.environ["WATCH_AUTH_REGISTRY_SECRET"]}]
+    and pod.get("serviceAccountName") == app.get("metadata", {}).get("namespace", "") + "-none"
+    and pod.get("mountComputeResourceToken") is True
+    and pod.get("containerConcurrency") == 1
+    and pod.get("timeoutSeconds") == 300
+    and resources == {"cpu": "2", "memory": "8G", "ephemeral-storage": "4G"}
+    and annotations.get("autoscaling.knative.dev/minScale") == "0"
+    and annotations.get("autoscaling.knative.dev/maxScale") == "1"
+    and annotations.get("autoscaling.knative.dev/scale-down-delay") == "120"
+)
+if not valid:
+    raise SystemExit("pilot app readback differs from protected bounded configuration")
 '
 
 links=$(ibmcloud iam trusted-profile-links "${WATCH_AUTH_TRUSTED_PROFILE_ID}" --output json)

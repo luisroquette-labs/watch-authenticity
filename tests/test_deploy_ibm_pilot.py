@@ -34,6 +34,12 @@ def test_deploy_requires_private_password_and_pinned_image(tmp_path: Path) -> No
     )
     assert result.returncode == 2
     assert "pinned" in result.stderr
+    malformed = subprocess.run(
+        ["bash", str(script)],
+        env={**env, "WATCH_AUTH_PILOT_IMAGE_DIGEST": "us.icr.io/watch-authenticity-3235996/pilot@sha256:abc"},
+        capture_output=True, text=True, timeout=10,
+    )
+    assert malformed.returncode == 2
 
 
 def test_deploy_creates_protected_bounded_app_and_reuses_it(tmp_path: Path) -> None:
@@ -52,7 +58,10 @@ case "$*" in
   "ce app get"*)
     [[ -f "$APP_STATE" ]] || exit 1
     if [[ "$*" == *"--output url"* ]]; then printf 'https://pilot.example\\n';
-    else printf '{"spec":{"template":{"containers":[{"image":"%s"}]}}}' "${DRIFT_IMAGE:-$WATCH_AUTH_PILOT_IMAGE_DIGEST}"; fi
+    else cat <<JSON
+{"metadata":{"namespace":"test"},"spec":{"template":{"metadata":{"annotations":{"autoscaling.knative.dev/minScale":"${DRIFT_MIN_SCALE:-0}","autoscaling.knative.dev/maxScale":"1","autoscaling.knative.dev/scale-down-delay":"120"}},"spec":{"containers":[{"image":"${DRIFT_IMAGE:-$WATCH_AUTH_PILOT_IMAGE_DIGEST}","resources":{"requests":{"cpu":"2","memory":"8G","ephemeral-storage":"4G"}},"env":[{"name":"WATCH_AUTH_COS_BUCKET","value":"$WATCH_AUTH_COS_BUCKET"},{"name":"WATCH_AUTH_COS_ENDPOINT","value":"$WATCH_AUTH_COS_ENDPOINT"},{"name":"WATCH_AUTH_COS_SERVICE_INSTANCE_ID","value":"$WATCH_AUTH_COS_SERVICE_INSTANCE_ID"},{"name":"WATCH_AUTH_TRUSTED_PROFILE_ID","value":"$WATCH_AUTH_TRUSTED_PROFILE_ID"}],"envFrom":[{"secretRef":{"name":"${DRIFT_SECRET:-watch-auth-pilot-basic}"}}]}],"imagePullSecrets":[{"name":"$WATCH_AUTH_REGISTRY_SECRET"}],"serviceAccountName":"test-none","mountComputeResourceToken":true,"containerConcurrency":1,"timeoutSeconds":300}}}}
+JSON
+    fi
     ;;
   "ce app create"*) touch "$APP_STATE" ;;
   "iam trusted-profile-links"*)
@@ -117,4 +126,18 @@ esac
         capture_output=True, text=True, timeout=10,
     )
     assert drift.returncode != 0
-    assert "image readback differs" in drift.stderr
+    assert "app readback differs" in drift.stderr
+
+    scale_drift = subprocess.run(
+        ["bash", str(script)], env={**env, "DRIFT_MIN_SCALE": "2"},
+        capture_output=True, text=True, timeout=10,
+    )
+    assert scale_drift.returncode != 0
+    assert "app readback differs" in scale_drift.stderr
+
+    secret_drift = subprocess.run(
+        ["bash", str(script)], env={**env, "DRIFT_SECRET": "wrong-secret"},
+        capture_output=True, text=True, timeout=10,
+    )
+    assert secret_drift.returncode != 0
+    assert "app readback differs" in secret_drift.stderr
