@@ -12,6 +12,15 @@
       "applicable_angles": []
     },
     {
+      "field": "display_type",
+      "value": "digital",
+      "source_class": "official_brand",
+      "source_url": "https://www.casio.com/us/watches/casio/about/f-91w/",
+      "citation": "F91W > easy-to-read digital display",
+      "observed_at": "2026-11-22",
+      "applicable_angles": ["dial"]
+    },
+    {
       "field": "case_size_mm",
       "value": "38.2 × 35.2 × 8.5",
       "source_class": "official_brand",
