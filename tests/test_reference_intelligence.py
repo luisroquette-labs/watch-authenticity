@@ -265,6 +265,21 @@ def test_cartier_wssa0061_knowledge_separates_visible_facts_from_physical_specs(
     assert not result.authenticates_watch
 
 
+def test_cartier_wssa0018_retailer_identity_stays_inconclusive() -> None:
+    reference = "cartier-santos-wssa0018"
+    claims = load_knowledge(Path(f"config/references/{reference}.json"), reference)
+
+    assert {claim.field for claim in claims if claim.applicable_angles} == {
+        "dial_color", "date_position", "crown_stone_color",
+    }
+    assert all(claim.source_class is not SourceClass.OFFICIAL_BRAND for claim in claims)
+    assert not next(claim for claim in claims if claim.field == "calibre").applicable_angles
+    assert not next(claim for claim in claims if claim.field == "model_code").applicable_angles
+    result = assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER)
+    assert result.status is AssessmentStatus.INCONCLUSIVE
+    assert not result.authenticates_watch
+
+
 def test_cartier_official_claim_rejects_impersonated_domain() -> None:
     with pytest.raises(ValueError, match="approved domain"):
         TechnicalClaim(

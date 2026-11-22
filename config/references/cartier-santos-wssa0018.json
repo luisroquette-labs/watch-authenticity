@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "reference_id": "cartier-santos-wssa0018",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "WSSA0018",
+      "source_class": "official_retailer",
+      "source_url": "https://www.watchesofswitzerland.com/en-int/products/cartier-santos-wssa0018-17310953",
+      "citation": "Santos de Cartier Large Model > Ref. WSSA0018",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
+    },
+    {
+      "field": "model_code",
+      "value": "4072 / WSSA0018",
+      "source_class": "marketplace",
+      "source_url": "https://images1.bonhams.com/original?src=Images%2Flive%2F2023-02%2F08%2FS-28031-0-1.pdf",
+      "citation": "Watches and Wristwatches catalogue > Reference: 4072/WSSA0018",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
+    },
+    {
+      "field": "dial_color",
+      "value": "silvered opaline",
+      "source_class": "official_retailer",
+      "source_url": "https://www.watchesofswitzerland.com/en-int/products/cartier-santos-wssa0018-17310953",
+      "citation": "Product Details > silvered opaline dial",
+      "observed_at": "2026-11-22",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "date_position",
+      "value": "6 o'clock",
+      "source_class": "official_retailer",
+      "source_url": "https://www.watchesofswitzerland.com/en-int/products/cartier-santos-wssa0018-17310953",
+      "citation": "Product Details > date display at 6 o'clock",
+      "observed_at": "2026-11-22",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "crown_stone_color",
+      "value": "blue",
+      "source_class": "official_retailer",
+      "source_url": "https://www.watchesofswitzerland.com/en-int/products/cartier-santos-wssa0018-17310953",
+      "citation": "Product Details > faceted blue spinel",
+      "observed_at": "2026-11-22",
+      "applicable_angles": ["crown"]
+    },
+    {
+      "field": "calibre",
+      "value": "1847 MC",
+      "source_class": "official_retailer",
+      "source_url": "https://www.watchesofswitzerland.com/en-int/products/cartier-santos-wssa0018-17310953",
+      "citation": "Product Details > caliber 1847 MC",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
+    }
+  ]
+}
