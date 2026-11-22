@@ -10,6 +10,7 @@ import pytest
 
 from acquisition.discovery import DiscoveryCommit, append_discovery_page
 from acquisition.source_policy import (
+    authorize_candidate,
     get_source_policy,
     load_source_access_registry,
     load_source_policies,
@@ -349,6 +350,73 @@ def test_real_commons_license_shapes_are_normalized():
     assert [candidate.license_url for candidate in result.candidates] == [
         "https://creativecommons.org/licenses/by-sa/3.0/",
         "https://commons.wikimedia.org/wiki/File:Public_domain_Seiko_Prospex_SPB143J1.jpg",
+    ]
+
+
+def test_cc0_commons_license_allows_training_rights_without_authenticity_label():
+    http = MagicMock()
+    page = _page(
+        license_name="CC0",
+        license_url="https://creativecommons.org/publicdomain/zero/1.0/",
+    )
+    http.get.return_value = _Response({"query": {"pages": [page]}})
+
+    candidate = _discover(http, None).candidates[0]
+    policy = _policy()
+    decision = authorize_candidate(policy, candidate.rights, now=NOW)
+
+    assert decision.may_download and decision.may_train
+    assert candidate.rights.allowed_purposes == ("download", "train")
+    assert candidate.evidence_tier is EvidenceTier.INCONCLUSIVE
+    assert candidate.metadata.declared_reference == "unverified"
+
+
+@pytest.mark.parametrize(
+    ("license_name", "license_url"),
+    (("CC BY-SA 4.0", "https://creativecommons.org/licenses/by-sa/4.0/"),
+     ("Public domain", None),
+     ("CC0", "https://creativecommons.org/licenses/by-sa/4.0/"),
+     ("CC0", "http://creativecommons.org/publicdomain/zero/1.0/"),
+     ("CC0", "https://creativecommons.org:80/publicdomain/zero/1.0/#alternate")),
+)
+def test_other_commons_license_claims_remain_download_only(license_name, license_url):
+    http = MagicMock()
+    page = _page(license_name=license_name, license_url=license_url)
+    http.get.return_value = _Response({"query": {"pages": [page]}})
+
+    candidate = _discover(http, None).candidates[0]
+    policy = _policy()
+    decision = authorize_candidate(policy, candidate.rights, now=NOW)
+
+    assert decision.may_download and not decision.may_train
+    assert candidate.rights.allowed_purposes == ("download",)
+
+
+def test_cc0_training_grant_identity_includes_literal_license_and_file_revision():
+    canonical = _page(
+        license_name="CC0",
+        license_url="https://creativecommons.org/publicdomain/zero/1.0/",
+    )
+    noncanonical = _page(
+        license_name="CC0",
+        license_url="http://creativecommons.org/publicdomain/zero/1.0/",
+    )
+    next_revision = _page(
+        license_name="CC0",
+        license_url="https://creativecommons.org/publicdomain/zero/1.0/",
+    )
+    next_revision["imageinfo"][0]["sha1"] = "different-revision"
+
+    grants = []
+    for page in (canonical, noncanonical, next_revision):
+        http = MagicMock()
+        http.get.return_value = _Response({"query": {"pages": [page]}})
+        grants.append(_discover(http, None).candidates[0].rights)
+
+    assert len({grant.rights_record_id for grant in grants}) == 3
+    assert len({grant.evidence_sha256 for grant in grants}) == 3
+    assert [grant.allowed_purposes for grant in grants] == [
+        ("download", "train"), ("download",), ("download", "train")
     ]
 
 

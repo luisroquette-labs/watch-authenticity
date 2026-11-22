@@ -90,14 +90,14 @@
     "policy_evidence_sha256": "afd28c6fd955ee4a6f26352d1f8fb1e7f26f80b95e80c3693ef386cf22cf4d28"
   },
   {
-    "policy_id": "wikimedia-commons-licensed-v1",
+    "policy_id": "wikimedia-cc0-train-v2",
     "source": "wikimedia",
     "allowed_methods": ["official-api"],
     "may_download": true,
-    "may_train": false,
+    "may_train": true,
     "required_rights_purposes": ["download"],
     "requires_rightsholder_permission": false,
-    "policy_evidence_sha256": "c5b5d7ab2593e4076eda52b50f43f57c764cdcc1e93f5e47ed8067c7cce8ea0b"
+    "policy_evidence_sha256": "eb926d4bb4057e37c53ae7f84b52bddffd0e1dcccf7aaa0322f640792d78655e"
   },
   {
     "policy_id": "vsfactoryusa-public-private-download-v1",

@@ -67,6 +67,7 @@ _ALLOWED_LICENSES = frozenset(
         "CC BY-SA 4.0",
     }
 )
+_CC0_LICENSE_URL = "https://creativecommons.org/publicdomain/zero/1.0/"
 _TAG = re.compile(r"<[^>]*>")
 
 
@@ -271,13 +272,27 @@ def _parse_page(
     if observed_at.tzinfo is None or observed_at.utcoffset() is None:
         raise WikimediaAPIError("image timestamp must be timezone-aware")
     sha1 = _text(info.get("sha1"), "image sha1")
-    rights_evidence = {
+    license_url_entry = metadata.get("LicenseUrl")
+    raw_license_url = license_url_entry.get("value") if isinstance(license_url_entry, Mapping) else None
+    allowed_purposes = (
+        ("download", "train")
+        if license_name == "CC0" and raw_license_url == _CC0_LICENSE_URL
+        else ("download",)
+    )
+    rights_evidence: dict[str, object] = {
         "author": author,
         "license": license_name,
         "license_url": license_url,
         "source_url": source_url,
         "title": title,
     }
+    if "train" in allowed_purposes:
+        rights_evidence.update({
+            "allowed_purposes": allowed_purposes,
+            "license_url_literal": raw_license_url,
+            "image_sha1": sha1,
+            "image_timestamp": revision,
+        })
     rights_sha256 = hashlib.sha256(
         json.dumps(rights_evidence, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -285,7 +300,7 @@ def _parse_page(
         rights_record_id=f"wikimedia-{rights_sha256[:24]}",
         source="wikimedia",
         acquisition_method="official-api",
-        allowed_purposes=("download",),
+        allowed_purposes=allowed_purposes,
         effective_at=now,
         expires_at=now + timedelta(days=3650),
         required_disposition="retain",
