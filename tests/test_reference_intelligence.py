@@ -402,6 +402,19 @@ def test_forum_claim_is_counted_only_as_a_lead() -> None:
     assert not result.checks
 
 
+def test_rm88_seizure_report_loads_as_a_lead_without_authoritative_specification() -> None:
+    reference = "richardmille-rm88-smiley"
+    claims = load_knowledge(Path(f"config/references/{reference}.json"), reference)
+
+    assert {claim.source_class for claim in claims} == {SourceClass.GOVERNMENT_SEIZURE_REPORT}
+    assert all(not claim.source_class.authoritative for claim in claims)
+    result = assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER)
+    assert result.status is AssessmentStatus.INCONCLUSIVE
+    assert result.lead_count == len(claims)
+    assert not result.checks
+    assert not result.authenticates_watch
+
+
 def test_expert_claim_corroborates_but_cannot_replace_official_fact() -> None:
     official = load_knowledge(KNOWLEDGE, REFERENCE)[3]
     expert = replace(

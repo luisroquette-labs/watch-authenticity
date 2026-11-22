@@ -13,7 +13,7 @@
     },
     {
       "field": "limited_edition_quantity",
-      "value": 50,
+      "value": "50",
       "source_class": "government_seizure_report",
       "source_url": "https://www.cbp.gov/newsroom/local-media-release/37-million-dollar-fake-richard-mille-watch-seized-cincinnati-cbp",
       "citation": "CBP release, 2023-11-21: limited edition was produced only 50 times",

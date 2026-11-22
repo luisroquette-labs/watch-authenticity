@@ -29,6 +29,7 @@ class SourceClass(Enum):
     OFFICIAL_BRAND = "official_brand"
     OFFICIAL_RETAILER = "official_retailer"
     NAMED_EXPERT = "named_expert"
+    GOVERNMENT_SEIZURE_REPORT = "government_seizure_report"
     FORUM = "forum"
     MARKETPLACE = "marketplace"
 
