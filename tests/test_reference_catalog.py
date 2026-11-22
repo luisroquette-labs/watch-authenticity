@@ -78,8 +78,9 @@ def test_patek_5740_is_pending_without_training_admission(catalog_fixture):
         catalog_fixture.catalog.head_for(entry.reference_id)
 
 
-def test_cartier_santos_knowledge_is_catalogued_but_not_released(catalog_fixture):
-    entry = catalog_fixture.catalog.entry_for("cartier-santos-wssa0061")
+@pytest.mark.parametrize("reference", ("cartier-santos-wssa0061", "cartier-santos-wssa0018"))
+def test_cartier_santos_knowledge_is_catalogued_but_not_released(catalog_fixture, reference):
+    entry = catalog_fixture.catalog.entry_for(reference)
 
     assert entry.brand == "cartier"
     assert entry.family == "santos"
