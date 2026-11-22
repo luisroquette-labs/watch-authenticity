@@ -17,6 +17,7 @@ _OFFICIAL_DOMAINS = {
     "cartier": "cartier.com", "seiko": "seikowatches.com",
     "casio": "casio.com",
     "audemarspiguet": "audemarspiguet.com",
+    "richardmille": "richardmille.com",
 }
 
 
@@ -29,6 +30,7 @@ class SourceClass(Enum):
     OFFICIAL_BRAND = "official_brand"
     OFFICIAL_RETAILER = "official_retailer"
     NAMED_EXPERT = "named_expert"
+    INDUSTRY_ORGANIZATION = "industry_organization"
     GOVERNMENT_SEIZURE_REPORT = "government_seizure_report"
     FORUM = "forum"
     MARKETPLACE = "marketplace"
@@ -40,7 +42,11 @@ class SourceClass(Enum):
 
     @property
     def corroborating(self) -> bool:
-        return self in {SourceClass.OFFICIAL_RETAILER, SourceClass.NAMED_EXPERT}
+        return self in {
+            SourceClass.OFFICIAL_RETAILER,
+            SourceClass.NAMED_EXPERT,
+            SourceClass.INDUSTRY_ORGANIZATION,
+        }
 
 
 class CheckStatus(Enum):

@@ -402,16 +402,23 @@ def test_forum_claim_is_counted_only_as_a_lead() -> None:
     assert not result.checks
 
 
-def test_rm88_seizure_report_loads_as_a_lead_without_authoritative_specification() -> None:
+def test_rm88_sources_keep_seizure_and_industry_claims_separate_from_official_specification() -> None:
     reference = "richardmille-rm88-smiley"
     claims = load_knowledge(Path(f"config/references/{reference}.json"), reference)
 
-    assert {claim.source_class for claim in claims} == {SourceClass.GOVERNMENT_SEIZURE_REPORT}
-    assert all(not claim.source_class.authoritative for claim in claims)
+    assert len(claims) == 8
+    assert sum(claim.source_class is SourceClass.GOVERNMENT_SEIZURE_REPORT for claim in claims) == 2
+    assert sum(claim.source_class is SourceClass.INDUSTRY_ORGANIZATION for claim in claims) == 5
+    assert [claim.field for claim in claims if claim.source_class.authoritative] == ["movement_type"]
+    assert {claim.field for claim in claims if claim.applicable_angles} == {
+        "crown_motif", "caseback_transparency"
+    }
     result = assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER)
     assert result.status is AssessmentStatus.INCONCLUSIVE
-    assert result.lead_count == len(claims)
-    assert not result.checks
+    assert result.lead_count == 2
+    assert result.corroboration_count == 5
+    assert len(result.checks) == 1
+    assert result.checks[0].status is CheckStatus.UNOBSERVABLE
     assert not result.authenticates_watch
 
 
