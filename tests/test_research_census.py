@@ -36,7 +36,7 @@ class COS:
         return True
 
 
-def _seed(cos, *, offset=0, source_offset=None, query=6):
+def _seed(cos, *, offset=0, source_offset=None, query=6, reference="unverified"):
     files = []
     for index in range(offset, offset + 2):
         receipt = {
@@ -46,7 +46,7 @@ def _seed(cos, *, offset=0, source_offset=None, query=6):
             "policy_id": "wikimedia-commons-licensed-v1",
             "raw_sha256": f"{index + 1:064x}",
             "derivative_sha256": f"{index + 3:064x}",
-            "declared_reference": "unverified",
+            "declared_reference": reference,
             "proposed_label": None,
             "proposed_grade": None,
         }
@@ -59,7 +59,7 @@ def _seed(cos, *, offset=0, source_offset=None, query=6):
     manifest = {
         "schema": "watch-auth-research-entity-v1",
         "source": "wikimedia",
-        "reference": "unverified",
+        "reference": reference,
         "physical_watch_group": "probable-one-watch",
         "visual_basis": "Front and rear appear to depict one piece; provisional.",
         "physical_watch_count_probable": 1,
@@ -109,6 +109,12 @@ def test_census_reads_paginated_receipts_and_persists_research_only_counts():
     assert report["probable_watch_count"] == 1
     assert report["confirmed_watch_count"] == 0
     assert report["training_admission_count"] == 0
+    assert report["schema"] == "watch-auth-research-census-v2"
+    assert report["provisional_cells"] == [
+        {"source": "wikimedia", "reference_claim": "unverified", "probable_watch_count": 1,
+         "file_count": 2}
+    ]
+    assert report["file_role_claim_counts"] == {"caseback": 1, "front": 1}
     assert len([key for key in cos.bodies if "/research-census/" in key]) == 1
 
 
@@ -124,6 +130,27 @@ def test_census_counts_multiple_watches_in_one_photo_without_admission():
     assert report["probable_watch_count"] == 3
     assert report["confirmed_watch_count"] == 0
     assert report["training_admission_count"] == 0
+    assert report["provisional_cells"] == [
+        {"source": "wikimedia", "reference_claim": "unverified", "probable_watch_count": 3,
+         "file_count": 3}
+    ]
+    assert report["file_role_claim_counts"] == {"caseback": 2, "front": 1}
+
+
+def test_census_separates_provisional_reference_claims_without_admitting_them():
+    cos = COS()
+    _seed(cos)
+    _seed(cos, offset=2, reference="casio-f91w")
+
+    report = run_research_census_once(cos, "private", "datasets", now=NOW)
+
+    assert report["provisional_cells"] == [
+        {"source": "wikimedia", "reference_claim": "casio-f91w",
+         "probable_watch_count": 1, "file_count": 2},
+        {"source": "wikimedia", "reference_claim": "unverified",
+         "probable_watch_count": 1, "file_count": 2},
+    ]
+    assert report["confirmed_watch_count"] == report["training_admission_count"] == 0
 
 
 def test_census_accepts_legacy_slash_hash_receipts_in_inventory():
@@ -196,6 +223,38 @@ def test_late_manifest_creates_immutable_revision_without_rewriting_terminal():
     revisions = [key for key in cos.bodies if "/research-census/" in key and "/revisions/" in key]
     assert len(revisions) == 1
     assert json.loads(cos.bodies[revisions[0]]) == revised
+
+
+def test_legacy_terminal_creates_v2_revision_without_rewriting_it():
+    cos = COS()
+    _seed(cos)
+    first = run_research_census_once(cos, "private", "datasets", now=NOW)
+    key = next(key for key in cos.bodies if key.endswith("/terminal.json"))
+    legacy = {k: v for k, v in first.items()
+              if k not in {"provisional_cells", "file_role_claim_counts"}}
+    legacy["schema"] = "watch-auth-research-census-v1"
+    cos.bodies[key] = json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
+
+    report = run_research_census_once(cos, "private", "datasets", now=NOW)
+
+    assert report == first
+    assert json.loads(cos.bodies[key]) == legacy
+    revisions = [key for key in cos.bodies if "/revisions/" in key]
+    assert len(revisions) == 1
+    assert json.loads(cos.bodies[revisions[0]]) == report
+
+
+def test_census_rejects_tampered_v2_terminal_breakdown():
+    cos = COS()
+    _seed(cos)
+    run_research_census_once(cos, "private", "datasets", now=NOW)
+    key = next(key for key in cos.bodies if key.endswith("/terminal.json"))
+    tampered = json.loads(cos.bodies[key])
+    tampered["file_role_claim_counts"]["front"] = 2
+    cos.bodies[key] = json.dumps(tampered, sort_keys=True).encode()
+
+    with pytest.raises(RuntimeError, match="incompatible terminal"):
+        run_research_census_once(cos, "private", "datasets", now=NOW)
 
 
 def test_census_fails_before_persisting_corrupt_receipt():
