@@ -138,7 +138,10 @@ class PilotService:
             "verdict": "inconclusivo",
             "replica_probability": None,
             "message": message,
-            "next_photo": "Mostrador de frente e em foco, com a marca legível.",
+            "next_photo": (
+                "Para identificar a peça, confirme marca e referência presencialmente "
+                "na gravação e documentação; esta prévia não lê esses detalhes."
+            ),
             "model_invoked": True,
             "detected_angle": "dial",
             "angle_mismatch": False,
@@ -309,9 +312,12 @@ def analyze_batch(
     missing_angles = sorted(ANGLES - observed_angles)
     next_useful_angle = (
         None
-        if model_checked_images == 0
-        and verdict == "inconclusivo"
-        and any(angle == "dial" for angle, _, _ in encoded_images)
+        if (isinstance(service, PilotService) and model_checked_images > 0)
+        or (
+            model_checked_images == 0
+            and verdict == "inconclusivo"
+            and any(angle == "dial" for angle, _, _ in encoded_images)
+        )
         else "dial"
     )
     examined_next_photo = next(
@@ -324,10 +330,10 @@ def analyze_batch(
         ),
         None,
     )
-    next_useful_photo = (
+    next_useful_photo = examined_next_photo or (
         "Esta prévia não examinou o relógio; confirme marca e referência presencialmente."
         if next_useful_angle is None
-        else examined_next_photo or "Mostrador de frente e em foco, com a marca legível."
+        else "Mostrador de frente e em foco, com a marca legível."
     )
     cited_facts = {
         (check["field"], check["url"])
