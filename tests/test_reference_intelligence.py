@@ -52,6 +52,21 @@ def test_datejust_126334_knowledge_does_not_universalize_variant_features() -> N
     assert not result.authenticates_watch
 
 
+def test_daytona_126506_knowledge_identifies_visible_design_without_authentication() -> None:
+    reference = "rolex-daytona-126506"
+    claims = load_knowledge(Path(f"config/references/{reference}.json"), reference)
+
+    assert {claim.field for claim in claims if claim.applicable_angles} == {
+        "dial_color", "bezel_type", "caseback_type"
+    }
+    for field in ("case_material", "calibre", "bezel_material", "caseback_coating"):
+        assert not next(claim for claim in claims if claim.field == field).applicable_angles
+    assert all(claim.source_class is SourceClass.OFFICIAL_BRAND for claim in claims)
+    result = assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER)
+    assert result.status is AssessmentStatus.INCONCLUSIVE
+    assert not result.authenticates_watch
+
+
 def test_patek_5811_knowledge_is_cited_without_authenticity_coverage() -> None:
     reference = "patek-nautilus-58111g001"
     claims = load_knowledge(Path("config/references/patek-nautilus-58111g001.json"), reference)

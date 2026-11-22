@@ -53,6 +53,19 @@ def test_patek_reference_is_research_only_without_admitted_head(catalog_fixture)
         catalog_fixture.catalog.head_for(entry.reference_id)
 
 
+def test_daytona_126506_is_research_only_without_admitted_head(catalog_fixture):
+    entry = catalog_fixture.catalog.entry_for("rolex-daytona-126506")
+    assert (entry.brand, entry.family, entry.reference) == (
+        "rolex", "daytona", "126506"
+    )
+    assert entry.status == "pending"
+    assert entry.head is None
+    assert entry.gold_freeze_sha256 is None
+    assert entry.holdout_freeze_sha256 is None
+    with pytest.raises(ReferenceNotAdmitted):
+        catalog_fixture.catalog.head_for(entry.reference_id)
+
+
 def test_patek_5740_is_pending_without_training_admission(catalog_fixture):
     entry = catalog_fixture.catalog.entry_for("patek-nautilus-57401g001")
     assert entry.brand == "patek"
