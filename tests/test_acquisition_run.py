@@ -12,11 +12,12 @@ import pytest
 from acquisition.collect import DownloadRateLimited, UnsafeImage
 from acquisition.discovery import DiscoveryPage, DiscoveryRecord
 from acquisition.run import (
+    main,
     run_metadata_discovery_once,
     run_metadata_discovery_resilient,
     run_public_image_collection_once,
+    run_wikimedia_lanes,
     run_wikimedia_once,
-    run_wikimedia_replica_lanes,
 )
 from acquisition.source_policy import load_source_access_registry
 from acquisition.types import CollectionAuthorizationRecord, SourcePolicy
@@ -156,7 +157,19 @@ def test_wikimedia_lane_has_independent_checkpoint(cos, monkeypatch):
     assert "datasets/lanes/auckland-oyster/research/discovery/2026-11-10/wikimedia/children/root.json" in cos.bodies
 
 
-def test_replica_job_advances_datejust_and_daytona_with_separate_cursors(cos, monkeypatch):
+@pytest.mark.parametrize("lanes,expected", [
+    (
+        (("daytona/replica-research", (10, 12)), ("datejust/replica-research", (7, 8))),
+        [("datasets/lanes/daytona/replica-research", 10, (10, 12)),
+         ("datasets/lanes/datejust/replica-research", 10, (7, 8))],
+    ),
+    (
+        (("speedmaster/replica-research", (6, 7)), ("classic-speedmaster/research", (9, 10))),
+        [("datasets/lanes/speedmaster/replica-research", 10, (6, 7)),
+         ("datasets/lanes/classic-speedmaster/research", 10, (9, 10))],
+    ),
+])
+def test_wikimedia_job_advances_two_lanes_with_separate_cursors(cos, monkeypatch, lanes, expected):
     access = load_source_access_registry(Path(__file__).resolve().parents[1] / "config/source_access.json")["wikimedia"]
     observed = []
 
@@ -169,20 +182,44 @@ def test_replica_job_advances_datejust_and_daytona_with_separate_cursors(cos, mo
 
     monkeypatch.setattr("acquisition.run.discover_wikimedia", discover)
     monkeypatch.setattr("acquisition.run.run_wikimedia_once", run)
-    run_wikimedia_replica_lanes(
+    run_wikimedia_lanes(
         cos, "private", "datasets", cast(SourcePolicy, SimpleNamespace()), access, now=NOW,
+        lanes=lanes,
     )
 
-    assert observed == [
-        ("datasets/lanes/daytona/replica-research", 10, (10, 12)),
-        ("datasets/lanes/datejust/replica-research", 10, (7, 8)),
-    ]
+    assert observed == expected
     with pytest.raises(RuntimeError, match="rate limit"):
-        run_wikimedia_replica_lanes(
+        run_wikimedia_lanes(
             cos, "private", "datasets", cast(SourcePolicy, SimpleNamespace()),
-            replace(access, requests_per_minute=7), now=NOW,
+            replace(access, requests_per_minute=7), now=NOW, lanes=lanes,
         )
     assert len(observed) == 2
+
+
+def test_speedmaster_daily_entry_advances_replica_and_classic_lanes(cos, monkeypatch):
+    for name in (
+        "WATCH_AUTH_COS_BUCKET", "WATCH_AUTH_COS_ENDPOINT", "WATCH_AUTH_COS_SERVICE_INSTANCE_ID",
+        "WATCH_AUTH_TRUSTED_PROFILE_ID", "WATCH_AUTH_ACCOUNT_ID", "WATCH_AUTH_IAM_READER_POLICY_ID",
+    ):
+        monkeypatch.setenv(name, "test-value")
+    monkeypatch.setattr("ibm_cloud_sdk_core.authenticators.ContainerAuthenticator", lambda **_: object())
+    monkeypatch.setattr("acquisition.run.create_oauth_cos_client", lambda *_args, **_kwargs: cos)
+    monkeypatch.setattr("acquisition.run.AtomicCOSClient", lambda client: client)
+    monkeypatch.setattr("acquisition.run.verify_no_public_access_policies", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("acquisition.run.verify_private_versioned_bucket", lambda *_args: None)
+    monkeypatch.setattr("acquisition.run.discover_wikimedia", lambda *_args, query_range, **_kwargs: query_range)
+    observed = []
+
+    def run(_cos, _bucket, prefix, _policy, lane_access, **kwargs):
+        observed.append((prefix, lane_access.requests_per_minute, kwargs["discover"]()))
+
+    monkeypatch.setattr("acquisition.run.run_wikimedia_once", run)
+    main("wikimedia-speedmaster")
+
+    assert observed == [
+        ("datasets/lanes/speedmaster/replica-research", 10, (6, 7)),
+        ("datasets/lanes/classic-speedmaster/research", 10, (9, 10)),
+    ]
 
 
 def test_replica_job_attempts_datejust_after_daytona_failure(cos, monkeypatch):
@@ -196,8 +233,10 @@ def test_replica_job_attempts_datejust_after_daytona_failure(cos, monkeypatch):
 
     monkeypatch.setattr("acquisition.run.run_wikimedia_once", run)
     with pytest.raises(ExceptionGroup) as error:
-        run_wikimedia_replica_lanes(
+        run_wikimedia_lanes(
             cos, "private", "datasets", cast(SourcePolicy, SimpleNamespace()), access, now=NOW,
+            lanes=(("daytona/replica-research", (10, 12)),
+                   ("datejust/replica-research", (7, 8))),
         )
 
     assert observed == [

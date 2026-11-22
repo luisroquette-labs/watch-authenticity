@@ -172,7 +172,7 @@ def run_wikimedia_once(
     return status
 
 
-def run_wikimedia_replica_lanes(
+def run_wikimedia_lanes(
     cos_client: Any,
     bucket: str,
     prefix: str,
@@ -180,17 +180,18 @@ def run_wikimedia_replica_lanes(
     access: SourceAccessRecord,
     *,
     now: datetime,
+    lanes: tuple[tuple[str, tuple[int, int]], ...],
 ) -> None:
-    """Advance Datejust and Daytona independently within one source request budget."""
-    if access.requests_per_minute is None or access.requests_per_minute < 8:
-        raise RuntimeError("Wikimedia rate limit cannot cover both replica lanes")
-    lane_limit = access.requests_per_minute // 2
+    """Advance independent Commons lanes within one source request budget."""
+    if not lanes or access.requests_per_minute is None or access.requests_per_minute < 4 * len(lanes):
+        raise RuntimeError("Wikimedia rate limit cannot cover all lanes")
+    lane_limit = access.requests_per_minute // len(lanes)
     lane_access = replace(access, requests_per_minute=lane_limit)
     errors: list[Exception] = []
-    for lane, query_range in (("daytona", (10, 12)), ("datejust", (7, 8))):
+    for lane, query_range in lanes:
         try:
             run_wikimedia_once(
-                cos_client, bucket, f"{prefix}/lanes/{lane}/replica-research",
+                cos_client, bucket, f"{prefix}/lanes/{lane}",
                 policy, lane_access, now=now, api_client=requests.Session(),
                 image_client=PinnedRequestsClient(requests_per_minute=lane_limit - 1),
                 discover=lambda *args, _query_range=query_range, **kwargs: discover_wikimedia(
@@ -200,7 +201,7 @@ def run_wikimedia_replica_lanes(
         except Exception as exc:
             errors.append(exc)
     if errors:
-        raise ExceptionGroup("Wikimedia replica lanes failed", errors)
+        raise ExceptionGroup("Wikimedia lanes failed", errors)
 
 
 def _active_cycle(
@@ -896,18 +897,11 @@ def main(source: str = "all") -> None:
         return
     if source == "wikimedia-speedmaster":
         access = access_registry["wikimedia"]
-        if access.requests_per_minute is None or access.requests_per_minute < 4:
-            raise RuntimeError("Wikimedia rate limit cannot cover API and image retries")
-        run_wikimedia_once(
-            cos,
-            bucket,
-            f"{prefix}/lanes/speedmaster/replica-research",
-            get_source_policy(policies, "wikimedia"),
-            access,
+        run_wikimedia_lanes(
+            cos, bucket, prefix, get_source_policy(policies, "wikimedia"), access,
             now=now,
-            api_client=requests.Session(),
-            image_client=PinnedRequestsClient(requests_per_minute=access.requests_per_minute - 1),
-            discover=lambda *args, **kwargs: discover_wikimedia(*args, **kwargs, query_range=(6, 7)),
+            lanes=(("speedmaster/replica-research", (6, 7)),
+                   ("classic-speedmaster/research", (9, 10))),
         )
         return
     if source == "wikimedia-auckland":
@@ -936,8 +930,10 @@ def main(source: str = "all") -> None:
         return
     if source == "wikimedia-daytona":
         access = access_registry["wikimedia"]
-        run_wikimedia_replica_lanes(
+        run_wikimedia_lanes(
             cos, bucket, prefix, get_source_policy(policies, "wikimedia"), access, now=now,
+            lanes=(("daytona/replica-research", (10, 12)),
+                   ("datejust/replica-research", (7, 8))),
         )
         return
     if source == "wikimedia-royal-oak":
