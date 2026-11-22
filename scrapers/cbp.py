@@ -19,7 +19,8 @@ _HOST = "www.cbp.gov"
 _INDEX = "https://www.cbp.gov/sitemap.xml"
 _MAX_ARTICLES = 5
 _MAX_EMPTY_SITEMAP_PAGES = 8
-_WATCH = re.compile(r"watch|rolex", re.I)
+_WATCH = re.compile(r"watch|rolex|cartier|omega|patek|seiko|audemars|richard-mille", re.I)
+_WATCH_CONTEXT = re.compile(r"\b(?:watches?|wristwatches?|timepieces?)\b", re.I)
 _SEIZURE = re.compile(r"counterfeit|fake|knockoff|seiz", re.I)
 
 
@@ -33,6 +34,7 @@ class _BodyImages(HTMLParser):
         self.depth = 0
         self.stopped = False
         self.images: list[tuple[str, str]] = []
+        self.body_text: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = dict(attrs)
@@ -49,6 +51,10 @@ class _BodyImages(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag == "div" and self.depth:
             self.depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self.depth and not self.stopped:
+            self.body_text.append(data)
 
 
 def _xml_locations(body: bytes, root_name: str) -> list[str]:
@@ -159,6 +165,9 @@ def discover_cbp(
             continue
         parser = _BodyImages()
         parser.feed(text)
+        if not re.search(r"watch|rolex", url, re.I) and not _WATCH_CONTEXT.search(" ".join(parser.body_text)):
+            last_url = url
+            continue
         images = tuple(dict.fromkeys(
             image for src, _alt in parser.images if (image := _image_url(src)) is not None
         ))
