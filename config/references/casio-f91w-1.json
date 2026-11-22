@@ -73,6 +73,15 @@
       "citation": "Specifications > Watch Features > Light",
       "observed_at": "2026-11-22",
       "applicable_angles": []
+    },
+    {
+      "field": "module_guide_number",
+      "value": "593",
+      "source_class": "official_brand",
+      "source_url": "https://www.casio.com/sg/watches/casio/support.F-91W-1/",
+      "citation": "F-91W-1 support page > User's Guide PDF > /pdf/5/593/qw593_EN.pdf",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
     }
   ]
 }
