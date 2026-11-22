@@ -252,6 +252,37 @@ def test_royal_oak_research_keeps_licensed_photo_unverified(cos):
     assert result.candidates[0].evidence_tier is EvidenceTier.INCONCLUSIVE
     assert result.page.next_cursor is None
 
+
+def test_counterfeit_category_keeps_mixed_brands_as_unverified_research(cos):
+    http = MagicMock()
+    montblanc = _page()
+    montblanc["title"] = "File:Chronograph watch.jpeg"
+    montblanc["imageinfo"][0]["extmetadata"]["ImageDescription"] = {
+        "value": "Illegal copy of a Montblanc Timewalker chronograph watch"
+    }
+    patek = _page(license_name="CC BY 3.0", license_url="https://creativecommons.org/licenses/by/3.0/")
+    patek["pageid"] = 124
+    patek["title"] = "File:Illegal copy of Patek-Phillipe wristwatch.jpg"
+    patek["imageinfo"][0]["sha1"] = "patek-sha"
+    http.get.return_value = _Response({"query": {"pages": [montblanc, patek]}})
+
+    result = _discover(http, cos, query_range=(13, 14))
+
+    assert http.get.call_args.kwargs["params"]["gsrsearch"] == (
+        'incategory:"Illegal copies of watches of quality brands"'
+    )
+    assert len(result.candidates) == 2
+    assert result.page.next_cursor is None
+    assert all(candidate.evidence_tier is EvidenceTier.INCONCLUSIVE for candidate in result.candidates)
+    assert all(candidate.metadata.declared_reference == "unverified" for candidate in result.candidates)
+    assert all(candidate.rights.allowed_purposes == ("download",) for candidate in result.candidates)
+    assert all(propose_source_label(candidate.metadata.source, listing_text=candidate.metadata.listing_text) is None
+               for candidate in result.candidates)
+    assert dict(result.page.records[0].metadata)["brand_claim_from_text"] == "unverified"
+    assert dict(result.page.records[0].metadata)["research_category"] == (
+        "Illegal copies of watches of quality brands"
+    )
+
 def test_real_commons_license_shapes_are_normalized():
     http = MagicMock()
     http.get.return_value = _Response(

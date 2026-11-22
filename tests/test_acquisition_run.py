@@ -222,6 +222,29 @@ def test_speedmaster_daily_entry_advances_replica_and_classic_lanes(cos, monkeyp
     ]
 
 
+def test_counterfeit_category_entry_uses_separate_research_lane(cos, monkeypatch):
+    for name in (
+        "WATCH_AUTH_COS_BUCKET", "WATCH_AUTH_COS_ENDPOINT", "WATCH_AUTH_COS_SERVICE_INSTANCE_ID",
+        "WATCH_AUTH_TRUSTED_PROFILE_ID", "WATCH_AUTH_ACCOUNT_ID", "WATCH_AUTH_IAM_READER_POLICY_ID",
+    ):
+        monkeypatch.setenv(name, "test-value")
+    monkeypatch.setattr("ibm_cloud_sdk_core.authenticators.ContainerAuthenticator", lambda **_: object())
+    monkeypatch.setattr("acquisition.run.create_oauth_cos_client", lambda *_args, **_kwargs: cos)
+    monkeypatch.setattr("acquisition.run.AtomicCOSClient", lambda client: client)
+    monkeypatch.setattr("acquisition.run.verify_no_public_access_policies", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("acquisition.run.verify_private_versioned_bucket", lambda *_args: None)
+    monkeypatch.setattr("acquisition.run.discover_wikimedia", lambda *_args, query_range, **_kwargs: query_range)
+    observed = []
+
+    def run(_cos, _bucket, prefix, _policy, lane_access, **kwargs):
+        observed.append((prefix, lane_access.requests_per_minute, kwargs["discover"]()))
+
+    monkeypatch.setattr("acquisition.run.run_wikimedia_once", run)
+    main("wikimedia-counterfeit-category")
+
+    assert observed == [("datasets/lanes/counterfeit-category/research", 20, (13, 14))]
+
+
 def test_replica_job_attempts_datejust_after_daytona_failure(cos, monkeypatch):
     access = load_source_access_registry(Path(__file__).resolve().parents[1] / "config/source_access.json")["wikimedia"]
     observed = []

@@ -817,7 +817,7 @@ def main(source: str = "all") -> None:
     root = Path(__file__).resolve().parents[1]
     policies = load_source_policies(root / "config/source_policies.json")
     access_registry = load_source_access_registry(root / "config/source_access.json")
-    if source not in {"all", "supercloneluxury", "cbp", "goldsmiths", "bobswatches", "wikimedia-speedmaster", "wikimedia-auckland", "wikimedia-classic-speedmaster", "wikimedia-daytona", "wikimedia-royal-oak", "research-census"}:
+    if source not in {"all", "supercloneluxury", "cbp", "goldsmiths", "bobswatches", "wikimedia-speedmaster", "wikimedia-auckland", "wikimedia-classic-speedmaster", "wikimedia-daytona", "wikimedia-royal-oak", "wikimedia-counterfeit-category", "research-census"}:
         raise ValueError("unsupported acquisition source")
     logging.basicConfig(level=logging.INFO)
     now = datetime.now(timezone.utc)
@@ -948,6 +948,18 @@ def main(source: str = "all") -> None:
             discover=lambda *args, **kwargs: discover_wikimedia(*args, **kwargs, query_range=(12, 13)),
         )
         return
+    if source == "wikimedia-counterfeit-category":
+        access = access_registry["wikimedia"]
+        if access.requests_per_minute is None or access.requests_per_minute < 4:
+            raise RuntimeError("Wikimedia rate limit cannot cover API and image retries")
+        run_wikimedia_once(
+            cos, bucket, f"{prefix}/lanes/counterfeit-category/research",
+            get_source_policy(policies, "wikimedia"), access,
+            now=now, api_client=requests.Session(),
+            image_client=PinnedRequestsClient(requests_per_minute=access.requests_per_minute - 1),
+            discover=lambda *args, **kwargs: discover_wikimedia(*args, **kwargs, query_range=(13, 14)),
+        )
+        return
     image_requests_per_minute = access_registry["wikimedia"].requests_per_minute
     if image_requests_per_minute is None or image_requests_per_minute < 2:
         raise RuntimeError("Wikimedia rate limit cannot reserve the API request")
@@ -1068,5 +1080,5 @@ def main(source: str = "all") -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", choices=("all", "supercloneluxury", "cbp", "goldsmiths", "bobswatches", "wikimedia-speedmaster", "wikimedia-auckland", "wikimedia-classic-speedmaster", "wikimedia-daytona", "wikimedia-royal-oak", "research-census"), default="all")
+    parser.add_argument("--source", choices=("all", "supercloneluxury", "cbp", "goldsmiths", "bobswatches", "wikimedia-speedmaster", "wikimedia-auckland", "wikimedia-classic-speedmaster", "wikimedia-daytona", "wikimedia-royal-oak", "wikimedia-counterfeit-category", "research-census"), default="all")
     main(parser.parse_args().source)
