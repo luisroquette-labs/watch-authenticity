@@ -59,10 +59,8 @@ def test_daytona_126506_knowledge_identifies_visible_design_without_authenticati
     assert {claim.field for claim in claims if claim.applicable_angles} == {
         "dial_color", "bezel_type", "caseback_type"
     }
-    assert not next(
-        claim for claim in claims if claim.field == "case_material"
-    ).applicable_angles
-    assert not next(claim for claim in claims if claim.field == "calibre").applicable_angles
+    for field in ("case_material", "calibre", "bezel_material", "caseback_coating"):
+        assert not next(claim for claim in claims if claim.field == field).applicable_angles
     assert all(claim.source_class is SourceClass.OFFICIAL_BRAND for claim in claims)
     result = assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER)
     assert result.status is AssessmentStatus.INCONCLUSIVE

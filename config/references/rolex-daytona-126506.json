@@ -22,7 +22,7 @@
     },
     {
       "field": "bezel_type",
-      "value": "chestnut brown Cerachrom tachymetric bezel",
+      "value": "chestnut brown tachymetric bezel",
       "source_class": "official_brand",
       "source_url": "https://www.rolex.com/en-us/watches/cosmograph-daytona/m126506-0001",
       "citation": "More Cosmograph Daytona technical details > Model case > Bezel",
@@ -30,13 +30,31 @@
       "applicable_angles": ["dial"]
     },
     {
+      "field": "bezel_material",
+      "value": "Cerachrom ceramic",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/cosmograph-daytona/m126506-0001",
+      "citation": "More Cosmograph Daytona technical details > Model case > Bezel",
+      "observed_at": "2026-11-21",
+      "applicable_angles": []
+    },
+    {
       "field": "caseback_type",
-      "value": "transparent with anti-reflective coating",
+      "value": "transparent",
       "source_class": "official_brand",
       "source_url": "https://www.rolex.com/en-us/watches/cosmograph-daytona/m126506-0001",
       "citation": "More Cosmograph Daytona technical details > Model case > Case back",
       "observed_at": "2026-11-21",
       "applicable_angles": ["caseback"]
+    },
+    {
+      "field": "caseback_coating",
+      "value": "anti-reflective",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/cosmograph-daytona/m126506-0001",
+      "citation": "More Cosmograph Daytona technical details > Model case > Case back",
+      "observed_at": "2026-11-21",
+      "applicable_angles": []
     },
     {
       "field": "case_material",
