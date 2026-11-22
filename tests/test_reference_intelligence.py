@@ -130,12 +130,22 @@ def test_casio_f91w_official_claims_do_not_authenticate_research_photos() -> Non
     reference = "casio-f91w-1"
     claims = load_knowledge(Path(f"config/references/{reference}.json"), reference)
 
-    assert len(claims) == 7
+    assert len(claims) == 8
     assert all(claim.source_class is SourceClass.OFFICIAL_BRAND for claim in claims)
-    assert all(not claim.applicable_angles for claim in claims)
+    assert [(claim.field, claim.applicable_angles) for claim in claims if claim.applicable_angles] == [
+        ("display_type", (Angle.DIAL,))
+    ]
     result = assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER)
     assert result.status is AssessmentStatus.INCONCLUSIVE
     assert not result.authenticates_watch
+    visible = assess_reference(
+        reference,
+        claims,
+        (VisualObservation("display_type", "digital", Angle.DIAL, True),),
+        minimum_source_date=FRESH_AFTER,
+    )
+    assert visible.status is AssessmentStatus.CONSISTENT
+    assert not visible.authenticates_watch
 
 
 def test_casio_official_claim_rejects_impersonated_domain() -> None:
