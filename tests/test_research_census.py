@@ -74,6 +74,29 @@ def _seed(cos, *, offset=0, source_offset=None, query=6):
     cos.bodies[f"datasets/research-entities/wikimedia/2026-11-20/{digest}.json"] = body
 
 
+def _seed_multi(cos):
+    _seed(cos, offset=10)
+    key = next(key for key, body in cos.bodies.items()
+               if "/research-entities/" in key and '"candidate-10"' in body.decode())
+    manifest = json.loads(cos.bodies.pop(key))
+    manifest.update(
+        schema="watch-auth-research-entity-v2",
+        physical_watch_group="probable-multiple-watches",
+        physical_watch_count_probable=2,
+        content_file_count=1,
+        files=manifest["files"][:1],
+        instances=[
+            {"ordinal": 1, "box_permille": [10, 20, 480, 980],
+             "visual_basis": "Left watch visible."},
+            {"ordinal": 2, "box_permille": [520, 20, 990, 980],
+             "visual_basis": "Right watch visible."},
+        ],
+    )
+    body = json.dumps(manifest, sort_keys=True).encode()
+    digest = hashlib.sha256(body).hexdigest()
+    cos.bodies[f"datasets/research-entities/wikimedia/2026-11-20/{digest}.json"] = body
+
+
 def test_census_reads_paginated_receipts_and_persists_research_only_counts():
     cos = COS()
     _seed(cos)
@@ -87,6 +110,20 @@ def test_census_reads_paginated_receipts_and_persists_research_only_counts():
     assert report["confirmed_watch_count"] == 0
     assert report["training_admission_count"] == 0
     assert len([key for key in cos.bodies if "/research-census/" in key]) == 1
+
+
+def test_census_counts_multiple_watches_in_one_photo_without_admission():
+    cos = COS()
+    _seed(cos)
+    _seed_multi(cos)
+
+    report = run_research_census_once(cos, "private", "datasets", now=NOW)
+
+    assert report["manifest_count"] == 2
+    assert report["file_count"] == 3
+    assert report["probable_watch_count"] == 3
+    assert report["confirmed_watch_count"] == 0
+    assert report["training_admission_count"] == 0
 
 
 def test_census_accepts_legacy_slash_hash_receipts_in_inventory():

@@ -52,6 +52,24 @@ def _read(manifest, receipts):
     return read_research_entity_manifest(json.dumps(manifest, sort_keys=True).encode(), receipts)
 
 
+def _multi_fixture():
+    manifest, receipts = _fixture()
+    manifest.update(
+        schema="watch-auth-research-entity-v2",
+        physical_watch_group="probable-multiple-watches",
+        physical_watch_count_probable=2,
+        content_file_count=1,
+        files=manifest["files"][:1],
+        instances=[
+            {"ordinal": 1, "box_permille": [20, 50, 470, 950],
+             "visual_basis": "Left watch with open caseback."},
+            {"ordinal": 2, "box_permille": [520, 40, 990, 970],
+             "visual_basis": "Right watch with open caseback."},
+        ],
+    )
+    return manifest, receipts
+
+
 def test_research_group_counts_probable_watch_without_admitting_files():
     manifest, receipts = _fixture()
 
@@ -61,6 +79,36 @@ def test_research_group_counts_probable_watch_without_admitting_files():
     assert report.probable_watch_count == 1
     assert report.confirmed_watch_count == 0
     assert report.candidate_ids == ("candidate-0", "candidate-1")
+
+
+def test_multi_watch_photo_counts_visible_instances_once_per_file():
+    manifest, receipts = _multi_fixture()
+
+    report = _read(manifest, receipts)
+
+    assert report.file_count == 1
+    assert report.probable_watch_count == 2
+    assert report.confirmed_watch_count == 0
+    assert report.candidate_ids == ("candidate-0",)
+
+
+@pytest.mark.parametrize("change", [
+    lambda manifest: manifest.update(physical_watch_count_probable=3),
+    lambda manifest: manifest.update(reference="rolex-datejust"),
+    lambda manifest: manifest.update(training_admission=True),
+    lambda manifest: manifest.update(files=_fixture()[0]["files"], content_file_count=2),
+    lambda manifest: manifest["instances"][1].update(ordinal=1),
+    lambda manifest: manifest["instances"][1].update(box_permille=[20, 50, 470, 950]),
+    lambda manifest: manifest["instances"][1].update(box_permille=[500, 50, 500, 950]),
+    lambda manifest: manifest["instances"][1].update(box_permille=[500, 50, 1001, 950]),
+    lambda manifest: manifest["instances"][1].update(visual_basis=""),
+])
+def test_multi_watch_photo_rejects_inflated_or_unverifiable_instances(change):
+    manifest, receipts = _multi_fixture()
+    change(manifest)
+
+    with pytest.raises(ValueError):
+        _read(manifest, receipts)
 
 
 @pytest.mark.parametrize("change", [

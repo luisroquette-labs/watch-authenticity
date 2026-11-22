@@ -26,7 +26,9 @@ def read_research_entity_manifest(
 ) -> ResearchEntityReport:
     """Verify one provisional group against its immutable acquisition receipts."""
     manifest = json.loads(body)
-    if not isinstance(manifest, dict) or manifest.get("schema") != "watch-auth-research-entity-v1":
+    if not isinstance(manifest, dict) or manifest.get("schema") not in {
+        "watch-auth-research-entity-v1", "watch-auth-research-entity-v2"
+    }:
         raise ValueError("unsupported research entity manifest")
     if manifest.get("training_admission") is not False or manifest.get("test_admission") is not False:
         raise ValueError("research entity manifest cannot admit model data")
@@ -35,17 +37,48 @@ def read_research_entity_manifest(
     files = manifest.get("files")
     probable = manifest.get("physical_watch_count_probable")
     confirmed = manifest.get("physical_watch_count_confirmed")
+    multiple = manifest["schema"] == "watch-auth-research-entity-v2"
     if (
         source != "wikimedia"
         or not isinstance(reference, str) or not reference
         or not isinstance(files, list) or not files
-        or manifest.get("physical_watch_group") != "probable-one-watch"
         or not isinstance(manifest.get("visual_basis"), str) or not manifest["visual_basis"].strip()
     ):
         raise ValueError("research entity source, reference and files are required")
+    if multiple:
+        instances = manifest.get("instances")
+        if (
+            reference != "unverified"
+            or manifest.get("physical_watch_group") != "probable-multiple-watches"
+            or len(files) != 1
+            or not isinstance(instances, list) or not 2 <= len(instances) <= 20
+            or probable != len(instances) or isinstance(probable, bool)
+        ):
+            raise ValueError("multi-watch research group is inconsistent")
+        for ordinal, instance in enumerate(instances, 1):
+            if not isinstance(instance, dict):
+                raise ValueError("multi-watch instance is invalid")
+            box = instance.get("box_permille")
+            if (
+                instance.get("ordinal") != ordinal or isinstance(instance.get("ordinal"), bool)
+                or not isinstance(box, list) or len(box) != 4
+                or any(not isinstance(value, int) or isinstance(value, bool)
+                       or not 0 <= value <= 1000 for value in box)
+                or box[0] >= box[2] or box[1] >= box[3]
+                or not isinstance(instance.get("visual_basis"), str)
+                or not instance["visual_basis"].strip()
+            ):
+                raise ValueError("multi-watch instance box or evidence is invalid")
+        if len({tuple(instance["box_permille"]) for instance in instances}) != len(instances):
+            raise ValueError("multi-watch instances duplicate one box")
+    elif (
+        manifest.get("physical_watch_group") != "probable-one-watch"
+        or manifest.get("instances") is not None
+        or probable != 1 or isinstance(probable, bool)
+    ):
+        raise ValueError("single-watch research group is inconsistent")
     if (
-        probable != 1 or isinstance(probable, bool)
-        or confirmed != 0 or isinstance(confirmed, bool)
+        confirmed != 0 or isinstance(confirmed, bool)
         or isinstance(manifest.get("content_file_count"), bool)
         or manifest.get("content_file_count") != len(files)
     ):
