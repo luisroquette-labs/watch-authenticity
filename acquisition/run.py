@@ -951,14 +951,11 @@ def main(source: str = "all") -> None:
         return
     if source == "wikimedia-counterfeit-category":
         access = access_registry["wikimedia"]
-        if access.requests_per_minute is None or access.requests_per_minute < 4:
-            raise RuntimeError("Wikimedia rate limit cannot cover API and image retries")
-        run_wikimedia_once(
-            cos, bucket, f"{prefix}/lanes/counterfeit-category/research",
-            get_source_policy(policies, "wikimedia"), access,
-            now=now, api_client=requests.Session(),
-            image_client=PinnedRequestsClient(requests_per_minute=access.requests_per_minute - 1),
-            discover=lambda *args, **kwargs: discover_wikimedia(*args, **kwargs, query_range=(13, 14)),
+        run_wikimedia_lanes(
+            cos, bucket, prefix, get_source_policy(policies, "wikimedia"), access,
+            now=now,
+            lanes=(("counterfeit-category/research", (13, 14)),
+                   ("counterfeit-broad-category/research", (15, 16))),
         )
         return
     image_requests_per_minute = access_registry["wikimedia"].requests_per_minute
