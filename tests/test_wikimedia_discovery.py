@@ -283,6 +283,25 @@ def test_counterfeit_category_keeps_mixed_brands_as_unverified_research(cos):
         "Illegal copies of watches of quality brands"
     )
 
+
+def test_nasa_speedmaster_category_keeps_nasa_photo_unverified(cos):
+    http = MagicMock()
+    page = _page(license_name="Public domain", license_url=None)
+    page["pageid"] = 18986626
+    page["title"] = "File:Wally Schirra during Apollo 7 training.jpg"
+    page["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Wally_Schirra_during_Apollo_7_training.jpg"
+    http.get.return_value = _Response({"query": {"pages": [page]}})
+
+    result = _discover(http, cos, query_range=(14, 15))
+
+    assert 'incategory:"PD NASA"' in http.get.call_args.kwargs["params"]["gsrsearch"]
+    assert len(result.candidates) == 1
+    assert result.candidates[0].metadata.declared_reference == "unverified"
+    assert result.candidates[0].rights.allowed_purposes == ("download",)
+    assert result.candidates[0].evidence_tier is EvidenceTier.INCONCLUSIVE
+    assert dict(result.page.records[0].metadata)["research_category"].endswith("PD NASA")
+    assert propose_source_label(result.candidates[0].metadata.source, listing_text=result.candidates[0].metadata.listing_text) is None
+
 def test_real_commons_license_shapes_are_normalized():
     http = MagicMock()
     http.get.return_value = _Response(
