@@ -162,6 +162,19 @@
       "holdout_freeze_sha256": null,
       "status": "pending",
       "head": null
+    },
+    {
+      "reference_id": "casio-f91w-1",
+      "brand": "casio",
+      "family": "f91w",
+      "reference": "1",
+      "aliases": [],
+      "identity_evidence_sha256": null,
+      "required_angles": ["dial", "caseback"],
+      "gold_freeze_sha256": null,
+      "holdout_freeze_sha256": null,
+      "status": "pending",
+      "head": null
     }
   ]
 }

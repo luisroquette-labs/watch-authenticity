@@ -126,6 +126,31 @@ def test_ap_official_claim_rejects_impersonated_domain() -> None:
         )
 
 
+def test_casio_f91w_official_claims_do_not_authenticate_research_photos() -> None:
+    reference = "casio-f91w-1"
+    claims = load_knowledge(Path(f"config/references/{reference}.json"), reference)
+
+    assert len(claims) == 7
+    assert all(claim.source_class is SourceClass.OFFICIAL_BRAND for claim in claims)
+    assert all(not claim.applicable_angles for claim in claims)
+    result = assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER)
+    assert result.status is AssessmentStatus.INCONCLUSIVE
+    assert not result.authenticates_watch
+
+
+def test_casio_official_claim_rejects_impersonated_domain() -> None:
+    with pytest.raises(ValueError, match="approved domain"):
+        TechnicalClaim(
+            reference_id="casio-f91w-1",
+            field="battery",
+            value="CR2016",
+            source_class=SourceClass.OFFICIAL_BRAND,
+            source_url="https://casio.com.evil.example/watch",
+            citation="False official claim",
+            observed_at=date.today(),
+        )
+
+
 def test_patek_official_claim_rejects_impersonated_domain() -> None:
     with pytest.raises(ValueError, match="approved domain"):
         TechnicalClaim(
