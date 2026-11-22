@@ -577,6 +577,18 @@ def test_batch_next_photo_preserves_examined_guidance() -> None:
     assert "Próxima verificação útil: '+j.joint.next_useful_photo" in _HTML.decode("utf-8")
 
 
+def test_pilot_does_not_request_another_dial_after_examining_one() -> None:
+    service = PilotService.__new__(PilotService)
+    setattr(service, "inspect", lambda _image: _VisualInspection("inspected", "black", "uncertain"))
+
+    joint = analyze_batch(service, {"images": [_batch_item("dial")]})["joint"]
+
+    assert joint["model_checked_images"] == 1
+    assert joint["next_useful_angle"] is None
+    assert "confirme marca e referência presencialmente" in joint["next_useful_photo"]
+    assert "Mostrador de frente" not in joint["next_useful_photo"]
+
+
 def test_black_dial_and_bezel_on_non_target_watch_never_suggest_rolex() -> None:
     class NonTargetWatch:
         def predict(self, *_args: object) -> dict[str, object]:
