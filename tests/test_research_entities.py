@@ -81,6 +81,13 @@ def test_research_group_counts_probable_watch_without_admitting_files():
     assert report.candidate_ids == ("candidate-0", "candidate-1")
 
 
+def test_v1_manifest_keeps_legacy_extra_instances_field_ignored():
+    manifest, receipts = _fixture()
+    manifest["instances"] = [{"legacy": "uninterpreted"}]
+
+    assert _read(manifest, receipts).probable_watch_count == 1
+
+
 def test_multi_watch_photo_counts_visible_instances_once_per_file():
     manifest, receipts = _multi_fixture()
 
@@ -99,6 +106,8 @@ def test_multi_watch_photo_counts_visible_instances_once_per_file():
     lambda manifest: manifest.update(files=_fixture()[0]["files"], content_file_count=2),
     lambda manifest: manifest["instances"][1].update(ordinal=1),
     lambda manifest: manifest["instances"][1].update(box_permille=[20, 50, 470, 950]),
+    lambda manifest: manifest["instances"][1].update(box_permille=[21, 50, 470, 950]),
+    lambda manifest: manifest["instances"][1].update(box_permille=[100, 100, 300, 800]),
     lambda manifest: manifest["instances"][1].update(box_permille=[500, 50, 500, 950]),
     lambda manifest: manifest["instances"][1].update(box_permille=[500, 50, 1001, 950]),
     lambda manifest: manifest["instances"][1].update(visual_basis=""),

@@ -69,11 +69,19 @@ def read_research_entity_manifest(
                 or not instance["visual_basis"].strip()
             ):
                 raise ValueError("multi-watch instance box or evidence is invalid")
-        if len({tuple(instance["box_permille"]) for instance in instances}) != len(instances):
-            raise ValueError("multi-watch instances duplicate one box")
+        for index, left in enumerate(instances):
+            lx1, ly1, lx2, ly2 = left["box_permille"]
+            left_area = (lx2 - lx1) * (ly2 - ly1)
+            for right in instances[index + 1:]:
+                rx1, ry1, rx2, ry2 = right["box_permille"]
+                right_area = (rx2 - rx1) * (ry2 - ry1)
+                intersection = max(0, min(lx2, rx2) - max(lx1, rx1)) * max(
+                    0, min(ly2, ry2) - max(ly1, ry1)
+                )
+                if intersection * 2 > min(left_area, right_area):
+                    raise ValueError("multi-watch instances overlap one watch")
     elif (
         manifest.get("physical_watch_group") != "probable-one-watch"
-        or manifest.get("instances") is not None
         or probable != 1 or isinstance(probable, bool)
     ):
         raise ValueError("single-watch research group is inconsistent")
