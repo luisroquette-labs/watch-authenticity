@@ -41,10 +41,13 @@ _FAMILY_SEARCHES = (
     ("replica Rolex Daytona", "rolex", "daytona"),
     ("fake Rolex Daytona watch", "rolex", "daytona"),
     ("Audemars Piguet Royal Oak", "audemars piguet", "royal oak"),
+    ('incategory:"Illegal copies of watches of quality brands"', "unverified", "unverified"),
 )
 _REPLICA_SEARCHES = frozenset({6, 7, 10, 11})
+_COUNTERFEIT_CATEGORY_QUERY = 13
 _DEFAULT_SEARCH_STOP = 8
 _REPLICA_RESEARCH = "commons_replica_keyword_research_unverified"
+_CATEGORY_RESEARCH = "commons_counterfeit_category_research_unverified"
 _CLASSIFICATION = "brand_family_candidate_unverified"
 _CURSOR = re.compile(r"^q:(\d+):(\d+)$")
 _IMAGE_MIMES = frozenset({"image/jpeg", "image/png", "image/webp"})
@@ -53,6 +56,7 @@ _ALLOWED_LICENSES = frozenset(
         "CC0",
         "Public domain",
         "CC BY 2.0",
+        "CC BY 3.0",
         "CC BY 4.0",
         "CC BY-SA 3.0",
         "CC BY-SA 4.0",
@@ -237,8 +241,10 @@ def _parse_page(
             _optional_metadata_text(metadata, "ImageDescription"),
         )
     ))
-    if any(re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", searchable, re.I) is None
-           for word in (brand, family)):
+    if query_index != _COUNTERFEIT_CATEGORY_QUERY and any(
+        re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", searchable, re.I) is None
+        for word in (brand, family)
+    ):
         return None
     if query_index in _REPLICA_SEARCHES and re.search(r"\b(fake|replica|counterfeit|illegal cop(?:y|ies))\b", searchable, re.I) is None:
         return None
@@ -286,8 +292,11 @@ def _parse_page(
     record_id = f"q{query_index}:{page_id}"
     research_metadata = (
         (("research_keyword_context", searchable[:2000]),)
-        if query_index in _REPLICA_SEARCHES else ()
+        if query_index in _REPLICA_SEARCHES else
+        (("research_category", "Illegal copies of watches of quality brands"),)
+        if query_index == _COUNTERFEIT_CATEGORY_QUERY else ()
     )
+    classification = _CATEGORY_RESEARCH if query_index == _COUNTERFEIT_CATEGORY_QUERY else _CLASSIFICATION
     record = DiscoveryRecord(
         source="wikimedia",
         source_record_id=record_id,
@@ -300,7 +309,7 @@ def _parse_page(
         metadata=(
             ("author", author),
             ("brand_claim_from_text", brand),
-            ("classification", _CLASSIFICATION),
+            ("classification", classification),
             ("evidence_tier", EvidenceTier.INCONCLUSIVE.value),
             ("family_claim_from_text", family),
             ("image_timestamp", revision),
@@ -316,13 +325,17 @@ def _parse_page(
             source_url=source_url,
             image_url=image_url,
             declared_reference="unverified",
-            listing_text=_REPLICA_RESEARCH if query_index in _REPLICA_SEARCHES else _CLASSIFICATION,
+            listing_text=(
+                _CATEGORY_RESEARCH if query_index == _COUNTERFEIT_CATEGORY_QUERY else
+                _REPLICA_RESEARCH if query_index in _REPLICA_SEARCHES else _CLASSIFICATION
+            ),
         ),
         rights=rights,
         observed_at=observed_at,
         author=author,
         license_name=license_name,
         license_url=license_url,
+        classification=classification,
     )
     return record, candidate
 

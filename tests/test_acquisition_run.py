@@ -222,6 +222,29 @@ def test_speedmaster_daily_entry_advances_replica_and_classic_lanes(cos, monkeyp
     ]
 
 
+def test_counterfeit_category_entry_uses_separate_research_lane(cos, monkeypatch):
+    for name in (
+        "WATCH_AUTH_COS_BUCKET", "WATCH_AUTH_COS_ENDPOINT", "WATCH_AUTH_COS_SERVICE_INSTANCE_ID",
+        "WATCH_AUTH_TRUSTED_PROFILE_ID", "WATCH_AUTH_ACCOUNT_ID", "WATCH_AUTH_IAM_READER_POLICY_ID",
+    ):
+        monkeypatch.setenv(name, "test-value")
+    monkeypatch.setattr("ibm_cloud_sdk_core.authenticators.ContainerAuthenticator", lambda **_: object())
+    monkeypatch.setattr("acquisition.run.create_oauth_cos_client", lambda *_args, **_kwargs: cos)
+    monkeypatch.setattr("acquisition.run.AtomicCOSClient", lambda client: client)
+    monkeypatch.setattr("acquisition.run.verify_no_public_access_policies", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("acquisition.run.verify_private_versioned_bucket", lambda *_args: None)
+    monkeypatch.setattr("acquisition.run.discover_wikimedia", lambda *_args, query_range, **_kwargs: query_range)
+    observed = []
+
+    def run(_cos, _bucket, prefix, _policy, lane_access, **kwargs):
+        observed.append((prefix, lane_access.requests_per_minute, kwargs["discover"]()))
+
+    monkeypatch.setattr("acquisition.run.run_wikimedia_once", run)
+    main("wikimedia-counterfeit-category")
+
+    assert observed == [("datasets/lanes/counterfeit-category/research", 20, (13, 14))]
+
+
 def test_replica_job_attempts_datejust_after_daytona_failure(cos, monkeypatch):
     access = load_source_access_registry(Path(__file__).resolve().parents[1] / "config/source_access.json")["wikimedia"]
     observed = []
@@ -859,6 +882,7 @@ case "$*" in
     if [[ "$5" == watch-auth-auckland-* ]]; then args='["-m","acquisition.run","--source","wikimedia-auckland"]'; fi
     if [[ "$5" == watch-auth-daytona-* ]]; then args='["-m","acquisition.run","--source","wikimedia-daytona"]'; fi
     if [[ "$5" == watch-auth-royal-oak-* ]]; then args='["-m","acquisition.run","--source","wikimedia-royal-oak"]'; fi
+    if [[ "$5" == watch-auth-counterfeit-category-* ]]; then args='["-m","acquisition.run","--source","wikimedia-counterfeit-category"]'; fi
     if [[ "$5" == watch-auth-research-census-* ]]; then args='["-m","acquisition.run","--source","research-census"]'; fi
     image="$WATCH_AUTH_ACQUISITION_IMAGE_DIGEST"
     cpu='0.25'
@@ -950,8 +974,8 @@ esac
     assert result.returncode == 0, result.stderr
     calls = log.read_text()
     assert "ce job create" in calls
-    assert calls.count("iam trusted-profile-links") == 20
-    assert calls.count("iam trusted-profile-link-create") == 10
+    assert calls.count("iam trusted-profile-links") == 22
+    assert calls.count("iam trusted-profile-link-create") == 11
     assert "ce job create --name watch-auth-supercloneluxury-" in calls
     assert "--arg=--source --arg=supercloneluxury" in calls
     cron_action = "update" if existing_cron else "create"
@@ -978,6 +1002,10 @@ esac
     assert "ce job create --name watch-auth-royal-oak-" in calls
     assert "--arg=--source --arg=wikimedia-royal-oak" in calls
     assert f"ce sub cron {cron_action} --name watch-auth-royal-oak-daily" in calls
+    assert "ce job create --name watch-auth-counterfeit-category-" in calls
+    assert "--arg=--source --arg=wikimedia-counterfeit-category" in calls
+    assert f"ce sub cron {cron_action} --name watch-auth-counterfeit-category-daily" in calls
+    assert "7 5 * * *" in calls
     assert "37 4 * * *" in calls
     assert "ce job create --name watch-auth-research-census-" in calls
     assert "--arg=--source --arg=research-census" in calls

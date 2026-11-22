@@ -33,6 +33,7 @@ speedmaster_job="watch-auth-speedmaster-${deployment_id}"
 auckland_job="watch-auth-auckland-${deployment_id}"
 daytona_job="watch-auth-daytona-${deployment_id}"
 royal_oak_job="watch-auth-royal-oak-${deployment_id}"
+counterfeit_category_job="watch-auth-counterfeit-category-${deployment_id}"
 census_job="watch-auth-research-census-${deployment_id}"
 
 job_args=(
@@ -408,6 +409,34 @@ royal_oak_cron_args[1]=watch-auth-royal-oak-daily
 royal_oak_cron_args[5]="${royal_oak_job}"
 royal_oak_cron_args[7]='57 4 * * *'
 
+counterfeit_category_job_args=("${job_args[@]}")
+counterfeit_category_job_args[1]="${counterfeit_category_job}"
+counterfeit_category_job_args+=(--arg=--source --arg=wikimedia-counterfeit-category)
+if ibmcloud ce job get --name "${counterfeit_category_job}" --output json >/dev/null 2>&1; then
+  :
+else
+  ibmcloud ce job create "${counterfeit_category_job_args[@]}"
+fi
+verify_job "${counterfeit_category_job}" wikimedia-counterfeit-category
+
+if link_exists "${counterfeit_category_job}"; then
+  :
+else
+  link_state=$?
+  [[ "${link_state}" -eq 1 ]] || { echo "trusted-profile link inventory failed" >&2; exit 2; }
+  ibmcloud iam trusted-profile-link-create "${WATCH_AUTH_TRUSTED_PROFILE_ID}" \
+    --name "${counterfeit_category_job}" --cr-type CE \
+    --link-crn "${WATCH_AUTH_CE_PROJECT_CRN}" \
+    --link-component-type job --link-component-name "${counterfeit_category_job}" \
+    --output json >/dev/null
+  link_exists "${counterfeit_category_job}" || { echo "trusted-profile link readback failed" >&2; exit 2; }
+fi
+
+counterfeit_category_cron_args=("${cron_args[@]}")
+counterfeit_category_cron_args[1]=watch-auth-counterfeit-category-daily
+counterfeit_category_cron_args[5]="${counterfeit_category_job}"
+counterfeit_category_cron_args[7]='7 5 * * *'
+
 census_job_args=("${job_args[@]}")
 census_job_args[1]="${census_job}"
 census_job_args+=(--arg=--source --arg=research-census)
@@ -495,6 +524,12 @@ if ibmcloud ce sub cron get --name watch-auth-royal-oak-daily --output json >/de
   ibmcloud ce sub cron update "${royal_oak_cron_args[@]}"
 else
   ibmcloud ce sub cron create "${royal_oak_cron_args[@]}"
+fi
+
+if ibmcloud ce sub cron get --name watch-auth-counterfeit-category-daily --output json >/dev/null 2>&1; then
+  ibmcloud ce sub cron update "${counterfeit_category_cron_args[@]}"
+else
+  ibmcloud ce sub cron create "${counterfeit_category_cron_args[@]}"
 fi
 
 if ibmcloud ce sub cron get --name watch-auth-research-census-daily --output json >/dev/null 2>&1; then
