@@ -137,6 +137,15 @@ def test_seiko_spb453j1_is_research_only_without_admitted_head(catalog_fixture):
         catalog_fixture.catalog.head_for(entry.reference_id)
 
 
+def test_casio_f91w_1_is_research_only_without_admitted_head(catalog_fixture):
+    entry = catalog_fixture.catalog.entry_for("casio-f91w-1")
+    assert (entry.brand, entry.family, entry.reference) == ("casio", "f91w", "1")
+    assert entry.status == "pending"
+    assert tuple(angle.value for angle in entry.required_angles) == ("dial", "caseback")
+    with pytest.raises(ReferenceNotAdmitted):
+        catalog_fixture.catalog.head_for(entry.reference_id)
+
+
 def test_rm88_target_model_is_research_only_without_admitted_head(catalog_fixture):
     entry = catalog_fixture.catalog.entry_for("richardmille-rm88-smiley")
 

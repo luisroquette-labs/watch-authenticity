@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "reference_id": "casio-f91w-1",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "F-91W-1",
+      "source_class": "official_brand",
+      "source_url": "https://www.casio.com/intl/watches/casio/product.F-91W-1/",
+      "citation": "Product page > model title",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
+    },
+    {
+      "field": "case_size_mm",
+      "value": "38.2 × 35.2 × 8.5",
+      "source_class": "official_brand",
+      "source_url": "https://www.casio.com/intl/watches/casio/product.F-91W-1/",
+      "citation": "Specifications > Basic Information > Case size",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
+    },
+    {
+      "field": "case_and_bezel_material",
+      "value": "resin",
+      "source_class": "official_brand",
+      "source_url": "https://www.casio.com/intl/watches/casio/product.F-91W-1/",
+      "citation": "Specifications > Basic Information > Case and bezel material",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
+    },
+    {
+      "field": "band_material",
+      "value": "resin",
+      "source_class": "official_brand",
+      "source_url": "https://www.casio.com/intl/watches/casio/product.F-91W-1/",
+      "citation": "Specifications > Basic Information > Band",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
+    },
+    {
+      "field": "glass_material",
+      "value": "resin glass",
+      "source_class": "official_brand",
+      "source_url": "https://www.casio.com/intl/watches/casio/product.F-91W-1/",
+      "citation": "Specifications > Exterior > Glass",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
+    },
+    {
+      "field": "battery",
+      "value": "CR2016; approximately 7 years",
+      "source_class": "official_brand",
+      "source_url": "https://www.casio.com/intl/watches/casio/product.F-91W-1/",
+      "citation": "Specifications > Basic Information > Power supply and battery life",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
+    },
+    {
+      "field": "light",
+      "value": "LED light",
+      "source_class": "official_brand",
+      "source_url": "https://www.casio.com/intl/watches/casio/product.F-91W-1/",
+      "citation": "Specifications > Watch Features > Light",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
+    }
+  ]
+}
