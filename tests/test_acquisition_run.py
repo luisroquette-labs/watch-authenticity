@@ -250,7 +250,10 @@ def test_counterfeit_category_entry_uses_separate_research_lane(cos, monkeypatch
     monkeypatch.setattr("acquisition.run.run_wikimedia_once", run)
     main("wikimedia-counterfeit-category")
 
-    assert observed == [("datasets/lanes/counterfeit-category/research", 20, (13, 14))]
+    assert observed == [
+        ("datasets/lanes/counterfeit-category/research", 10, (13, 14)),
+        ("datasets/lanes/counterfeit-broad-category/research", 10, (15, 16)),
+    ]
 
 
 def test_replica_job_attempts_datejust_after_daytona_failure(cos, monkeypatch):

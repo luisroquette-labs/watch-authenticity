@@ -284,6 +284,25 @@ def test_counterfeit_category_keeps_mixed_brands_as_unverified_research(cos):
     )
 
 
+def test_broad_counterfeit_category_keeps_cbp_group_unverified(cos):
+    http = MagicMock()
+    page = _page(license_name="Public domain", license_url=None)
+    page["pageid"] = 57419144
+    page["title"] = "File:San Juan CBP seizes 20 counterfeit luxury watches.jpg"
+    page["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:San_Juan_CBP_seizes_20_counterfeit_luxury_watches.jpg"
+    http.get.return_value = _Response({"query": {"pages": [page]}})
+
+    result = _discover(http, cos, query_range=(15, 16))
+
+    assert http.get.call_args.kwargs["params"]["gsrsearch"] == 'incategory:"Counterfeit watches"'
+    assert result.page.records[0].source_record_id == "q15:57419144"
+    assert dict(result.page.records[0].metadata)["research_category"] == "Counterfeit watches"
+    assert result.candidates[0].classification == "commons_counterfeit_category_research_unverified"
+    assert result.candidates[0].metadata.declared_reference == "unverified"
+    assert result.candidates[0].rights.allowed_purposes == ("download",)
+    assert result.candidates[0].evidence_tier is EvidenceTier.INCONCLUSIVE
+
+
 def test_nasa_speedmaster_category_keeps_nasa_photo_unverified(cos):
     http = MagicMock()
     page = _page(license_name="Public domain", license_url=None)
