@@ -19,6 +19,60 @@
       "citation": "CBP release, 2023-11-21: limited edition was produced only 50 times",
       "observed_at": "2026-11-19",
       "applicable_angles": []
+    },
+    {
+      "field": "movement_type",
+      "value": "in-house automatic tourbillon",
+      "source_class": "official_brand",
+      "source_url": "https://www.richardmille.com/page/history",
+      "citation": "Brand history > 2022: RM 88 Smiley features an in-house automatic tourbillon",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
+    },
+    {
+      "field": "calibre",
+      "value": "CRMT7",
+      "source_class": "industry_organization",
+      "source_url": "https://www.hautehorlogerie.org/en/watches-and-culture/watchmaking-scene/watches-and-novelties/rm-88-automatic-tourbillon-smiley",
+      "citation": "Fondation de la Haute Horlogerie > Movement > Movement name",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
+    },
+    {
+      "field": "case_material",
+      "value": "ATZ ceramic case with red gold caseband",
+      "source_class": "industry_organization",
+      "source_url": "https://www.hautehorlogerie.org/en/watches-and-culture/watchmaking-scene/watches-and-novelties/rm-88-automatic-tourbillon-smiley",
+      "citation": "Fondation de la Haute Horlogerie > presentation: ATZ ceramic case and red gold caseband; material cannot be confirmed from a photo",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
+    },
+    {
+      "field": "crown_motif",
+      "value": "smiley face",
+      "source_class": "industry_organization",
+      "source_url": "https://www.hautehorlogerie.org/en/watches-and-culture/watchmaking-scene/watches-and-novelties/rm-88-automatic-tourbillon-smiley",
+      "citation": "Fondation de la Haute Horlogerie > presentation: smiley face on the crown; requires a clear crown macro",
+      "observed_at": "2026-11-22",
+      "applicable_angles": ["crown"]
+    },
+    {
+      "field": "caseback_transparency",
+      "value": "transparent",
+      "source_class": "industry_organization",
+      "source_url": "https://www.hautehorlogerie.org/en/watches-and-culture/watchmaking-scene/watches-and-novelties/rm-88-automatic-tourbillon-smiley",
+      "citation": "Fondation de la Haute Horlogerie > presentation: movement visible through sapphire back; transparency requires a caseback photo",
+      "observed_at": "2026-11-22",
+      "applicable_angles": ["caseback"]
+    },
+    {
+      "field": "limited_edition_quantity",
+      "value": "50",
+      "source_class": "industry_organization",
+      "source_url": "https://www.hautehorlogerie.org/en/watches-and-culture/watchmaking-scene/watches-and-novelties/rm-88-automatic-tourbillon-smiley",
+      "citation": "Fondation de la Haute Horlogerie > Craft > Limited edition",
+      "observed_at": "2026-11-22",
+      "applicable_angles": []
     }
   ]
 }
