@@ -34,6 +34,19 @@
       "head": null
     },
     {
+      "reference_id": "rolex-daytona-126506",
+      "brand": "rolex",
+      "family": "daytona",
+      "reference": "126506",
+      "aliases": [],
+      "identity_evidence_sha256": null,
+      "required_angles": ["dial", "crown", "clasp", "caseback"],
+      "gold_freeze_sha256": null,
+      "holdout_freeze_sha256": null,
+      "status": "pending",
+      "head": null
+    },
+    {
       "reference_id": "cartier-santos-wssa0061",
       "brand": "cartier",
       "family": "santos",

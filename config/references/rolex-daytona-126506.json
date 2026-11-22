@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "reference_id": "rolex-daytona-126506",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "126506",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/cosmograph-daytona/m126506-0001",
+      "citation": "Cosmograph Daytona heading > Reference 126506",
+      "observed_at": "2026-11-21",
+      "applicable_angles": []
+    },
+    {
+      "field": "dial_color",
+      "value": "ice blue with chestnut brown counter rings",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/cosmograph-daytona/m126506-0001",
+      "citation": "More Cosmograph Daytona technical details > Dial",
+      "observed_at": "2026-11-21",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "bezel_type",
+      "value": "chestnut brown Cerachrom tachymetric bezel",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/cosmograph-daytona/m126506-0001",
+      "citation": "More Cosmograph Daytona technical details > Model case > Bezel",
+      "observed_at": "2026-11-21",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "caseback_type",
+      "value": "transparent with anti-reflective coating",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/cosmograph-daytona/m126506-0001",
+      "citation": "More Cosmograph Daytona technical details > Model case > Case back",
+      "observed_at": "2026-11-21",
+      "applicable_angles": ["caseback"]
+    },
+    {
+      "field": "case_material",
+      "value": "platinum",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/cosmograph-daytona/m126506-0001",
+      "citation": "More Cosmograph Daytona technical details > Model case > Material",
+      "observed_at": "2026-11-21",
+      "applicable_angles": []
+    },
+    {
+      "field": "calibre",
+      "value": "4131",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/en-us/watches/cosmograph-daytona/m126506-0001",
+      "citation": "More Cosmograph Daytona technical details > Movement > Calibre",
+      "observed_at": "2026-11-21",
+      "applicable_angles": []
+    }
+  ]
+}
