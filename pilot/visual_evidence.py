@@ -8,8 +8,6 @@ import cv2
 import numpy as np
 from PIL import Image
 
-INSPECTION_SOURCE = "https://www.bobswatches.com/rolex-blog/editorial/authentication-process.html"
-
 
 def bezel_color_hint(face: Image.Image) -> str:
     """Read color outside a visible dial boundary, including a partly cropped bezel."""

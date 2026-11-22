@@ -602,6 +602,7 @@ def test_black_dial_and_bezel_on_non_target_watch_never_suggest_rolex() -> None:
     joint = analyze_batch(NonTargetWatch(), {"images": [_batch_item(body=_jpeg_variant(1))]})["joint"]
     assert joint["reference_candidate"] is None
     assert joint["source_urls"] == []
+    assert joint["inspection_source_url"] is None
     assert "Rolex" not in joint["message"]
 
 
