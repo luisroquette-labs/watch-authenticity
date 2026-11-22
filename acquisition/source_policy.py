@@ -237,4 +237,6 @@ def authorize_candidate(
         return _denied("rights purpose mismatch")
     if not policy.may_train:
         return AcquisitionDecision(True, False, ("source policy denies training",))
+    if "train" not in rights.allowed_purposes:
+        return AcquisitionDecision(True, False, ("rights do not permit training",))
     return AcquisitionDecision(True, True, ())

@@ -102,6 +102,20 @@ def test_expired_grant_fails_closed(policy_set, expired_rights):
     assert not decision.may_train
 
 
+def test_training_requires_explicit_train_purpose_even_when_download_is_allowed(policy_set, rights):
+    policy = replace(
+        get_source_policy(policy_set, rights.source),
+        required_rights_purposes=("download",),
+    )
+    download_only = replace(rights, allowed_purposes=("download",))
+
+    decision = authorize_candidate(policy, download_only, now=rights.effective_at)
+
+    assert decision.may_download
+    assert not decision.may_train
+    assert decision.reasons == ("rights do not permit training",)
+
+
 @pytest.mark.parametrize(
     ("case", "allowed"),
     [
