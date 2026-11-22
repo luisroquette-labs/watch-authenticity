@@ -42,7 +42,7 @@ _FAMILY_SEARCHES = (
     ("fake Rolex Daytona watch", "rolex", "daytona"),
     ("Audemars Piguet Royal Oak", "audemars piguet", "royal oak"),
     ('incategory:"Illegal copies of watches of quality brands"', "unverified", "unverified"),
-    ('incategory:"Omega Speedmaster in Apollo, Gemini and other space programs" incategory:"PD NASA"', "omega", "speedmaster"),
+    ('incategory:"Omega Speedmaster in Apollo, Gemini and other space programs" incategory:"PD NASA"', "unverified", "unverified"),
 )
 _REPLICA_SEARCHES = frozenset({6, 7, 10, 11})
 _COUNTERFEIT_CATEGORY_QUERY = 13

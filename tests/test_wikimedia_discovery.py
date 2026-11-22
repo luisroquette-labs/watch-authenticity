@@ -300,6 +300,8 @@ def test_nasa_speedmaster_category_keeps_nasa_photo_unverified(cos):
     assert result.candidates[0].rights.allowed_purposes == ("download",)
     assert result.candidates[0].evidence_tier is EvidenceTier.INCONCLUSIVE
     assert dict(result.page.records[0].metadata)["research_category"].endswith("PD NASA")
+    assert dict(result.page.records[0].metadata)["brand_claim_from_text"] == "unverified"
+    assert dict(result.page.records[0].metadata)["family_claim_from_text"] == "unverified"
     assert propose_source_label(result.candidates[0].metadata.source, listing_text=result.candidates[0].metadata.listing_text) is None
 
 def test_real_commons_license_shapes_are_normalized():
