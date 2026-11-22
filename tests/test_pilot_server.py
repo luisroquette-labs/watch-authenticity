@@ -891,7 +891,7 @@ def test_pilot_without_selected_reference_has_no_reference_claims(
     assert service.claims == ()
 
 
-def test_html_supports_six_files_per_image_angles_and_recovers_after_error() -> None:
+def test_html_groups_only_selected_photos_of_each_watch_and_recovers_after_error() -> None:
     html = _HTML.decode("utf-8")
     assert "Prévia visual de relógios" in html
     assert "Referência comparada: nenhuma; marca não identificada." in html
@@ -904,10 +904,16 @@ def test_html_supports_six_files_per_image_angles_and_recovers_after_error() -> 
     assert "Resultados reaproveitados:" in html
     assert 'multiple' in html
     assert 'Máximo de 6 imagens' in html
+    assert "group.value=String(i+1)" in html
+    assert "group.className='watch-group'" in html
+    assert "grouped.get(entry.groupId).push(entry)" in html
+    assert 'for(let i=0;i<groups.length;i++)' in html
+    assert "renderReport(j,group.items)" in html
+    assert "group.id+' ('+(i+1)+' de '+groups.length" in html
     assert 'fetch("/predict/batch"' in html
     assert 'finally' in html
     assert 'b.disabled=false' in html
     assert 'let files=[...f.files]' in html
-    assert "files[i].name+': '+item.message" in html
+    assert "group[i].file.name+': '+item.message" in html
     assert 'f.disabled=true' in html and 'f.disabled=false' in html
     assert 'Vista informada' in html

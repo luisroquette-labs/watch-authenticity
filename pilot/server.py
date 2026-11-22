@@ -38,11 +38,85 @@ MAX_HEADER_SECONDS = 10
 MAX_REQUEST_SECONDS = 120
 ALLOWED_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 ANGLES = frozenset({"dial", "cyclops", "rehaut", "crown", "clasp", "caseback"})
-_HTML = r"""<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Prévia visual de relógios</title><style>body{font:16px system-ui;max-width:680px;margin:40px auto;padding:0 18px;background:#101214;color:#f5f5f5}main{background:#1a1e21;padding:24px;border-radius:16px}button,input,select{font:inherit;margin:8px 0;padding:10px}button{cursor:pointer}input[type=file]{width:100%;box-sizing:border-box;margin-left:0;margin-right:0}.item{border:1px solid #444;padding:8px;margin:8px 0}#r{white-space:pre-wrap;padding:16px;background:#0b0d0e;border-radius:10px}.item,#r{overflow-wrap:anywhere}.warn{color:#ffcc66}</style><main><h1>Prévia visual de relógios</h1><p class="warn">Ainda não detecta falsificações: não há classificador de autenticidade treinado e validado neste serviço. Esta prévia descreve cores do mostrador e aro somente quando a vista informada é mostrador; outras vistas são recebidas, mas não examinadas. Não identifica marca ou referência nem confirma autenticidade.</p><label>Fotos (1 a 6, até 15 MB cada)<br><input id="f" type="file" multiple accept="image/jpeg,image/png,image/webp"></label><div id="angles"></div><button id="b">Analisar</button><div id="r">Escolha fotos nítidas.</div></main><script>
+_HTML = r"""<!doctype html>
+<html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Prévia visual de relógios</title>
+<style>
+body{font:16px system-ui;max-width:680px;margin:40px auto;padding:0 18px;background:#101214;color:#f5f5f5}
+main{background:#1a1e21;padding:24px;border-radius:16px}
+button,input,select{font:inherit;margin:8px 0;padding:10px}button{cursor:pointer}
+input[type=file]{width:100%;box-sizing:border-box;margin-left:0;margin-right:0}
+.item{border:1px solid #444;padding:8px;margin:8px 0}
+#r{white-space:pre-wrap;padding:16px;background:#0b0d0e;border-radius:10px}
+.item,#r{overflow-wrap:anywhere}.warn{color:#ffcc66}
+</style>
+<main><h1>Prévia visual de relógios</h1>
+<p class="warn">Ainda não detecta falsificações: não há classificador de autenticidade treinado e validado neste serviço. Esta prévia descreve cores do mostrador e aro somente quando a vista informada é mostrador; outras vistas são recebidas, mas não examinadas. Não identifica marca ou referência nem confirma autenticidade.</p>
+<label>Fotos (1 a 6, até 15 MB cada)<br><input id="f" type="file" multiple accept="image/jpeg,image/png,image/webp"></label>
+<p>Por padrão, cada foto recebe um relatório separado. Para combinar ângulos da mesma peça, escolha o mesmo número de relógio nas fotos correspondentes.</p>
+<div id="angles"></div><button id="b">Analisar</button><div id="r">Escolha fotos nítidas.</div></main>
+<script>
 const labels={dial:'Mostrador',cyclops:'Data/lupa',rehaut:'Aro interno',crown:'Coroa/lateral',clasp:'Fecho',caseback:'Traseira'};
-f.onchange=()=>{angles.replaceChildren();if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}[...f.files].forEach((file,i)=>{let row=document.createElement('div');row.className='item';let text=document.createElement('span');text.textContent=file.name+' — Vista informada (esta prévia verifica mostrador e aro): ';let select=document.createElement('select');select.dataset.index=i;Object.entries(labels).forEach(([value,label])=>select.add(new Option(label,value)));row.append(text,select);angles.append(row)})};
-const encode=file=>new Promise((resolve,reject)=>{let reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(new Error('Não foi possível ler a imagem.'));reader.readAsDataURL(file)});
-b.onclick=async()=>{if(!f.files.length){r.textContent='Selecione de 1 a 6 imagens.';return}if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}b.disabled=true;f.disabled=true;let files=[...f.files];let selectedAngles=[...angles.querySelectorAll('select')].map(x=>x.value);let start=Date.now();let timer=setInterval(()=>r.textContent='Analisando '+files.length+' foto(s)... '+Math.floor((Date.now()-start)/1000)+' s. O tempo aumenta com o número de fotos.',1000);r.textContent='Analisando '+files.length+' foto(s)...';try{let images=[];for(let i=0;i<files.length;i++){images.push({angle:selectedAngles[i],content_type:files[i].type,data:await encode(files[i])})}let x=await fetch("/predict/batch",{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images})});let j=await x.json();if(!x.ok)throw new Error(j.error||'Falha ao analisar as imagens.');let lines=j.results.map((item,i)=>(i+1)+'. '+files[i].name+': '+item.message);let ev=j.joint.visible_evidence;let colors={green:'verde',black:'preto',blue:'azul',uncertain:'não verificada'};let count=n=>n+' '+(n===1?'foto':'fotos');let findings='Mostrador: '+(colors[ev.dial_color.value]||ev.dial_color.value)+' ('+count(ev.dial_color.supporting_photos)+'). Aro: '+(colors[ev.bezel_color.value]||ev.bezel_color.value)+' ('+count(ev.bezel_color.supporting_photos)+').';r.textContent=j.joint.message+'\nFotos enviadas: '+j.joint.submitted_photos+'. Conteúdos visuais distintos: '+j.joint.unique_visual_contents+'. Análises executadas: '+j.joint.model_checked_images+'. Resultados reaproveitados: '+j.joint.reused_results+'.\nAs fotos são tratadas como um relógio; não são provas independentes.\n\nObservado: '+findings+'\n\nAinda não verificado: '+j.joint.unverified.join('; ')+'.\n\nPor foto:\n'+lines.join('\n')+'\n\nFonte da referência: '+(j.joint.reference_candidate?j.joint.reference_candidate.source_url:'não disponível')+'\nProcesso de inspeção: '+(j.joint.inspection_source_url||'não disponível')+'\nReferência comparada: nenhuma; marca não identificada.';let facts=j.joint.cited_reference_facts.map(x=>x.field+': '+x.url).join('; ');r.textContent+='\n\nFotos usadas: '+(j.joint.used_photo_indices.join(', ')||'nenhuma')+'\nFatos oficiais citados: '+(facts||'nenhum detalhe confirmado')+'\nPróxima verificação útil: '+j.joint.next_useful_photo+'\nModelo visual de cores: carregado; classificador de autenticidade: '+(j.joint.model_sha256||'não liberado')+'; confiança calibrada: '+(j.joint.calibrated_confidence??'indisponível')+'\nQualidade da falsificação (somente após confirmação): '+(j.joint.quality_score_0_1000??j.joint.quality_assessment)}catch(error){r.textContent='Erro: '+error.message}finally{clearInterval(timer);f.disabled=false;b.disabled=false}};
+f.onchange=()=>{
+  angles.replaceChildren();
+  if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}
+  [...f.files].forEach((file,i)=>{
+    let row=document.createElement('div');row.className='item';
+    let text=document.createElement('span');text.textContent=file.name+' — Vista informada (esta prévia verifica mostrador e aro): ';
+    let select=document.createElement('select');select.dataset.index=i;select.setAttribute('aria-label','Vista da foto '+file.name);
+    Object.entries(labels).forEach(([value,label])=>select.add(new Option(label,value)));
+    let groupLabel=document.createElement('label');groupLabel.textContent=' Relógio nesta foto: ';
+    let group=document.createElement('select');group.className='watch-group';group.setAttribute('aria-label','Relógio da foto '+file.name);
+    [...f.files].forEach((_,index)=>group.add(new Option('Relógio '+(index+1),String(index+1))));
+    group.value=String(i+1);groupLabel.append(group);
+    row.append(text,select,groupLabel);angles.append(row);
+  });
+};
+const encode=file=>new Promise((resolve,reject)=>{
+  let reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);
+  reader.onerror=()=>reject(new Error('Não foi possível ler a imagem.'));reader.readAsDataURL(file);
+});
+function renderReport(j,group){
+  let lines=j.results.map((item,i)=>(i+1)+'. '+group[i].file.name+': '+item.message);
+  let ev=j.joint.visible_evidence;
+  let colors={green:'verde',black:'preto',blue:'azul',uncertain:'não verificada'};
+  let count=n=>n+' '+(n===1?'foto':'fotos');
+  let findings='Mostrador: '+(colors[ev.dial_color.value]||ev.dial_color.value)+' ('+count(ev.dial_color.supporting_photos)+'). Aro: '+(colors[ev.bezel_color.value]||ev.bezel_color.value)+' ('+count(ev.bezel_color.supporting_photos)+').';
+  let report=j.joint.message+'\nFotos enviadas: '+j.joint.submitted_photos+'. Conteúdos visuais distintos: '+j.joint.unique_visual_contents+'. Análises executadas: '+j.joint.model_checked_images+'. Resultados reaproveitados: '+j.joint.reused_results+'.';
+  if(group.length>1)report+='\nAs fotos foram informadas como uma peça; não são provas independentes.';
+  report+='\n\nObservado: '+findings+'\n\nAinda não verificado: '+j.joint.unverified.join('; ')+'.\n\nPor foto:\n'+lines.join('\n')+'\n\nFonte da referência: '+(j.joint.reference_candidate?j.joint.reference_candidate.source_url:'não disponível')+'\nProcesso de inspeção: '+(j.joint.inspection_source_url||'não disponível')+'\nReferência comparada: nenhuma; marca não identificada.';
+  let facts=j.joint.cited_reference_facts.map(x=>x.field+': '+x.url).join('; ');
+  return report+'\n\nFotos usadas: '+(j.joint.used_photo_indices.join(', ')||'nenhuma')+'\nFatos oficiais citados: '+(facts||'nenhum detalhe confirmado')+'\nPróxima verificação útil: '+j.joint.next_useful_photo+'\nModelo visual de cores: carregado; classificador de autenticidade: '+(j.joint.model_sha256||'não liberado')+'; confiança calibrada: '+(j.joint.calibrated_confidence??'indisponível')+'\nQualidade da falsificação (somente após confirmação): '+(j.joint.quality_score_0_1000??j.joint.quality_assessment);
+}
+b.onclick=async()=>{
+  if(!f.files.length){r.textContent='Selecione de 1 a 6 imagens.';return}
+  if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}
+  b.disabled=true;f.disabled=true;angles.querySelectorAll('select').forEach(x=>x.disabled=true);
+  let files=[...f.files];
+  let angleSelects=[...angles.querySelectorAll('.item select:not(.watch-group)')];
+  let groupSelects=[...angles.querySelectorAll('.watch-group')];
+  let entries=files.map((file,i)=>({file,angle:angleSelects[i].value,groupId:groupSelects[i].value}));
+  let grouped=new Map();
+  entries.forEach(entry=>{
+    if(!grouped.has(entry.groupId))grouped.set(entry.groupId,[]);
+    grouped.get(entry.groupId).push(entry);
+  });
+  let groups=[...grouped].map(([id,items])=>({id,items}));
+  let reports=[],start=Date.now();
+  let timer=setInterval(()=>r.textContent=reports.join('\n\n')+'\nAnalisando '+groups.length+' relógio(s)... '+Math.floor((Date.now()-start)/1000)+' s.',1000);
+  try{
+    for(let i=0;i<groups.length;i++){
+      let group=groups[i];let images=[];
+      for(let entry of group.items)images.push({angle:entry.angle,content_type:entry.file.type,data:await encode(entry.file)});
+      r.textContent=reports.join('\n\n')+'\nAnalisando relógio '+group.id+' ('+(i+1)+' de '+groups.length+')...';
+      let response=await fetch("/predict/batch",{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images})});
+      let j=await response.json();if(!response.ok)throw new Error(j.error||'Falha ao analisar as imagens.');
+      reports.push('Relógio '+group.id+'\n'+renderReport(j,group.items));
+      r.textContent=reports.join('\n\n');
+    }
+  }catch(error){r.textContent=reports.join('\n\n')+'\nErro: '+error.message}
+  finally{clearInterval(timer);f.disabled=false;b.disabled=false;angles.querySelectorAll('select').forEach(x=>x.disabled=false)}
+};
 </script></html>""".encode("utf-8")
 
 
