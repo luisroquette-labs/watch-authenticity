@@ -9,7 +9,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-_RECEIPT_HASH = re.compile(r"-([0-9a-f]{64})\.json$")
+_RECEIPT_HASH = re.compile(r"(?:-|/)([0-9a-f]{64})\.json$")
 _MAX_KEYS = 20_000
 _MAX_OBJECT_BYTES = 1_000_000
 _MAX_OUTPUT_BYTES = _MAX_OBJECT_BYTES

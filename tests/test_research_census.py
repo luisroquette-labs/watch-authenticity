@@ -89,6 +89,35 @@ def test_census_reads_paginated_receipts_and_persists_research_only_counts():
     assert len([key for key in cos.bodies if "/research-census/" in key]) == 1
 
 
+def test_census_accepts_legacy_slash_hash_receipts_in_inventory():
+    cos = COS()
+    _seed(cos)
+    receipt_key = next(key for key in cos.bodies if "/receipts/" in key)
+    body = cos.bodies.pop(receipt_key)
+    digest = hashlib.sha256(body).hexdigest()
+    cos.bodies[f"datasets/receipts/wikimedia-legacy/{digest}.json"] = body
+    orphan = b"legacy unrelated receipt"
+    orphan_digest = hashlib.sha256(orphan).hexdigest()
+    cos.bodies[f"datasets/receipts/wikimedia-old/{orphan_digest}.json"] = orphan
+
+    report = run_research_census_once(cos, "private", "datasets", now=NOW)
+
+    assert report["file_count"] == 2
+    assert report["probable_watch_count"] == 1
+
+
+def test_census_rejects_same_receipt_hash_at_two_keys():
+    cos = COS()
+    _seed(cos)
+    receipt_key = next(key for key in cos.bodies if "/receipts/" in key)
+    digest = hashlib.sha256(cos.bodies[receipt_key]).hexdigest()
+    cos.bodies[f"datasets/receipts/wikimedia-duplicate/{digest}.json"] = cos.bodies[receipt_key]
+
+    with pytest.raises(ValueError, match="inventory is ambiguous"):
+        run_research_census_once(cos, "private", "datasets", now=NOW)
+    assert not any("/research-census/" in key for key in cos.bodies)
+
+
 def test_census_rejects_reacquired_source_records_before_persisting():
     cos = COS()
     _seed(cos)
