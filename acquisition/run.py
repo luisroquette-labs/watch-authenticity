@@ -901,7 +901,8 @@ def main(source: str = "all") -> None:
             cos, bucket, prefix, get_source_policy(policies, "wikimedia"), access,
             now=now,
             lanes=(("speedmaster/replica-research", (6, 7)),
-                   ("classic-speedmaster/research", (9, 10))),
+                   ("classic-speedmaster/research", (9, 10)),
+                   ("nasa-speedmaster/research", (14, 15))),
         )
         return
     if source == "wikimedia-auckland":

@@ -42,9 +42,11 @@ _FAMILY_SEARCHES = (
     ("fake Rolex Daytona watch", "rolex", "daytona"),
     ("Audemars Piguet Royal Oak", "audemars piguet", "royal oak"),
     ('incategory:"Illegal copies of watches of quality brands"', "unverified", "unverified"),
+    ('incategory:"Omega Speedmaster in Apollo, Gemini and other space programs" incategory:"PD NASA"', "unverified", "unverified"),
 )
 _REPLICA_SEARCHES = frozenset({6, 7, 10, 11})
 _COUNTERFEIT_CATEGORY_QUERY = 13
+_NASA_SPEEDMASTER_QUERY = 14
 _DEFAULT_SEARCH_STOP = 8
 _REPLICA_RESEARCH = "commons_replica_keyword_research_unverified"
 _CATEGORY_RESEARCH = "commons_counterfeit_category_research_unverified"
@@ -241,7 +243,7 @@ def _parse_page(
             _optional_metadata_text(metadata, "ImageDescription"),
         )
     ))
-    if query_index != _COUNTERFEIT_CATEGORY_QUERY and any(
+    if query_index not in {_COUNTERFEIT_CATEGORY_QUERY, _NASA_SPEEDMASTER_QUERY} and any(
         re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", searchable, re.I) is None
         for word in (brand, family)
     ):
@@ -294,7 +296,9 @@ def _parse_page(
         (("research_keyword_context", searchable[:2000]),)
         if query_index in _REPLICA_SEARCHES else
         (("research_category", "Illegal copies of watches of quality brands"),)
-        if query_index == _COUNTERFEIT_CATEGORY_QUERY else ()
+        if query_index == _COUNTERFEIT_CATEGORY_QUERY else
+        (("research_category", "Omega Speedmaster in Apollo, Gemini and other space programs; PD NASA"),)
+        if query_index == _NASA_SPEEDMASTER_QUERY else ()
     )
     classification = _CATEGORY_RESEARCH if query_index == _COUNTERFEIT_CATEGORY_QUERY else _CLASSIFICATION
     record = DiscoveryRecord(

@@ -168,8 +168,15 @@ def test_wikimedia_lane_has_independent_checkpoint(cos, monkeypatch):
         [("datasets/lanes/speedmaster/replica-research", 10, (6, 7)),
          ("datasets/lanes/classic-speedmaster/research", 10, (9, 10))],
     ),
+    (
+        (("speedmaster/replica-research", (6, 7)), ("classic-speedmaster/research", (9, 10)),
+         ("nasa-speedmaster/research", (14, 15))),
+        [("datasets/lanes/speedmaster/replica-research", 6, (6, 7)),
+         ("datasets/lanes/classic-speedmaster/research", 6, (9, 10)),
+         ("datasets/lanes/nasa-speedmaster/research", 6, (14, 15))],
+    ),
 ])
-def test_wikimedia_job_advances_two_lanes_with_separate_cursors(cos, monkeypatch, lanes, expected):
+def test_wikimedia_job_advances_lanes_with_separate_cursors(cos, monkeypatch, lanes, expected):
     access = load_source_access_registry(Path(__file__).resolve().parents[1] / "config/source_access.json")["wikimedia"]
     observed = []
 
@@ -193,7 +200,7 @@ def test_wikimedia_job_advances_two_lanes_with_separate_cursors(cos, monkeypatch
             cos, "private", "datasets", cast(SourcePolicy, SimpleNamespace()),
             replace(access, requests_per_minute=7), now=NOW, lanes=lanes,
         )
-    assert len(observed) == 2
+    assert len(observed) == len(lanes)
 
 
 def test_speedmaster_daily_entry_advances_replica_and_classic_lanes(cos, monkeypatch):
@@ -217,8 +224,9 @@ def test_speedmaster_daily_entry_advances_replica_and_classic_lanes(cos, monkeyp
     main("wikimedia-speedmaster")
 
     assert observed == [
-        ("datasets/lanes/speedmaster/replica-research", 10, (6, 7)),
-        ("datasets/lanes/classic-speedmaster/research", 10, (9, 10)),
+        ("datasets/lanes/speedmaster/replica-research", 6, (6, 7)),
+        ("datasets/lanes/classic-speedmaster/research", 6, (9, 10)),
+        ("datasets/lanes/nasa-speedmaster/research", 6, (14, 15)),
     ]
 
 
