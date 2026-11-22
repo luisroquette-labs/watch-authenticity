@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import re
+from collections import Counter
 from datetime import datetime
 from typing import Any
 
@@ -14,6 +15,11 @@ _MAX_KEYS = 20_000
 _MAX_OBJECT_BYTES = 1_000_000
 _MAX_OUTPUT_BYTES = _MAX_OBJECT_BYTES
 _LOG = logging.getLogger(__name__)
+_V1_FIELDS = {
+    "schema", "cycle", "manifest_count", "file_count", "probable_watch_count",
+    "confirmed_watch_count", "training_admission_count", "manifest_sha256s",
+}
+_V2_FIELDS = _V1_FIELDS | {"provisional_cells", "file_role_claim_counts"}
 
 
 def run_research_census_once(cos: Any, bucket: str, prefix: str, *, now: datetime) -> dict[str, object]:
@@ -36,7 +42,7 @@ def run_research_census_once(cos: Any, bucket: str, prefix: str, *, now: datetim
     source_record_ids: set[str] = set()
     raw_hashes: set[str] = set()
     manifest_hashes: list[str] = []
-    manifest_counts: dict[str, tuple[int, int]] = {}
+    manifest_details: dict[str, tuple[str, str, int, int, tuple[str, ...]]] = {}
     files = 0
     probable = 0
     for key in manifest_keys:
@@ -66,12 +72,16 @@ def run_research_census_once(cos: Any, bucket: str, prefix: str, *, now: datetim
         candidate_ids.update(report.candidate_ids)
         source_record_ids.update(report.source_record_ids)
         manifest_hashes.append(report.manifest_sha256)
-        manifest_counts[report.manifest_sha256] = (report.file_count, report.probable_watch_count)
+        manifest_details[report.manifest_sha256] = (
+            report.source, document["reference"], report.file_count,
+            report.probable_watch_count, tuple(item["role"] for item in document["files"]),
+        )
         files += report.file_count
         probable += report.probable_watch_count
 
+    cells, roles = _provisional_breakdown(manifest_hashes, manifest_details)
     status: dict[str, object] = {
-        "schema": "watch-auth-research-census-v1",
+        "schema": "watch-auth-research-census-v2",
         "cycle": now.date().isoformat(),
         "manifest_count": len(manifest_hashes),
         "file_count": files,
@@ -79,6 +89,8 @@ def run_research_census_once(cos: Any, bucket: str, prefix: str, *, now: datetim
         "confirmed_watch_count": 0,
         "training_admission_count": 0,
         "manifest_sha256s": sorted(manifest_hashes),
+        "provisional_cells": cells,
+        "file_role_claim_counts": roles,
     }
     payload = json.dumps(status, sort_keys=True, separators=(",", ":")).encode()
     if len(payload) > _MAX_OUTPUT_BYTES:
@@ -91,7 +103,7 @@ def run_research_census_once(cos: Any, bucket: str, prefix: str, *, now: datetim
     )
     terminal = _read_bytes(cos, bucket, key)
     if terminal != payload:
-        _validate_prior_terminal(terminal, status, manifest_counts)
+        _validate_prior_terminal(terminal, status, manifest_details)
         revision_key = f"{root}/research-census/{now.date().isoformat()}/revisions/{digest}.json"
         cos.put_object_if_absent(
             Bucket=bucket, Key=revision_key, Body=payload, ContentType="application/json",
@@ -106,31 +118,60 @@ def run_research_census_once(cos: Any, bucket: str, prefix: str, *, now: datetim
 
 
 def _validate_prior_terminal(
-    body: bytes, current: dict[str, object], manifest_counts: dict[str, tuple[int, int]]
+    body: bytes, current: dict[str, object],
+    manifest_details: dict[str, tuple[str, str, int, int, tuple[str, ...]]],
 ) -> None:
     try:
         prior = json.loads(body)
     except (TypeError, ValueError) as exc:
         raise RuntimeError("research census already closed with invalid terminal") from exc
+    schema = prior.get("schema") if isinstance(prior, dict) else None
     if (
         not isinstance(prior, dict)
-        or prior.get("schema") != current["schema"]
+        or schema not in {"watch-auth-research-census-v1", "watch-auth-research-census-v2"}
+        or set(prior) != (_V1_FIELDS if schema == "watch-auth-research-census-v1" else _V2_FIELDS)
         or prior.get("cycle") != current["cycle"]
         or prior.get("confirmed_watch_count") != 0
         or prior.get("training_admission_count") != 0
         or not isinstance(prior.get("manifest_sha256s"), list)
         or not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in prior["manifest_sha256s"])
         or len(set(prior["manifest_sha256s"])) != len(prior["manifest_sha256s"])
-        or not set(prior["manifest_sha256s"]).issubset(manifest_counts)
+        or not set(prior["manifest_sha256s"]).issubset(manifest_details)
         or prior.get("manifest_count") != len(prior["manifest_sha256s"])
         or not isinstance(prior.get("file_count"), int)
         or isinstance(prior["file_count"], bool)
         or not isinstance(prior.get("probable_watch_count"), int)
         or isinstance(prior["probable_watch_count"], bool)
-        or prior["file_count"] != sum(manifest_counts[digest][0] for digest in prior["manifest_sha256s"])
-        or prior["probable_watch_count"] != sum(manifest_counts[digest][1] for digest in prior["manifest_sha256s"])
+        or prior["file_count"] != sum(manifest_details[digest][2] for digest in prior["manifest_sha256s"])
+        or prior["probable_watch_count"] != sum(manifest_details[digest][3] for digest in prior["manifest_sha256s"])
     ):
         raise RuntimeError("research census already closed with incompatible terminal")
+    if schema == "watch-auth-research-census-v2":
+        cells, roles = _provisional_breakdown(prior["manifest_sha256s"], manifest_details)
+        if prior["provisional_cells"] != cells or prior["file_role_claim_counts"] != roles:
+            raise RuntimeError("research census already closed with incompatible terminal")
+
+
+def _provisional_breakdown(
+    digests: list[str],
+    details: dict[str, tuple[str, str, int, int, tuple[str, ...]]],
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    cells: dict[tuple[str, str], list[int]] = {}
+    roles: Counter[str] = Counter()
+    for digest in digests:
+        source, reference, photos, watches, file_roles = details[digest]
+        cell = cells.setdefault((source, reference), [0, 0])
+        cell[0] += watches
+        cell[1] += photos
+        roles.update(file_roles)
+    return (
+        [
+            {"source": source, "reference_claim": reference,
+             "probable_watch_count": counts[0], "file_count": counts[1]}
+            for (source, reference), counts in sorted(cells.items())
+        ],
+        dict(sorted(roles.items())),
+    )
 
 
 def _list_keys(cos: Any, bucket: str, prefix: str) -> list[str]:
