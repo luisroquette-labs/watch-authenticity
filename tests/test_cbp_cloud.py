@@ -77,6 +77,39 @@ def test_cbp_discovers_five_articles_then_resumes_without_training_claim(monkeyp
     assert second.records[0].source_url == urls[5]
 
 
+def test_cbp_discovers_counterfeit_articles_named_for_other_watch_brands(monkeypatch):
+    policy, access = _access()
+    sitemap = "https://www.cbp.gov/sitemap.xml?page=1"
+    urls = [
+        "https://www.cbp.gov/newsroom/local-media-release/counterfeit-cartier-seized",
+        "https://www.cbp.gov/newsroom/local-media-release/fake-omega-seamaster-seized",
+        "https://www.cbp.gov/newsroom/local-media-release/counterfeit-richard-mille-seized",
+    ]
+    article = b'<div class="field--name-body">Counterfeit watches<img src="/sites/default/files/watch.jpg"></div>'
+    reader = _Read({cbp._INDEX: _xml("sitemapindex", [sitemap]),
+                    sitemap: _xml("urlset", urls), **dict.fromkeys(urls, article)})
+    monkeypatch.setattr(cbp, "PacedBoundedHTTP", lambda *_args: reader)
+
+    page = cbp.discover_cbp(object(), policy, access, now=NOW)
+    assert [record.source_url for record in page.records] == sorted(urls)
+    assert all(record.declared_reference == "unverified" for record in page.records)
+    assert not policy.may_train
+
+
+def test_cbp_skips_nonwatch_brand_seizure_article(monkeypatch):
+    policy, access = _access()
+    sitemap = "https://www.cbp.gov/sitemap.xml?page=1"
+    url = "https://www.cbp.gov/newsroom/local-media-release/counterfeit-cartier-jewelry-seized"
+    article = b'<div class="field--name-body">Counterfeit Cartier bracelets were seized.<img src="/sites/default/files/bracelet.jpg"></div>'
+    reader = _Read({cbp._INDEX: _xml("sitemapindex", [sitemap]),
+                    sitemap: _xml("urlset", [url]), url: article})
+    monkeypatch.setattr(cbp, "PacedBoundedHTTP", lambda *_args: reader)
+
+    page = cbp.discover_cbp(object(), policy, access, now=NOW)
+    assert page.records == ()
+    assert page.next_cursor is None
+
+
 def test_cbp_resumes_after_sitemap_deletion_and_rejects_foreign_cursor(monkeypatch):
     policy, access = _access()
     sitemap = "https://www.cbp.gov/sitemap.xml?page=1"
