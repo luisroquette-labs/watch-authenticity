@@ -80,10 +80,11 @@ def discover_swisswatchexpo(
                                  or any(_SITEMAP.fullmatch(_approved(item, _HOST).path) is None
                                         for item in processed)):
         raise SwissWatchExpoDiscoveryError("sitemap continuation cursor is invalid")
-    url = next((item for item in sitemap_urls if item not in processed), None)
-    if url is None:
+    remaining = [item for item in sitemap_urls if item not in processed]
+    if not remaining:
         return DiscoveryPage(source="swisswatchexpo", access_record_id=access.access_record_id,
                              cursor=cursor, next_cursor=None, observed_at=now, records=())
+    url = remaining[0]
     processed_after = (*processed, url)
     next_cursor = ("|".join(processed_after)
                    if any(item not in processed_after for item in sitemap_urls) else None)
