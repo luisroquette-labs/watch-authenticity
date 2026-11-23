@@ -218,5 +218,19 @@
     "required_rights_purposes": [],
     "requires_rightsholder_permission": true,
     "policy_evidence_sha256": "b00fb090ed0dd1f7fb3ee4c36b82543541e054545e6bc43675feae5e2f1a4cff"
+  },
+  {
+    "policy_id": "richardmillereplica-public-private-download-v1",
+    "source": "richardmillereplica",
+    "allowed_methods": [
+      "public-sitemap-product-pages"
+    ],
+    "may_download": true,
+    "may_train": false,
+    "required_rights_purposes": [
+      "download"
+    ],
+    "requires_rightsholder_permission": false,
+    "policy_evidence_sha256": "ba30baf5ba018bb167685e92102eba8363792af3496bfc82f8369d1ff01e134e"
   }
 ]

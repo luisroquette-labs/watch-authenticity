@@ -26,6 +26,7 @@ deployment_id="$(printf '%s\0' "$(shasum -a 256 < "$0")" \
   "${WATCH_AUTH_IAM_READER_POLICY_ID}" | shasum -a 256 | cut -c1-12)"
 acquisition_job="watch-auth-acquisition-${deployment_id}"
 luxury_job="watch-auth-supercloneluxury-${deployment_id}"
+rm_replica_job="watch-auth-rm-replica-${deployment_id}"
 cbp_job="watch-auth-cbp-${deployment_id}"
 goldsmiths_job="watch-auth-goldsmiths-${deployment_id}"
 bobs_job="watch-auth-bobswatches-${deployment_id}"
@@ -193,6 +194,39 @@ luxury_cron_args=("${cron_args[@]}")
 luxury_cron_args[1]=watch-auth-supercloneluxury-daily
 luxury_cron_args[5]="${luxury_job}"
 luxury_cron_args[7]='37 3 * * *'
+
+rm_replica_job_args=("${job_args[@]}")
+rm_replica_job_args[1]="${rm_replica_job}"
+rm_replica_job_args+=(--arg=--source --arg=richardmillereplica)
+if ibmcloud ce job get --name "${rm_replica_job}" --output json >/dev/null 2>&1; then
+  :
+else
+  ibmcloud ce job create "${rm_replica_job_args[@]}"
+fi
+verify_job "${rm_replica_job}" richardmillereplica
+
+if link_exists "${rm_replica_job}"; then
+  :
+else
+  link_state=$?
+  [[ "${link_state}" -eq 1 ]] || {
+    echo "trusted-profile link inventory failed" >&2
+    exit 2
+  }
+  ibmcloud iam trusted-profile-link-create "${WATCH_AUTH_TRUSTED_PROFILE_ID}" \
+    --name "${rm_replica_job}" \
+    --cr-type CE \
+    --link-crn "${WATCH_AUTH_CE_PROJECT_CRN}" \
+    --link-component-type job \
+    --link-component-name "${rm_replica_job}" \
+    --output json >/dev/null
+  link_exists "${rm_replica_job}" || { echo "trusted-profile link readback failed" >&2; exit 2; }
+fi
+
+rm_replica_cron_args=("${cron_args[@]}")
+rm_replica_cron_args[1]=watch-auth-rm-replica-daily
+rm_replica_cron_args[5]="${rm_replica_job}"
+rm_replica_cron_args[7]='47 5 * * *'
 
 cbp_job_args=("${job_args[@]}")
 cbp_job_args[1]="${cbp_job}"
@@ -522,6 +556,12 @@ if ibmcloud ce sub cron get --name watch-auth-supercloneluxury-daily --output js
   ibmcloud ce sub cron update "${luxury_cron_args[@]}"
 else
   ibmcloud ce sub cron create "${luxury_cron_args[@]}"
+fi
+
+if ibmcloud ce sub cron get --name watch-auth-rm-replica-daily --output json >/dev/null 2>&1; then
+  ibmcloud ce sub cron update "${rm_replica_cron_args[@]}"
+else
+  ibmcloud ce sub cron create "${rm_replica_cron_args[@]}"
 fi
 
 if ibmcloud ce sub cron get --name watch-auth-cbp-daily --output json >/dev/null 2>&1; then

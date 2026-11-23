@@ -28,7 +28,7 @@ _OWNER_FORUM_SOURCES = frozenset({"chrono24", "watchuseek"})
 _REPLICA_DISCOVERY_SOURCES = frozenset({"reptime", "chinese_replica"})
 
 REPLICA_VENDOR_SOURCES = frozenset({
-    "richfactoryus", "supercloneluxury", "superclonerolex",
+    "richardmillereplica", "richfactoryus", "supercloneluxury", "superclonerolex",
     "vsfactoryusa", "vsfwatcheshub",
 })
 

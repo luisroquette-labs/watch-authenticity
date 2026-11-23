@@ -47,6 +47,7 @@ def test_registry_loads_every_declared_source_policy(policy_set):
         "vsfactoryusa",
         "vsfwatcheshub",
         "richfactoryus",
+        "richardmillereplica",
         "superclonerolex",
         "supercloneluxury",
         "watchesofswitzerland",
@@ -236,6 +237,7 @@ def test_versioned_access_registry_keeps_unproven_sources_inactive():
         "vsfactoryusa",
         "vsfwatcheshub",
         "richfactoryus",
+        "richardmillereplica",
         "superclonerolex",
         "supercloneluxury",
         "watchesofswitzerland",
@@ -249,6 +251,7 @@ def test_versioned_access_registry_keeps_unproven_sources_inactive():
     assert registry["vsfactoryusa"].status is SourceAccessStatus.ACTIVE
     assert registry["vsfwatcheshub"].status is SourceAccessStatus.ACTIVE
     assert registry["richfactoryus"].status is SourceAccessStatus.ACTIVE
+    assert registry["richardmillereplica"].status is SourceAccessStatus.ACTIVE
     assert registry["superclonerolex"].status is SourceAccessStatus.ACTIVE
     assert registry["supercloneluxury"].status is SourceAccessStatus.ACTIVE
     assert registry["watchesofswitzerland"].status is SourceAccessStatus.ACTIVE
@@ -266,6 +269,7 @@ def test_versioned_access_registry_keeps_unproven_sources_inactive():
             "vsfactoryusa",
             "vsfwatcheshub",
             "richfactoryus",
+            "richardmillereplica",
             "superclonerolex",
             "supercloneluxury",
             "watchesofswitzerland",
