@@ -10,7 +10,7 @@ import socket
 import tempfile
 import warnings
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -150,6 +150,7 @@ def collect_batch(
     bucket: str,
     batch_id: str,
     now: datetime,
+    rights_evidence: bytes | None = None,
     dns_resolver: Any = socket.getaddrinfo,
 ) -> BatchReceipt:
     """Collect an authorized batch; refuse policy/rights before HTTP or COS."""
@@ -163,6 +164,15 @@ def collect_batch(
         raise AcquisitionRefused(", ".join(access_decision.reasons))
     assert access is not None
     _safe_id(batch_id, "batch_id")
+    evidenced_rights: RightsRecord | None = None
+    if rights_evidence is not None:
+        if not isinstance(rights, RightsRecord):
+            raise AcquisitionRefused("rights evidence requires a RightsRecord")
+        if hashlib.sha256(rights_evidence).hexdigest() != rights.evidence_sha256:
+            raise IntegrityError("rights evidence hash differs from RightsRecord")
+        if not callable(getattr(cos_client, "put_object_if_absent", None)):
+            raise RuntimeError("COS client lacks immutable rights create")
+        evidenced_rights = rights
 
     normalized_records = tuple(
         record
@@ -191,7 +201,12 @@ def collect_batch(
         )
         if resumed_receipt is not None:
             accepted.append(candidate_id)
-            receipt_hashes.append(resumed_receipt)
+            receipt_hashes.append(resumed_receipt[0])
+            if evidenced_rights is not None and rights_evidence is not None:
+                persist_rights_record(
+                    cos_client, bucket, replace(evidenced_rights, asset_sha256=resumed_receipt[1]),
+                    rights_evidence,
+                )
             continue
         payload, raw_sha256 = _download_image(
             http_client,
@@ -234,6 +249,11 @@ def collect_batch(
         )
         accepted.append(candidate_id)
         receipt_hashes.append(receipt_sha256)
+        if evidenced_rights is not None and rights_evidence is not None:
+            persist_rights_record(
+                cos_client, bucket, replace(evidenced_rights, asset_sha256=raw_sha256),
+                rights_evidence,
+            )
 
     batch_sha256 = hashlib.sha256(
         json.dumps(receipt_hashes, separators=(",", ":")).encode()
@@ -256,7 +276,7 @@ def _resume_candidate_if_present(
     policy: SourcePolicy,
     rights: RightsRecord | CollectionAuthorizationRecord,
     metadata: CandidateMetadata,
-) -> str | None:
+) -> tuple[str, str] | None:
     prefix = f"datasets/receipts/{batch_id}/{candidate_id}-"
     page = cos_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
     if not isinstance(page, dict) or page.get("IsTruncated"):
@@ -328,7 +348,60 @@ def _resume_candidate_if_present(
         stored = _read_cos_bytes(cos_client, bucket, key_value)
         if stored is None or hashlib.sha256(stored).hexdigest() != value:
             raise IntegrityError(f"receipt {kind} object is missing or corrupt")
-    return digest
+    return digest, receipt["raw_sha256"]
+
+
+def persist_rights_record(
+    cos_client: Any, bucket: str, rights: RightsRecord, evidence: bytes
+) -> str:
+    """Create one immutable, asset-scoped grant and verify its readback."""
+    if rights.asset_sha256 is None:
+        raise IntegrityError("durable rights grant must be asset scoped")
+    if hashlib.sha256(evidence).hexdigest() != rights.evidence_sha256:
+        raise IntegrityError("rights evidence hash differs from RightsRecord")
+    document = asdict(rights)
+    for field in ("effective_at", "expires_at", "disposition_deadline"):
+        document[field] = getattr(rights, field).isoformat()
+    document["status"] = rights.status.value
+    body = json.dumps(
+        {"schema": "watch-auth-rights-grant-v1", "rights": document,
+         "evidence": json.loads(evidence)},
+        sort_keys=True, separators=(",", ":"),
+    ).encode()
+    digest = hashlib.sha256(body).hexdigest()
+    key = f"datasets/rights/{rights.rights_record_id}/{rights.asset_sha256}.json"
+    cos_client.put_object_if_absent(
+        Bucket=bucket, Key=key, Body=body,
+        Metadata={"sha256": digest, "length": str(len(body))},
+        ContentType="application/json",
+    )
+    stored = _read_receipt(cos_client, bucket, key)
+    if stored is None:
+        raise IntegrityError(f"rights grant is missing after create: {key}")
+    try:
+        previous = json.loads(stored)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise IntegrityError(f"rights grant is invalid: {key}") from exc
+    expected = json.loads(body)
+    if not isinstance(previous, dict) or previous.get("schema") != expected["schema"]:
+        raise IntegrityError(f"rights grant collision: {key}")
+    stored_rights = previous.get("rights")
+    if not isinstance(stored_rights, dict):
+        raise IntegrityError(f"rights grant collision: {key}")
+    expected_rights = expected["rights"]
+    stable_fields = set(document) - {"effective_at", "expires_at", "disposition_deadline"}
+    if previous.get("evidence") != expected["evidence"] or any(
+        stored_rights.get(field) != expected_rights[field] for field in stable_fields
+    ):
+        raise IntegrityError(f"rights grant collision: {key}")
+    if set(stored_rights) != set(document):
+        raise IntegrityError(f"rights grant collision: {key}")
+    for field in ("effective_at", "expires_at", "disposition_deadline"):
+        if not isinstance(stored_rights[field], str):
+            raise IntegrityError(f"rights grant collision: {key}")
+    if datetime.fromisoformat(stored_rights["expires_at"]) <= rights.effective_at:
+        raise IntegrityError("previous rights grant expired before replay")
+    return key
 
 
 def persist_candidate_payload(

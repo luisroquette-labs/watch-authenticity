@@ -82,6 +82,7 @@ class WikimediaAPIError(RuntimeError):
 class WikimediaCandidate:
     metadata: CandidateMetadata
     rights: RightsRecord
+    rights_evidence: bytes
     observed_at: datetime
     author: str
     license_name: str
@@ -296,9 +297,10 @@ def _parse_page(
             "image_sha1": sha1,
             "image_timestamp": revision,
         })
-    rights_sha256 = hashlib.sha256(
-        json.dumps(rights_evidence, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    rights_evidence_bytes = json.dumps(
+        rights_evidence, sort_keys=True, separators=(",", ":")
+    ).encode()
+    rights_sha256 = hashlib.sha256(rights_evidence_bytes).hexdigest()
     rights = RightsRecord(
         rights_record_id=f"wikimedia-{rights_sha256[:24]}",
         source="wikimedia",
@@ -358,6 +360,7 @@ def _parse_page(
             ),
         ),
         rights=rights,
+        rights_evidence=rights_evidence_bytes,
         observed_at=observed_at,
         author=author,
         license_name=license_name,
