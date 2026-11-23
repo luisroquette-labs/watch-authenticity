@@ -67,7 +67,10 @@ _ALLOWED_LICENSES = frozenset(
         "CC BY-SA 4.0",
     }
 )
-_CC0_LICENSE_URL = "https://creativecommons.org/publicdomain/zero/1.0/"
+_CC0_LICENSE_URLS = frozenset({
+    "https://creativecommons.org/publicdomain/zero/1.0/",
+    "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+})
 _TAG = re.compile(r"<[^>]*>")
 
 
@@ -276,7 +279,7 @@ def _parse_page(
     raw_license_url = license_url_entry.get("value") if isinstance(license_url_entry, Mapping) else None
     allowed_purposes = (
         ("download", "train")
-        if license_name == "CC0" and raw_license_url == _CC0_LICENSE_URL
+        if license_name == "CC0" and raw_license_url in _CC0_LICENSE_URLS
         else ("download",)
     )
     rights_evidence: dict[str, object] = {
