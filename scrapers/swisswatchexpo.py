@@ -142,7 +142,7 @@ def _parse_entry(entry: ET.Element) -> DiscoveryRecord | None:
                   ("label_basis", "seller_listing"),
                   ("rights_status", "metadata_only"),
                   ("independent_confirmation", "not_established"),
-                  ("physical_stock_id", match.group(1)),
+                  ("listing_stock_id", match.group(1)),
                   ("last_modified", lastmod or "unknown")),
     )
 

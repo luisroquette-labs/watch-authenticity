@@ -111,8 +111,9 @@ def test_continuation_reads_only_next_sitemap_and_skips_prior_stock():
     assert sorted(record.source_record_id.split("#")[0] for record in continued.records) == [
         "53951", "53952"
     ]
-    assert all(dict(record.metadata)["physical_stock_id"] in {"53951", "53952"}
+    assert all(dict(record.metadata)["listing_stock_id"] in {"53951", "53952"}
                for record in continued.records)
+    assert all("physical_stock_id" not in dict(record.metadata) for record in continued.records)
     assert second in [call.args[0] for call in client.get.call_args_list]
     assert first not in [call.args[0] for call in client.get.call_args_list]
 
