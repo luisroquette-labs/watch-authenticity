@@ -138,6 +138,7 @@ def run_wikimedia_once(
                 bucket=bucket,
                 batch_id=batch_id,
                 now=now,
+                rights_evidence=candidate.rights_evidence,
             )
             accepted.extend(receipt.accepted_candidate_ids)
 

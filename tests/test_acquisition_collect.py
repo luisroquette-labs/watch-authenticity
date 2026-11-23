@@ -80,6 +80,67 @@ def test_repeated_batch_reuses_verified_raw_derivative_and_receipt(collector_fix
     assert cos.write_count == writes
 
 
+def test_rights_evidence_is_persisted_asset_scoped_and_restored_on_resume(
+    allowed_policy, rights, cos
+):
+    evidence = b'{"license":"CC0","license_url_literal":"https://creativecommons.org/publicdomain/zero/1.0/"}'
+    grant = replace(rights, evidence_sha256=hashlib.sha256(evidence).hexdigest())
+    current_grant = grant
+    current_now = NOW
+    body = _png("green")
+    record = {
+        "source_record_id": "record-1", "source_url": "https://partner.example/record-1",
+        "image_url": "https://partner.example/image-1.png",
+        "declared_reference": "unverified", "expected_sha256": hashlib.sha256(body).hexdigest(),
+    }
+    http = MagicMock()
+    http.get_pinned.return_value = _Response(body, "image/png")
+
+    def collect():
+        return collect_batch(
+            [record], allowed_policy, current_grant, access=_access(current_grant),
+            http_client=http, cos_client=cos, bucket="private", batch_id="rights-b1",
+            now=current_now, rights_evidence=evidence, dns_resolver=_public_dns,
+        )
+
+    first = collect()
+    keys = [key for key in cos.bodies if key.startswith("datasets/rights/")]
+    assert len(keys) == 1
+    document = json.loads(cos.bodies[keys[0]])
+    assert document["rights"]["asset_sha256"] == hashlib.sha256(body).hexdigest()
+    assert document["rights"]["allowed_purposes"] == ["download", "train"]
+    assert document["evidence"] == json.loads(evidence)
+    writes = cos.write_count
+    current_now = NOW + timedelta(days=1)
+    current_grant = replace(
+        grant, effective_at=current_now,
+        expires_at=grant.expires_at + timedelta(days=1),
+        disposition_deadline=grant.disposition_deadline + timedelta(days=1),
+    )
+    assert collect() == first
+    assert cos.write_count == writes
+    http.get_pinned.assert_called_once()
+
+    del cos.bodies[keys[0]], cos.metadata[keys[0]]
+    assert collect() == first
+    assert keys[0] in cos.bodies
+    http.get_pinned.assert_called_once()
+
+
+def test_rights_evidence_hash_mismatch_refuses_before_io(
+    allowed_policy, rights, cos
+):
+    http = MagicMock()
+    with pytest.raises(IntegrityError, match="rights evidence hash"):
+        collect_batch(
+            [], allowed_policy, rights, access=_access(rights), http_client=http,
+            cos_client=cos, bucket="private", batch_id="rights-bad", now=NOW,
+            rights_evidence=b"{}",
+        )
+    assert cos.write_count == 0
+    http.get_pinned.assert_not_called()
+
+
 @pytest.mark.parametrize(("source", "legacy_allowed"), [("vsfactoryusa", True), ("olx", False)])
 def test_replica_vendor_claim_is_weak_and_only_vendor_legacy_null_resumes(
     source, legacy_allowed, allowed_policy, rights, cos, monkeypatch

@@ -70,6 +70,7 @@ def _result(*, cursor=None, next_cursor=None) -> WikimediaDiscovery:
         SimpleNamespace(
             metadata=SimpleNamespace(source_record_id="123"),
             rights=SimpleNamespace(rights_record_id="rights-123"),
+            rights_evidence=b"{}",
             observed_at=datetime(2020, 1, 2, 3, 4, tzinfo=timezone.utc),
         ),
     )
