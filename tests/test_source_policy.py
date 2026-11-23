@@ -53,6 +53,7 @@ def test_registry_loads_every_declared_source_policy(policy_set):
         "goldsmiths",
         "precisionwatches",
         "bobswatches",
+        "swisswatchexpo",
         "cbp",
     }
 
@@ -241,6 +242,7 @@ def test_versioned_access_registry_keeps_unproven_sources_inactive():
         "goldsmiths",
         "precisionwatches",
         "bobswatches",
+        "swisswatchexpo",
         "cbp",
     }
     assert registry["wikimedia"].status is SourceAccessStatus.ACTIVE
@@ -253,6 +255,7 @@ def test_versioned_access_registry_keeps_unproven_sources_inactive():
     assert registry["goldsmiths"].status is SourceAccessStatus.ACTIVE
     assert registry["precisionwatches"].status is SourceAccessStatus.ACTIVE
     assert registry["bobswatches"].status is SourceAccessStatus.ACTIVE
+    assert registry["swisswatchexpo"].status is SourceAccessStatus.ACTIVE
     assert registry["cbp"].status is SourceAccessStatus.ACTIVE
     assert all(
         record.status is not SourceAccessStatus.ACTIVE
@@ -269,6 +272,7 @@ def test_versioned_access_registry_keeps_unproven_sources_inactive():
             "goldsmiths",
             "precisionwatches",
             "bobswatches",
+            "swisswatchexpo",
             "cbp",
         }
     )

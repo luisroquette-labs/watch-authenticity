@@ -55,6 +55,7 @@ from scrapers.replica_sitemap import ReplicaSitemapError
 from scrapers.richfactoryus import discover_richfactoryus
 from scrapers.supercloneluxury import discover_supercloneluxury
 from scrapers.superclonerolex import SuperCloneRolexAPIError, discover_superclonerolex
+from scrapers.swisswatchexpo import SwissWatchExpoDiscoveryError, discover_swisswatchexpo
 from scrapers.vsfactoryusa import discover_vsfactoryusa
 from scrapers.vsfwatcheshub import discover_vsfwatcheshub
 from scrapers.watchesofswitzerland import (
@@ -81,6 +82,7 @@ _RECOVERABLE_METADATA_ERRORS = (
     ReplicaSitemapError,
     requests.RequestException,
     SuperCloneRolexAPIError,
+    SwissWatchExpoDiscoveryError,
     CatalogError,
     UnicodeDecodeError,
     WatchesOfSwitzerlandAPIError,
@@ -818,7 +820,7 @@ def main(source: str = "all") -> None:
     root = Path(__file__).resolve().parents[1]
     policies = load_source_policies(root / "config/source_policies.json")
     access_registry = load_source_access_registry(root / "config/source_access.json")
-    if source not in {"all", "supercloneluxury", "cbp", "goldsmiths", "bobswatches", "wikimedia-speedmaster", "wikimedia-auckland", "wikimedia-classic-speedmaster", "wikimedia-daytona", "wikimedia-royal-oak", "wikimedia-counterfeit-category", "research-census"}:
+    if source not in {"all", "supercloneluxury", "cbp", "goldsmiths", "bobswatches", "swisswatchexpo", "wikimedia-speedmaster", "wikimedia-auckland", "wikimedia-classic-speedmaster", "wikimedia-daytona", "wikimedia-royal-oak", "wikimedia-counterfeit-category", "research-census"}:
         raise ValueError("unsupported acquisition source")
     logging.basicConfig(level=logging.INFO)
     now = datetime.now(timezone.utc)
@@ -896,6 +898,23 @@ def main(source: str = "all") -> None:
             ),
         )
         return
+    if source == "swisswatchexpo":
+        swe_policy = get_source_policy(policies, source)
+        swe_access = access_registry[source]
+        if swe_access.requests_per_minute is None:
+            raise RuntimeError("SwissWatchExpo request limit is missing")
+        for _ in range(16):
+            result = run_metadata_discovery_resilient(
+                cos, bucket, prefix, source, now=now,
+                discover=lambda previous: discover_swisswatchexpo(
+                    requests.Session(), swe_policy, swe_access,
+                    now=now, previous=previous, deadline=job_deadline,
+                ),
+            )
+            if result["state"] in {"complete", "already_complete", "failed"}:
+                return
+            time.sleep(60 / swe_access.requests_per_minute)
+        raise RuntimeError("SwissWatchExpo exceeded bounded sitemap page count")
     if source == "wikimedia-speedmaster":
         access = access_registry["wikimedia"]
         run_wikimedia_lanes(
@@ -1076,8 +1095,7 @@ def main(source: str = "all") -> None:
             previous=previous,
         ),
     )
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", choices=("all", "supercloneluxury", "cbp", "goldsmiths", "bobswatches", "wikimedia-speedmaster", "wikimedia-auckland", "wikimedia-classic-speedmaster", "wikimedia-daytona", "wikimedia-royal-oak", "wikimedia-counterfeit-category", "research-census"), default="all")
+    parser.add_argument("--source", choices=("all", "supercloneluxury", "cbp", "goldsmiths", "bobswatches", "swisswatchexpo", "wikimedia-speedmaster", "wikimedia-auckland", "wikimedia-classic-speedmaster", "wikimedia-daytona", "wikimedia-royal-oak", "wikimedia-counterfeit-category", "research-census"), default="all")
     main(parser.parse_args().source)

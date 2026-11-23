@@ -206,5 +206,17 @@
     "required_rights_purposes": [],
     "requires_rightsholder_permission": true,
     "policy_evidence_sha256": "2e15471a0eb99b65b8e2059c16f4b34b42ae27ede52d81fc12adaaa743c8d961"
+  },
+  {
+    "policy_id": "swisswatchexpo-metadata-only-v1",
+    "source": "swisswatchexpo",
+    "allowed_methods": [
+      "public-sitemap"
+    ],
+    "may_download": false,
+    "may_train": false,
+    "required_rights_purposes": [],
+    "requires_rightsholder_permission": true,
+    "policy_evidence_sha256": "b00fb090ed0dd1f7fb3ee4c36b82543541e054545e6bc43675feae5e2f1a4cff"
   }
 ]
