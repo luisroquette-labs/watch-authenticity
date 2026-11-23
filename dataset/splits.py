@@ -207,11 +207,18 @@ def build_splits(
             prior = seen.setdefault((field, value), record.asset_id)
             union.union(prior, record.asset_id)
     by_phash: dict[str, str] = {}
+    labels_by_phash: dict[str, tuple[Label, int | None]] = {}
     for record in records:
+        label = (record.label, record.grade)
+        previous_label = labels_by_phash.setdefault(record.phash, label)
+        if previous_label != label:
+            raise ValueError("conflicting labels for similar images")
         prior = by_phash.setdefault(record.phash, record.asset_id)
         union.union(prior, record.asset_id)
     unique_phashes = sorted(by_phash)
     for left, right in find_near_duplicate_pairs(unique_phashes):
+        if labels_by_phash[unique_phashes[left]] != labels_by_phash[unique_phashes[right]]:
+            raise ValueError("conflicting labels for similar images")
         union.union(by_phash[unique_phashes[left]], by_phash[unique_phashes[right]])
 
     components: dict[str, list[AcceptedTrainingRecord]] = {}
