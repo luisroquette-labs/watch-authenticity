@@ -1155,14 +1155,19 @@ esac
     assert "ce sub cron" not in log.read_text()
 
 
-def test_deploy_does_not_create_job_when_readback_is_forbidden(tmp_path):
+@pytest.mark.parametrize("readback_error", [
+    "This action is forbidden",
+    "This action is forbidden; job not found",
+    "credential not found",
+])
+def test_deploy_does_not_create_job_when_readback_is_forbidden(tmp_path, readback_error):
     root = Path(__file__).resolve().parents[1]
     fake = tmp_path / "ibmcloud"
     fake.write_text(
         "#!/usr/bin/env bash\n"
         "printf '%s\\n' \"$*\" >> \"$CALL_LOG\"\n"
         "if [[ \"$*\" == ce\\ job\\ get* ]]; then "
-        "echo 'This action is forbidden' >&2; exit 1; fi\n"
+        "echo \"$READBACK_ERROR\" >&2; exit 1; fi\n"
     )
     fake.chmod(0o755)
     log = tmp_path / "calls.log"
@@ -1170,6 +1175,7 @@ def test_deploy_does_not_create_job_when_readback_is_forbidden(tmp_path):
         **os.environ,
         "PATH": f"{tmp_path}:{os.environ['PATH']}",
         "CALL_LOG": str(log),
+        "READBACK_ERROR": readback_error,
         "WATCH_AUTH_CE_PROJECT": "watch-authenticity",
         "WATCH_AUTH_CE_PROJECT_CRN": "crn:v1:project",
         "WATCH_AUTH_ACQUISITION_IMAGE_DIGEST": "us.icr.io/ns/acquisition@sha256:" + "a" * 64,

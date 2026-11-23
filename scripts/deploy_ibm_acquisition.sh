@@ -23,7 +23,7 @@ resource_exists() {
     return 0
   fi
   case "${output}" in
-    *"Not found"*|*"not found"*|*"does not exist"*|*"Does not exist"*) return 1 ;;
+    "Not found"|"not found") return 1 ;;
   esac
   printf 'Code Engine %s readback failed for %s: %s\n' "${kind}" "${name}" "${output}" >&2
   return 2
