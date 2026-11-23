@@ -910,7 +910,8 @@ def test_rm_replica_source_is_accepted_by_runtime_cli():
 
 
 @pytest.mark.parametrize("existing_cron", [False, True])
-def test_deploy_script_creates_and_rechecks_trusted_profile_link(tmp_path, existing_cron):
+@pytest.mark.parametrize("ibm_missing_message", [False, True])
+def test_deploy_script_creates_and_rechecks_trusted_profile_link(tmp_path, existing_cron, ibm_missing_message):
     root = Path(__file__).resolve().parents[1]
     fake = tmp_path / "ibmcloud"
     fake.write_text(
@@ -919,7 +920,7 @@ set -eu
 printf '%s\n' "$*" >> "$CALL_LOG"
 case "$*" in
   "ce job get"*)
-    if [[ ! -f "$JOB_STATE" ]] || ! grep -qx "$5" "$JOB_STATE"; then echo 'Not found' >&2; exit 1; fi
+    if [[ ! -f "$JOB_STATE" ]] || ! grep -qx "$5" "$JOB_STATE"; then echo "$JOB_MISSING_TEXT" >&2; exit 1; fi
     args='["-m","acquisition.run"]'
     if [[ "$5" == watch-auth-supercloneluxury-* ]]; then args='["-m","acquisition.run","--source","supercloneluxury"]'; fi
     if [[ "$5" == watch-auth-rm-replica-* ]]; then args='["-m","acquisition.run","--source","richardmillereplica"]'; fi
@@ -954,7 +955,7 @@ case "$*" in
   "ce job create"*) printf '%s\n' "$5" >> "$JOB_STATE" ;;
   "ce sub cron get"*)
     if [[ "${FORBIDDEN_CRON:-0}" == 1 ]]; then echo 'This action is forbidden' >&2; exit 1; fi
-    [[ "$EXISTING_CRON" == 1 ]] || { echo 'Not found' >&2; exit 1; }
+    [[ "$EXISTING_CRON" == 1 ]] || { echo "$CRON_MISSING_TEXT" >&2; exit 1; }
     ;;
   "ce sub cron create"*|"ce sub cron update"*)
     if [[ "${FAIL_GOLDSMITHS_CRON:-0}" == 1 && "$*" == *watch-auth-goldsmiths-daily* ]]; then exit 2; fi
@@ -990,6 +991,8 @@ esac
         "LINK_STATE": str(tmp_path / "linked"),
         "JOB_STATE": str(tmp_path / "jobs"),
         "EXISTING_CRON": "1" if existing_cron else "0",
+        "JOB_MISSING_TEXT": "Resource not found. Run 'ibmcloud ce job list' to view available resources." if ibm_missing_message else "Not found",
+        "CRON_MISSING_TEXT": "Resource not found. Run 'ibmcloud ce subscription cron list' to view available resources." if ibm_missing_message else "Not found",
         "WATCH_AUTH_CE_PROJECT": "watch-authenticity",
         "WATCH_AUTH_CE_PROJECT_CRN": "crn:v1:project",
         "WATCH_AUTH_ACQUISITION_IMAGE_DIGEST": "us.icr.io/ns/acquisition@sha256:" + "a" * 64,

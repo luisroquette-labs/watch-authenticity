@@ -23,7 +23,9 @@ resource_exists() {
     return 0
   fi
   case "${output}" in
-    "Not found"|"not found") return 1 ;;
+    "Not found"|"not found"|\
+    "Resource not found. Run 'ibmcloud ce job list' to view available resources."|\
+    "Resource not found. Run 'ibmcloud ce subscription cron list' to view available resources.") return 1 ;;
   esac
   printf 'Code Engine %s readback failed for %s: %s\n' "${kind}" "${name}" "${output}" >&2
   return 2
