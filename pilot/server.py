@@ -81,7 +81,8 @@ function renderReport(j,group){
   let ev=j.joint.visible_evidence;
   let colors={green:'verde',black:'preto',blue:'azul',uncertain:'não verificada'};
   let count=n=>n+' '+(n===1?'foto':'fotos');
-  let findings='Mostrador: '+(colors[ev.dial_color.value]||ev.dial_color.value)+' ('+count(ev.dial_color.supporting_photos)+'). Aro: '+(colors[ev.bezel_color.value]||ev.bezel_color.value)+' ('+count(ev.bezel_color.supporting_photos)+').';
+  let describe=(name,item)=>{let photos=item.photo_indices||[];return name+': '+(colors[item.value]||item.value)+' ('+count(item.supporting_photos)+(photos.length?'; fotos examinadas: '+photos.join(', '):'')+')'};
+  let findings=describe('Mostrador',ev.dial_color)+'. '+describe('Aro',ev.bezel_color)+'.';
   let report=j.joint.message+'\nFotos enviadas: '+j.joint.submitted_photos+'. Conteúdos visuais distintos: '+j.joint.unique_visual_contents+'. Análises executadas: '+j.joint.model_checked_images+'. Resultados reaproveitados: '+j.joint.reused_results+'.';
   if(group.length>1)report+='\nAs fotos foram informadas como uma peça; não são provas independentes.';
   report+='\n\nObservado: '+findings+'\n\nAinda não verificado: '+j.joint.unverified.join('; ')+'.\n\nPor foto:\n'+lines.join('\n')+'\n\nFonte da referência: '+(j.joint.reference_candidate?j.joint.reference_candidate.source_url:'não disponível')+'\nProcesso de inspeção: '+(j.joint.inspection_source_url||'não disponível')+'\nReferência comparada: nenhuma; marca não identificada.';
@@ -320,7 +321,7 @@ def analyze_batch(
     used_digests: set[str] = set()
     cache: dict[tuple[str, str, str], dict[str, object]] = {}
     visual_cache: dict[str, _VisualInspection] = {}
-    unique_evidence: dict[str, dict[str, Any]] = {}
+    unique_evidence: dict[str, tuple[int, dict[str, Any]]] = {}
     for index, (angle, content_type, body) in enumerate(encoded_images, start=1):
         image = decode_image(body, content_type)
         digest = hashlib.sha256(
@@ -354,9 +355,9 @@ def analyze_batch(
             used_photo_indices.append(index)
             used_digests.add(digest)
         if digest not in unique_evidence or (
-            not unique_evidence[digest].get("model_invoked") and result.get("model_invoked")
+            not unique_evidence[digest][1].get("model_invoked") and result.get("model_invoked")
         ):
-            unique_evidence[digest] = result
+            unique_evidence[digest] = (index, result)
         if result.get("model_invoked") is True:
             detected = result.get("detected_angle")
             if isinstance(detected, str) and detected in ANGLES:
@@ -378,8 +379,18 @@ def analyze_batch(
             if model_checked_images == 0
             else "O conjunto não autentica o relógio; a análise permanece inconclusiva."
         )
-    dial, dial_count = consensus([str(result.get("observed_dial_color", "uncertain")) for result in unique_evidence.values()])
-    bezel, bezel_count = consensus([str(result.get("observed_bezel_color", "uncertain")) for result in unique_evidence.values()])
+    checked_evidence = [
+        (index, result)
+        for index, result in unique_evidence.values()
+        if result.get("model_invoked") is True
+    ]
+    dial, dial_count = consensus([str(result.get("observed_dial_color", "uncertain")) for _, result in checked_evidence])
+    bezel, bezel_count = consensus([str(result.get("observed_bezel_color", "uncertain")) for _, result in checked_evidence])
+    def supporting_indices(field: str, value: str) -> list[int]:
+        return [
+            index for index, result in checked_evidence
+            if value != "uncertain" and result.get(field) == value
+        ]
     if model_checked_images and verdict == "inconclusivo":
         message = "Cores observadas; marca, referência e autenticidade inconclusivas."
     missing_angles = sorted(ANGLES - observed_angles)
@@ -440,8 +451,8 @@ def analyze_batch(
             "model_checked_images": model_checked_images,
             "reference_candidate": None,
             "visible_evidence": {
-                "dial_color": {"value": dial, "supporting_photos": dial_count},
-                "bezel_color": {"value": bezel, "supporting_photos": bezel_count},
+                "dial_color": {"value": dial, "supporting_photos": dial_count, "photo_indices": supporting_indices("observed_dial_color", dial)},
+                "bezel_color": {"value": bezel, "supporting_photos": bezel_count, "photo_indices": supporting_indices("observed_bezel_color", bezel)},
             },
             "unverified": (
                 ["marca, referência e autenticidade; nenhum detalhe foi examinado pelo modelo"]
