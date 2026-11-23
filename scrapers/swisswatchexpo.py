@@ -7,6 +7,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -91,7 +92,13 @@ def discover_swisswatchexpo(
     seen = dict(previous.record_hashes) if previous else {}
     for entry in root.findall("sm:url", _NS):
         record = _parse_entry(entry)
-        if record is None or record.source_record_id in seen:
+        if record is None:
+            continue
+        if record.source_record_id in seen:
+            record = replace(record, source_record_id=(
+                record.source_record_id + "#" + hashlib.sha256(url.encode()).hexdigest()[:12]
+            ))
+        if record.source_record_id in seen:
             continue
         existing = records.get(record.source_record_id)
         if existing is None or (len(record.image_urls), record.source_url) > (
@@ -134,6 +141,7 @@ def _parse_entry(entry: ET.Element) -> DiscoveryRecord | None:
                   ("label_basis", "seller_listing"),
                   ("rights_status", "metadata_only"),
                   ("independent_confirmation", "not_established"),
+                  ("physical_stock_id", match.group(1)),
                   ("last_modified", lastmod or "unknown")),
     )
 

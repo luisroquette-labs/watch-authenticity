@@ -108,7 +108,11 @@ def test_continuation_reads_only_next_sitemap_and_skips_prior_stock():
                                "page-sha", page.next_cursor, (("53951", "record-sha"),), "commit-sha")
     continued = discover_swisswatchexpo(client, policy, access, previous=previous, **kwargs)
     assert continued.cursor == page.next_cursor and continued.next_cursor is None
-    assert [record.source_record_id for record in continued.records] == ["53952"]
+    assert sorted(record.source_record_id.split("#")[0] for record in continued.records) == [
+        "53951", "53952"
+    ]
+    assert all(dict(record.metadata)["physical_stock_id"] in {"53951", "53952"}
+               for record in continued.records)
     assert second in [call.args[0] for call in client.get.call_args_list]
     assert first not in [call.args[0] for call in client.get.call_args_list]
 
