@@ -15,6 +15,41 @@ done
   exit 2
 }
 
+resource_exists() {
+  local kind="$1" name="$2" output
+  local -a command=(job)
+  if [[ "${kind}" == cron ]]; then command=(sub cron); fi
+  if output="$(ibmcloud ce "${command[@]}" get --name "${name}" --output json 2>&1)"; then
+    return 0
+  fi
+  case "${output}" in
+    "Not found"|"not found") return 1 ;;
+  esac
+  printf 'Code Engine %s readback failed for %s: %s\n' "${kind}" "${name}" "${output}" >&2
+  return 2
+}
+
+ensure_job() {
+  local name="$1" state
+  shift
+  if resource_exists job "${name}"; then return 0; else state=$?; fi
+  [[ "${state}" -eq 1 ]] || return 2
+  ibmcloud ce job create "$@"
+}
+
+ensure_cron() {
+  local name="$1" state
+  shift
+  if resource_exists cron "${name}"; then
+    ibmcloud ce sub cron update "$@"
+    return
+  else
+    state=$?
+  fi
+  [[ "${state}" -eq 1 ]] || return 2
+  ibmcloud ce sub cron create "$@"
+}
+
 ibmcloud ce project select --name "${WATCH_AUTH_CE_PROJECT}" >/dev/null
 
 # Content-addressed jobs keep active subscriptions on the previous version during staging.
@@ -60,11 +95,7 @@ job_args=(
   --env "WATCH_AUTH_IAM_READER_POLICY_ID=${WATCH_AUTH_IAM_READER_POLICY_ID}"
   --env WATCH_AUTH_ACQUISITION_PREFIX=datasets
 )
-if ibmcloud ce job get --name "${acquisition_job}" --output json >/dev/null 2>&1; then
-  :
-else
-  ibmcloud ce job create "${job_args[@]}"
-fi
+ensure_job "${acquisition_job}" "${job_args[@]}"
 
 verify_job() {
   local job_name="$1" source_name="$2"
@@ -165,11 +196,7 @@ cron_args=(
 luxury_job_args=("${job_args[@]}")
 luxury_job_args[1]="${luxury_job}"
 luxury_job_args+=(--arg=--source --arg=supercloneluxury)
-if ibmcloud ce job get --name "${luxury_job}" --output json >/dev/null 2>&1; then
-  :
-else
-  ibmcloud ce job create "${luxury_job_args[@]}"
-fi
+ensure_job "${luxury_job}" "${luxury_job_args[@]}"
 verify_job "${luxury_job}" supercloneluxury
 
 if link_exists "${luxury_job}"; then
@@ -198,11 +225,7 @@ luxury_cron_args[7]='37 3 * * *'
 rm_replica_job_args=("${job_args[@]}")
 rm_replica_job_args[1]="${rm_replica_job}"
 rm_replica_job_args+=(--arg=--source --arg=richardmillereplica)
-if ibmcloud ce job get --name "${rm_replica_job}" --output json >/dev/null 2>&1; then
-  :
-else
-  ibmcloud ce job create "${rm_replica_job_args[@]}"
-fi
+ensure_job "${rm_replica_job}" "${rm_replica_job_args[@]}"
 verify_job "${rm_replica_job}" richardmillereplica
 
 if link_exists "${rm_replica_job}"; then
@@ -231,11 +254,7 @@ rm_replica_cron_args[7]='47 5 * * *'
 cbp_job_args=("${job_args[@]}")
 cbp_job_args[1]="${cbp_job}"
 cbp_job_args+=(--arg=--source --arg=cbp)
-if ibmcloud ce job get --name "${cbp_job}" --output json >/dev/null 2>&1; then
-  :
-else
-  ibmcloud ce job create "${cbp_job_args[@]}"
-fi
+ensure_job "${cbp_job}" "${cbp_job_args[@]}"
 verify_job "${cbp_job}" cbp
 
 if link_exists "${cbp_job}"; then
@@ -264,11 +283,7 @@ cbp_cron_args[7]='57 3 * * *'
 goldsmiths_job_args=("${job_args[@]}")
 goldsmiths_job_args[1]="${goldsmiths_job}"
 goldsmiths_job_args+=(--arg=--source --arg=goldsmiths)
-if ibmcloud ce job get --name "${goldsmiths_job}" --output json >/dev/null 2>&1; then
-  :
-else
-  ibmcloud ce job create "${goldsmiths_job_args[@]}"
-fi
+ensure_job "${goldsmiths_job}" "${goldsmiths_job_args[@]}"
 verify_job "${goldsmiths_job}" goldsmiths
 
 if link_exists "${goldsmiths_job}"; then
@@ -297,11 +312,7 @@ goldsmiths_cron_args[7]='27 3 * * *'
 bobs_job_args=("${job_args[@]}")
 bobs_job_args[1]="${bobs_job}"
 bobs_job_args+=(--arg=--source --arg=bobswatches)
-if ibmcloud ce job get --name "${bobs_job}" --output json >/dev/null 2>&1; then
-  :
-else
-  ibmcloud ce job create "${bobs_job_args[@]}"
-fi
+ensure_job "${bobs_job}" "${bobs_job_args[@]}"
 verify_job "${bobs_job}" bobswatches
 
 if link_exists "${bobs_job}"; then
@@ -330,11 +341,7 @@ bobs_cron_args[7]='7 4 * * *'
 swe_job_args=("${job_args[@]}")
 swe_job_args[1]="${swe_job}"
 swe_job_args+=(--arg=--source --arg=swisswatchexpo)
-if ibmcloud ce job get --name "${swe_job}" --output json >/dev/null 2>&1; then
-  :
-else
-  ibmcloud ce job create "${swe_job_args[@]}"
-fi
+ensure_job "${swe_job}" "${swe_job_args[@]}"
 verify_job "${swe_job}" swisswatchexpo
 
 if link_exists "${swe_job}"; then
@@ -363,11 +370,7 @@ swe_cron_args[7]='17 5 * * *'
 speedmaster_job_args=("${job_args[@]}")
 speedmaster_job_args[1]="${speedmaster_job}"
 speedmaster_job_args+=(--arg=--source --arg=wikimedia-speedmaster)
-if ibmcloud ce job get --name "${speedmaster_job}" --output json >/dev/null 2>&1; then
-  :
-else
-  ibmcloud ce job create "${speedmaster_job_args[@]}"
-fi
+ensure_job "${speedmaster_job}" "${speedmaster_job_args[@]}"
 verify_job "${speedmaster_job}" wikimedia-speedmaster
 
 if link_exists "${speedmaster_job}"; then
@@ -396,11 +399,7 @@ speedmaster_cron_args[7]='47 3 * * *'
 auckland_job_args=("${job_args[@]}")
 auckland_job_args[1]="${auckland_job}"
 auckland_job_args+=(--arg=--source --arg=wikimedia-auckland)
-if ibmcloud ce job get --name "${auckland_job}" --output json >/dev/null 2>&1; then
-  :
-else
-  ibmcloud ce job create "${auckland_job_args[@]}"
-fi
+ensure_job "${auckland_job}" "${auckland_job_args[@]}"
 verify_job "${auckland_job}" wikimedia-auckland
 
 if link_exists "${auckland_job}"; then
@@ -424,11 +423,7 @@ auckland_cron_args[7]='17 4 * * *'
 daytona_job_args=("${job_args[@]}")
 daytona_job_args[1]="${daytona_job}"
 daytona_job_args+=(--arg=--source --arg=wikimedia-daytona)
-if ibmcloud ce job get --name "${daytona_job}" --output json >/dev/null 2>&1; then
-  :
-else
-  ibmcloud ce job create "${daytona_job_args[@]}"
-fi
+ensure_job "${daytona_job}" "${daytona_job_args[@]}"
 verify_job "${daytona_job}" wikimedia-daytona
 
 if link_exists "${daytona_job}"; then
@@ -452,11 +447,7 @@ daytona_cron_args[7]='37 4 * * *'
 royal_oak_job_args=("${job_args[@]}")
 royal_oak_job_args[1]="${royal_oak_job}"
 royal_oak_job_args+=(--arg=--source --arg=wikimedia-royal-oak)
-if ibmcloud ce job get --name "${royal_oak_job}" --output json >/dev/null 2>&1; then
-  :
-else
-  ibmcloud ce job create "${royal_oak_job_args[@]}"
-fi
+ensure_job "${royal_oak_job}" "${royal_oak_job_args[@]}"
 verify_job "${royal_oak_job}" wikimedia-royal-oak
 
 if link_exists "${royal_oak_job}"; then
@@ -480,11 +471,7 @@ royal_oak_cron_args[7]='57 4 * * *'
 counterfeit_category_job_args=("${job_args[@]}")
 counterfeit_category_job_args[1]="${counterfeit_category_job}"
 counterfeit_category_job_args+=(--arg=--source --arg=wikimedia-counterfeit-category)
-if ibmcloud ce job get --name "${counterfeit_category_job}" --output json >/dev/null 2>&1; then
-  :
-else
-  ibmcloud ce job create "${counterfeit_category_job_args[@]}"
-fi
+ensure_job "${counterfeit_category_job}" "${counterfeit_category_job_args[@]}"
 verify_job "${counterfeit_category_job}" wikimedia-counterfeit-category
 
 if link_exists "${counterfeit_category_job}"; then
@@ -508,11 +495,7 @@ counterfeit_category_cron_args[7]='7 5 * * *'
 census_job_args=("${job_args[@]}")
 census_job_args[1]="${census_job}"
 census_job_args+=(--arg=--source --arg=research-census)
-if ibmcloud ce job get --name "${census_job}" --output json >/dev/null 2>&1; then
-  :
-else
-  ibmcloud ce job create "${census_job_args[@]}"
-fi
+ensure_job "${census_job}" "${census_job_args[@]}"
 verify_job "${census_job}" research-census
 
 if link_exists "${census_job}"; then
@@ -540,80 +523,28 @@ census_cron_args[7]='27 4 * * *'
 
 # Activate the dedicated source first; the old daily job remains a safe fallback
 # until the main cron points to an image that omits Goldsmiths.
-if ibmcloud ce sub cron get --name watch-auth-goldsmiths-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${goldsmiths_cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${goldsmiths_cron_args[@]}"
-fi
+ensure_cron watch-auth-goldsmiths-daily "${goldsmiths_cron_args[@]}"
 
-if ibmcloud ce sub cron get --name watch-auth-acquisition-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${cron_args[@]}"
-fi
+ensure_cron watch-auth-acquisition-daily "${cron_args[@]}"
 
-if ibmcloud ce sub cron get --name watch-auth-supercloneluxury-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${luxury_cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${luxury_cron_args[@]}"
-fi
+ensure_cron watch-auth-supercloneluxury-daily "${luxury_cron_args[@]}"
 
-if ibmcloud ce sub cron get --name watch-auth-rm-replica-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${rm_replica_cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${rm_replica_cron_args[@]}"
-fi
+ensure_cron watch-auth-rm-replica-daily "${rm_replica_cron_args[@]}"
 
-if ibmcloud ce sub cron get --name watch-auth-cbp-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${cbp_cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${cbp_cron_args[@]}"
-fi
+ensure_cron watch-auth-cbp-daily "${cbp_cron_args[@]}"
 
-if ibmcloud ce sub cron get --name watch-auth-bobswatches-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${bobs_cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${bobs_cron_args[@]}"
-fi
+ensure_cron watch-auth-bobswatches-daily "${bobs_cron_args[@]}"
 
-if ibmcloud ce sub cron get --name watch-auth-swisswatchexpo-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${swe_cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${swe_cron_args[@]}"
-fi
+ensure_cron watch-auth-swisswatchexpo-daily "${swe_cron_args[@]}"
 
-if ibmcloud ce sub cron get --name watch-auth-speedmaster-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${speedmaster_cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${speedmaster_cron_args[@]}"
-fi
+ensure_cron watch-auth-speedmaster-daily "${speedmaster_cron_args[@]}"
 
-if ibmcloud ce sub cron get --name watch-auth-auckland-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${auckland_cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${auckland_cron_args[@]}"
-fi
+ensure_cron watch-auth-auckland-daily "${auckland_cron_args[@]}"
 
-if ibmcloud ce sub cron get --name watch-auth-daytona-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${daytona_cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${daytona_cron_args[@]}"
-fi
+ensure_cron watch-auth-daytona-daily "${daytona_cron_args[@]}"
 
-if ibmcloud ce sub cron get --name watch-auth-royal-oak-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${royal_oak_cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${royal_oak_cron_args[@]}"
-fi
+ensure_cron watch-auth-royal-oak-daily "${royal_oak_cron_args[@]}"
 
-if ibmcloud ce sub cron get --name watch-auth-counterfeit-category-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${counterfeit_category_cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${counterfeit_category_cron_args[@]}"
-fi
+ensure_cron watch-auth-counterfeit-category-daily "${counterfeit_category_cron_args[@]}"
 
-if ibmcloud ce sub cron get --name watch-auth-research-census-daily --output json >/dev/null 2>&1; then
-  ibmcloud ce sub cron update "${census_cron_args[@]}"
-else
-  ibmcloud ce sub cron create "${census_cron_args[@]}"
-fi
+ensure_cron watch-auth-research-census-daily "${census_cron_args[@]}"
