@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
 
-from acquisition.discovery import DiscoveryPage, DiscoveryRecord
+from acquisition.discovery import DiscoveryCommit, DiscoveryPage, DiscoveryRecord
 from acquisition.source_policy import authorize_discovery
 from acquisition.types import SourceAccessRecord, SourcePolicy
 from scrapers.metadata_http import PacedBoundedHTTP
@@ -24,13 +24,15 @@ _SITEMAP = re.compile(r"/sitemaps/(?:in-stock|out-of-stock)-product-detail-sitem
 _STOCK = re.compile(r"-([0-9]{4,8})/$")
 _NS = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9",
        "image": "http://www.google.com/schemas/sitemap-image/1.1"}
-_REFERENCES = {
-    "wssa0018": "cartier-santos-wssa0018",
-    "wssa0061": "cartier-santos-wssa0061",
-    "126334": "rolex-datejust-126334",
-    "31030425001001": "omega-speedmaster-31030425001001",
-    "21030422001001": "omega-seamaster-21030422001001",
-}
+_REFERENCES = (
+    (re.compile(r"(?<![a-z0-9])wssa0018(?![a-z0-9])"), "cartier-santos-wssa0018"),
+    (re.compile(r"(?<![a-z0-9])wssa0061(?![a-z0-9])"), "cartier-santos-wssa0061"),
+    (re.compile(r"(?<![a-z0-9])126334(?![a-z0-9])"), "rolex-datejust-126334"),
+    (re.compile(r"(?<![a-z0-9])(?:31030425001001|310-30-42-50-01-001)(?![a-z0-9])"),
+     "omega-speedmaster-31030425001001"),
+    (re.compile(r"(?<![a-z0-9])(?:21030422001001|210-30-42-20-01-001)(?![a-z0-9])"),
+     "omega-seamaster-21030422001001"),
+)
 
 
 class SwissWatchExpoDiscoveryError(RuntimeError):
@@ -43,7 +45,7 @@ def discover_swisswatchexpo(
     access: SourceAccessRecord | None,
     *,
     now: datetime,
-    previous: object | None = None,
+    previous: DiscoveryCommit | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
     deadline: float | None = None,
@@ -55,14 +57,14 @@ def discover_swisswatchexpo(
         raise PermissionError("approved image host is missing")
     if access.requests_per_minute is None:
         raise PermissionError("source request limit is missing")
-    if previous is not None:
-        raise SwissWatchExpoDiscoveryError("sitemap snapshot has no continuation cursor")
     fetcher = PacedBoundedHTTP(http_client, access.requests_per_minute,
                                SwissWatchExpoDiscoveryError, clock=clock, sleeper=sleeper)
     robots = fetcher.get_bytes(f"{_ROOT}/robots.txt", 256 * 1024, "robots.txt", deadline=deadline)
     if _INDEX not in robots.decode("utf-8", errors="strict"):
         raise SwissWatchExpoDiscoveryError("robots.txt does not advertise sitemap")
-    index = _xml(fetcher.get_bytes(_INDEX, 256 * 1024, "sitemap index", deadline=deadline))
+    index_body = fetcher.get_bytes(_INDEX, 256 * 1024, "sitemap index", deadline=deadline)
+    index_sha256 = hashlib.sha256(index_body).hexdigest()
+    index = _xml(index_body)
     sitemap_urls = []
     for element in index.findall("sm:sitemap", _NS):
         url = _text(element.find("sm:loc", _NS), "sitemap URL")
@@ -70,20 +72,31 @@ def discover_swisswatchexpo(
             sitemap_urls.append(url)
     if not 1 <= len(sitemap_urls) <= 16 or len(sitemap_urls) != len(set(sitemap_urls)):
         raise SwissWatchExpoDiscoveryError("product sitemap inventory is invalid")
+    cursor = previous.next_cursor if previous else None
+    cursor_url = cursor.partition("|")[2] if cursor else None
+    if previous is not None and (previous.source != "swisswatchexpo"
+                                 or previous.access_record_id != access.access_record_id
+                                 or cursor != f"{index_sha256}|{cursor_url}"
+                                 or cursor_url not in sitemap_urls):
+        raise SwissWatchExpoDiscoveryError("sitemap continuation cursor is invalid")
+    index_at = sitemap_urls.index(cursor_url) if cursor_url else 0
+    url = sitemap_urls[index_at]
+    next_cursor = (f"{index_sha256}|{sitemap_urls[index_at + 1]}"
+                   if index_at + 1 < len(sitemap_urls) else None)
+    root = _xml(fetcher.get_bytes(url, 32 * 1024 * 1024, "product sitemap", deadline=deadline))
     records: dict[str, DiscoveryRecord] = {}
-    for url in sitemap_urls:
-        root = _xml(fetcher.get_bytes(url, 32 * 1024 * 1024, "product sitemap", deadline=deadline))
-        for entry in root.findall("sm:url", _NS):
-            record = _parse_entry(entry)
-            if record is None:
-                continue
-            existing = records.get(record.source_record_id)
-            if existing is None or (len(record.image_urls), record.source_url) > (
-                len(existing.image_urls), existing.source_url
-            ):
-                records[record.source_record_id] = record
+    seen = dict(previous.record_hashes) if previous else {}
+    for entry in root.findall("sm:url", _NS):
+        record = _parse_entry(entry)
+        if record is None or record.source_record_id in seen:
+            continue
+        existing = records.get(record.source_record_id)
+        if existing is None or (len(record.image_urls), record.source_url) > (
+            len(existing.image_urls), existing.source_url
+        ):
+            records[record.source_record_id] = record
     return DiscoveryPage(source="swisswatchexpo", access_record_id=access.access_record_id,
-                         cursor=None, next_cursor=None, observed_at=now,
+                         cursor=cursor, next_cursor=next_cursor, observed_at=now,
                          records=tuple(records.values()))
 
 
@@ -93,8 +106,8 @@ def _parse_entry(entry: ET.Element) -> DiscoveryRecord | None:
     match = _STOCK.search(path)
     if not path.startswith("/watches/") or match is None:
         return None
-    compact = re.sub(r"[^a-z0-9]", "", path.lower())
-    reference = next((value for key, value in _REFERENCES.items() if key in compact), None)
+    slug = path.rstrip("/").rsplit("/", 1)[-1].lower()
+    reference = next((value for pattern, value in _REFERENCES if pattern.search(slug)), None)
     if reference is None:
         return None
     urls = []

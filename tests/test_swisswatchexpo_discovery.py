@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from acquisition.discovery import DiscoveryCommit
 from acquisition.source_policy import (
     get_source_policy,
     load_source_access_registry,
@@ -75,3 +76,48 @@ def test_sitemap_groups_angles_by_stock_and_keeps_seller_claim_weak():
 def test_rejects_off_host_image_before_persisting_page():
     with pytest.raises(SwissWatchExpoDiscoveryError, match="outside approved public host"):
         _discover(image_host="https://untrusted.example/productphotos")
+
+
+def test_continuation_reads_only_next_sitemap_and_skips_prior_stock():
+    policies = load_source_policies(Path("config/source_policies.json"))
+    access = load_source_access_registry(Path("config/source_access.json"))["swisswatchexpo"]
+    policy = get_source_policy(policies, "swisswatchexpo")
+    first = f"{HOST}/sitemaps/in-stock-product-detail-sitemap-1.xml"
+    second = f"{HOST}/sitemaps/out-of-stock-product-detail-sitemap-1.xml"
+    entry = f'''<url><loc>{PRODUCT}</loc><image:image><image:loc>{CDN}/front.jpg</image:loc>
+      </image:image></url>'''
+    other = entry.replace("53951", "53952")
+    bodies = {
+        f"{HOST}/robots.txt": f"Sitemap: {HOST}/sitemap.xml",
+        f"{HOST}/sitemap.xml": f'''<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <sitemap><loc>{first}</loc></sitemap><sitemap><loc>{second}</loc></sitemap></sitemapindex>''',
+        first: f'''<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+          xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">{entry}</urlset>''',
+        second: f'''<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+          xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">{entry}{other}</urlset>''',
+    }
+    client = MagicMock()
+    client.get.side_effect = lambda url, **kwargs: _Response(bodies[url])
+    kwargs = {"now": NOW, "clock": lambda: 0.0, "sleeper": lambda _: None}
+    page = discover_swisswatchexpo(client, policy, access, **kwargs)
+    assert page.next_cursor is not None and page.next_cursor.endswith("|" + second)
+    client.get.reset_mock()
+    previous = DiscoveryCommit("swisswatchexpo", access.access_record_id, None,
+                               "page-sha", page.next_cursor, (("53951", "record-sha"),), "commit-sha")
+    continued = discover_swisswatchexpo(client, policy, access, previous=previous, **kwargs)
+    assert continued.cursor == page.next_cursor and continued.next_cursor is None
+    assert [record.source_record_id for record in continued.records] == ["53952"]
+    assert second in [call.args[0] for call in client.get.call_args_list]
+    assert first not in [call.args[0] for call in client.get.call_args_list]
+
+
+def test_reference_must_be_a_slug_token():
+    import xml.etree.ElementTree as ET
+
+    from scrapers.swisswatchexpo import _parse_entry
+
+    element = ET.fromstring(f'''<url xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+      xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+      <loc>{HOST}/watches/example-1263345-53951/</loc>
+      <image:image><image:loc>{CDN}/front.jpg</image:loc></image:image></url>''')
+    assert _parse_entry(element) is None

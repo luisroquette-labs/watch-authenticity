@@ -901,14 +901,20 @@ def main(source: str = "all") -> None:
     if source == "swisswatchexpo":
         swe_policy = get_source_policy(policies, source)
         swe_access = access_registry[source]
-        run_metadata_discovery_resilient(
-            cos, bucket, prefix, source, now=now,
-            discover=lambda previous: discover_swisswatchexpo(
-                requests.Session(), swe_policy, swe_access,
-                now=now, previous=previous, deadline=job_deadline,
-            ),
-        )
-        return
+        if swe_access.requests_per_minute is None:
+            raise RuntimeError("SwissWatchExpo request limit is missing")
+        for _ in range(16):
+            result = run_metadata_discovery_resilient(
+                cos, bucket, prefix, source, now=now,
+                discover=lambda previous: discover_swisswatchexpo(
+                    requests.Session(), swe_policy, swe_access,
+                    now=now, previous=previous, deadline=job_deadline,
+                ),
+            )
+            if result["state"] in {"complete", "already_complete", "failed"}:
+                return
+            time.sleep(60 / swe_access.requests_per_minute)
+        raise RuntimeError("SwissWatchExpo exceeded bounded sitemap page count")
     if source == "wikimedia-speedmaster":
         access = access_registry["wikimedia"]
         run_wikimedia_lanes(
