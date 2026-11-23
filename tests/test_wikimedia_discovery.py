@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -370,6 +371,97 @@ def test_cc0_commons_license_allows_training_rights_without_authenticity_label(l
     assert candidate.rights.allowed_purposes == ("download", "train")
     assert candidate.evidence_tier is EvidenceTier.INCONCLUSIVE
     assert candidate.metadata.declared_reference == "unverified"
+
+
+def _cbp_public_domain_page():
+    page = _page(license_name="Public domain", license_url=None)
+    page["pageid"] = 57419144
+    page["title"] = "File:San Juan CBP seizes 20 counterfeit luxury watches (32231527976).jpg"
+    page["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:San_Juan_CBP_seizes_20_counterfeit_luxury_watches_(32231527976).jpg"
+    page["imageinfo"][0]["sha1"] = "c3088f52d34c3bc28cd3bae0dbdf2329af8b2929"
+    page["imageinfo"][0]["timestamp"] = "2017-03-26T14:48:07Z"
+    page["templates"] = [{"ns": 10, "title": "Template:PD-USGov-DHS-CBP"}]
+    metadata = page["imageinfo"][0]["extmetadata"]
+    metadata.update({
+        "Artist": {"value": '<a href="https://www.flickr.com/people/54593278@N03">U.S. Customs and Border Protection</a>'},
+        "Credit": {"value": '<a href="https://www.flickr.com/photos/cbpphotos/32231527976/">CBP photo</a>'},
+        "UsageTerms": {"value": "Public domain"},
+        "Copyrighted": {"value": "False"},
+        "AttributionRequired": {"value": "false"},
+    })
+    return page
+
+
+def test_exact_cbp_public_domain_basis_grants_train_rights_without_authenticity():
+    http = MagicMock()
+    http.get.return_value = _Response({"query": {"pages": [_cbp_public_domain_page()]}})
+    candidate = _discover(http, None, query_range=(15, 16)).candidates[0]
+    decision = authorize_candidate(_policy(), candidate.rights, now=NOW)
+
+    assert http.get.call_args.kwargs["params"]["tltemplates"] == "Template:PD-USGov-DHS-CBP"
+    assert decision.may_download and decision.may_train
+    assert candidate.rights.allowed_purposes == ("download", "train")
+    assert candidate.evidence_tier is EvidenceTier.INCONCLUSIVE
+    assert candidate.metadata.declared_reference == "unverified"
+    evidence = json.loads(candidate.rights_evidence)
+    assert evidence["public_domain_template"] == "Template:PD-USGov-DHS-CBP"
+    assert evidence["flickr_photo_id"] == "32231527976"
+    assert evidence["image_sha1"] == "c3088f52d34c3bc28cd3bae0dbdf2329af8b2929"
+
+
+@pytest.mark.parametrize("change", (
+    "template", "artist", "artist_link", "credit", "usage", "copyrighted",
+    "attribution", "license_url", "license", "page_id", "source_url",
+    "image_sha1", "image_revision", "flickr_photo_id",
+))
+def test_incomplete_cbp_public_domain_basis_stays_download_only(change):
+    page = copy.deepcopy(_cbp_public_domain_page())
+    metadata = page["imageinfo"][0]["extmetadata"]
+    if change == "template":
+        page["templates"] = []
+    elif change == "artist":
+        metadata["Artist"]["value"] = "Third party"
+    elif change == "artist_link":
+        metadata["Artist"]["value"] = "U.S. Customs and Border Protection"
+    elif change == "credit":
+        metadata["Credit"]["value"] = '<a href="https://www.flickr.com/photos/other/32231527976/">CBP photo</a>'
+    elif change == "usage":
+        metadata["UsageTerms"]["value"] = "All rights reserved"
+    elif change == "copyrighted":
+        metadata["Copyrighted"]["value"] = "True"
+    elif change == "attribution":
+        metadata["AttributionRequired"]["value"] = "true"
+    elif change == "license_url":
+        metadata["LicenseUrl"] = {"value": "https://creativecommons.org/licenses/by/4.0/"}
+    elif change == "license":
+        metadata["LicenseShortName"]["value"] = "CC BY 4.0"
+        metadata["LicenseUrl"] = {"value": "https://creativecommons.org/licenses/by/4.0/"}
+    elif change == "page_id":
+        page["pageid"] = 123
+    elif change == "source_url":
+        page["canonicalurl"] = "https://commons.wikimedia.org/wiki/File:Other.jpg"
+    elif change == "image_sha1":
+        page["imageinfo"][0]["sha1"] = "other-image"
+    elif change == "image_revision":
+        page["imageinfo"][0]["timestamp"] = "2017-03-26T14:48:08Z"
+    elif change == "flickr_photo_id":
+        metadata["Credit"]["value"] = (
+            '<a href="https://www.flickr.com/photos/cbpphotos/32231527977/">CBP photo</a>'
+        )
+    http = MagicMock()
+    http.get.return_value = _Response({"query": {"pages": [page]}})
+    candidate = _discover(http, None, query_range=(15, 16)).candidates[0]
+    assert candidate.rights.allowed_purposes == ("download",)
+    assert not authorize_candidate(_policy(), candidate.rights, now=NOW).may_train
+
+
+def test_copied_cbp_metadata_on_unrelated_watch_cannot_grant_train_rights():
+    page = _cbp_public_domain_page()
+    page.update(_page(license_name="Public domain", license_url=None))
+    http = MagicMock()
+    http.get.return_value = _Response({"query": {"pages": [page]}})
+    candidate = _discover(http, None).candidates[0]
+    assert candidate.rights.allowed_purposes == ("download",)
 
 
 @pytest.mark.parametrize(

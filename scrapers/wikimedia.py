@@ -71,6 +71,18 @@ _CC0_LICENSE_URLS = frozenset({
     "https://creativecommons.org/publicdomain/zero/1.0/",
     "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
 })
+_CBP_FLICKR_CREDIT = re.compile(
+    r'href="(?P<url>https://www\.flickr\.com/photos/cbpphotos/(?P<id>[0-9]+)/)"'
+)
+_CBP_ARTIST_URL = 'href="https://www.flickr.com/people/54593278@N03"'
+_CBP_PUBLIC_DOMAIN_TEMPLATE = "Template:PD-USGov-DHS-CBP"
+_CBP_VERIFIED_FILE = (
+    57419144,
+    "c3088f52d34c3bc28cd3bae0dbdf2329af8b2929",
+    "2017-03-26T14:48:07Z",
+    "32231527976",
+    "https://commons.wikimedia.org/wiki/File:San_Juan_CBP_seizes_20_counterfeit_luxury_watches_(32231527976).jpg",
+)
 _TAG = re.compile(r"<[^>]*>")
 
 
@@ -143,10 +155,11 @@ def discover_wikimedia(
         "gsrnamespace": 6,
         # One API request plus up to three bounded attempts per image stays below the source cap.
         "gsrlimit": max(1, min(50, (access.requests_per_minute - 1) // 3)),
-        "prop": "imageinfo|info",
+        "prop": "imageinfo|info|templates",
         "inprop": "url",
         "iiprop": "url|sha1|timestamp|mime|extmetadata",
         "iiurlwidth": 1280,
+        "tltemplates": _CBP_PUBLIC_DOMAIN_TEMPLATE,
     }
     if offset:
         params["gsroffset"] = offset
@@ -278,11 +291,11 @@ def _parse_page(
     sha1 = _text(info.get("sha1"), "image sha1")
     license_url_entry = metadata.get("LicenseUrl")
     raw_license_url = license_url_entry.get("value") if isinstance(license_url_entry, Mapping) else None
-    allowed_purposes = (
-        ("download", "train")
-        if license_name == "CC0" and raw_license_url in _CC0_LICENSE_URLS
-        else ("download",)
+    cc0_train = license_name == "CC0" and raw_license_url in _CC0_LICENSE_URLS
+    cbp_evidence = _cbp_public_domain_evidence(
+        page, metadata, license_name, author, sha1, revision, source_url
     )
+    allowed_purposes = ("download", "train") if cc0_train or cbp_evidence else ("download",)
     rights_evidence: dict[str, object] = {
         "author": author,
         "license": license_name,
@@ -290,12 +303,20 @@ def _parse_page(
         "source_url": source_url,
         "title": title,
     }
-    if "train" in allowed_purposes:
+    if cc0_train:
         rights_evidence.update({
             "allowed_purposes": allowed_purposes,
             "license_url_literal": raw_license_url,
             "image_sha1": sha1,
             "image_timestamp": revision,
+        })
+    elif cbp_evidence is not None:
+        rights_evidence.update({
+            "allowed_purposes": allowed_purposes,
+            "commons_page_id": page_id,
+            "image_sha1": sha1,
+            "image_timestamp": revision,
+            **cbp_evidence,
         })
     rights_evidence_bytes = json.dumps(
         rights_evidence, sort_keys=True, separators=(",", ":")
@@ -368,6 +389,51 @@ def _parse_page(
         classification=classification,
     )
     return record, candidate
+
+
+def _cbp_public_domain_evidence(
+    page: Mapping[str, object], metadata: Mapping[str, object],
+    license_name: str, author: str, sha1: str, revision: str, source_url: str,
+) -> dict[str, str] | None:
+    if (
+        license_name != "Public domain" or author != "U.S. Customs and Border Protection"
+        or (page.get("pageid"), sha1, revision, source_url)
+        != (_CBP_VERIFIED_FILE[0], _CBP_VERIFIED_FILE[1], _CBP_VERIFIED_FILE[2],
+            _CBP_VERIFIED_FILE[4])
+    ):
+        return None
+    templates = page.get("templates")
+    if not isinstance(templates, list) or not any(
+        isinstance(item, Mapping) and item.get("ns") == 10
+        and item.get("title") == _CBP_PUBLIC_DOMAIN_TEMPLATE for item in templates
+    ):
+        return None
+    values = {
+        name: entry.get("value") if isinstance(entry, Mapping) else None
+        for name, entry in metadata.items()
+        if name in {"Artist", "Credit", "UsageTerms", "Copyrighted", "AttributionRequired"}
+    }
+    credit = values.get("Credit")
+    artist = values.get("Artist")
+    match = _CBP_FLICKR_CREDIT.search(credit) if isinstance(credit, str) else None
+    if (
+        match is None or match["id"] != _CBP_VERIFIED_FILE[3]
+        or not isinstance(artist, str) or _CBP_ARTIST_URL not in artist
+        or values.get("UsageTerms") != "Public domain"
+        or values.get("Copyrighted") != "False"
+        or values.get("AttributionRequired") != "false"
+        or metadata.get("LicenseUrl") is not None
+    ):
+        return None
+    return {
+        "public_domain_template": _CBP_PUBLIC_DOMAIN_TEMPLATE,
+        "flickr_photo_id": match["id"],
+        "credit_url_literal": match["url"],
+        "artist_url_literal": "https://www.flickr.com/people/54593278@N03",
+        "usage_terms": "Public domain",
+        "copyrighted": "False",
+        "attribution_required": "false",
+    }
 
 
 def _metadata_value(metadata: Mapping[str, object], name: str) -> str:
