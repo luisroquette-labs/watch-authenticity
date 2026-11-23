@@ -534,6 +534,7 @@ def valid_contract_bundle(candidate, rights, object_ref):
         object_ref=object_ref,
         reference_id=evidence.reference_id,
         watch_entity_id="watch-1",
+        split_family_id="split-1",
         content_cluster_id="content-1",
         seller_group_id="seller-1",
         acquisition_batch_id=candidate.acquisition_batch_id,

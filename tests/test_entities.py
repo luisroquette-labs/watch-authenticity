@@ -115,6 +115,24 @@ def test_reviewer_link_and_hashed_serial_can_join_angles(grouped_records):
     assert entity_ids["front"] == entity_ids["clasp"]
 
 
+def test_reused_serial_across_sellers_stays_separate_watch_but_one_split(grouped_records):
+    records = [
+        replace(grouped_records[0], acquisition_batch_id="batch-a"),
+        replace(grouped_records[2], acquisition_batch_id="batch-b"),
+    ]
+    clusters = build_content_clusters(records)
+    serial_hash = "9" * 64
+    evidence = {
+        "front": EntityEvidence(seller_account_id="seller-a", declared_serial_sha256=serial_hash),
+        "clasp": EntityEvidence(seller_account_id="seller-b", declared_serial_sha256=serial_hash),
+    }
+
+    assignments = assign_watch_entities(records, clusters, evidence)
+
+    assert assignments["front"] != assignments["clasp"]
+    assert assignments.split_families["front"] == assignments.split_families["clasp"]
+
+
 def test_conflicting_labels_quarantine_entire_content_cluster(grouped_records):
     grouped_records[1] = replace(grouped_records[1], raw_sha256=grouped_records[0].raw_sha256)
     clusters = build_content_clusters(grouped_records)

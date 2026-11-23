@@ -248,6 +248,12 @@ def assign_watch_entities(
         lambda record: evidence.get(record.candidate_id, EntityEvidence()).seller_account_id,
         ignore_none=True,
     )
+    _union_shared_value(
+        split_union,
+        records,
+        lambda record: evidence.get(record.candidate_id, EntityEvidence()).declared_serial_sha256,
+        ignore_none=True,
+    )
     split_groups = _groups(split_union, candidate_ids)
     split_ids = {
         member: _stable_id("split", members)

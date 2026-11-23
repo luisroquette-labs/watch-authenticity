@@ -419,6 +419,7 @@ class TrainingRecord:
     object_ref: ObjectRef
     reference_id: str
     watch_entity_id: str
+    split_family_id: str
     content_cluster_id: str
     seller_group_id: str
     acquisition_batch_id: str
@@ -447,6 +448,7 @@ class TrainingRecord:
             ("candidate_id", self.candidate_id),
             ("reference_id", self.reference_id),
             ("watch_entity_id", self.watch_entity_id),
+            ("split_family_id", self.split_family_id),
             ("content_cluster_id", self.content_cluster_id),
             ("seller_group_id", self.seller_group_id),
             ("acquisition_batch_id", self.acquisition_batch_id),

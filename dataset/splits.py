@@ -200,6 +200,7 @@ def build_splits(
     for record in sorted(records, key=lambda item: item.asset_id):
         for field, value in (
             ("watch", record.watch_entity_id),
+            ("family", record.split_family_id),
             ("content", record.content_cluster_id),
             ("seller", record.seller_group_id),
             ("batch", record.acquisition_batch_id),
@@ -298,6 +299,7 @@ def assert_no_connected_component_crosses_splits(
         split = split_by_asset[record.asset_id]
         for field, value in (
             ("watch", record.watch_entity_id),
+            ("family", record.split_family_id),
             ("content", record.content_cluster_id),
             ("seller", record.seller_group_id),
             ("batch", record.acquisition_batch_id),

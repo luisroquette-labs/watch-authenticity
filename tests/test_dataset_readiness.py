@@ -47,6 +47,7 @@ def _record(
         object_ref=ObjectRef("bucket", f"datasets/derivatives/{digest}", digest, 1, "etag"),
         reference_id="rolex-submariner-126610ln",
         watch_entity_id=f"watch-{index}",
+        split_family_id=f"split-{index}",
         content_cluster_id=f"content-{index}",
         seller_group_id=f"seller-{index}",
         acquisition_batch_id=f"batch-{index}",
@@ -360,6 +361,22 @@ def test_grouped_splits_keep_transitive_relations_together():
     assert assigned[first.asset_id] == assigned[second.asset_id] == assigned[third.asset_id]
     assert assigned[fourth.asset_id] == "gold"
     assert splits.temporal_cutoff is not None
+
+
+def test_reused_serial_family_cannot_cross_final_dataset_splits():
+    first = _record(1)
+    second = replace(_record(2), split_family_id=first.split_family_id)
+    assert first.watch_entity_id != second.watch_entity_id
+    assert first.seller_group_id != second.seller_group_id
+
+    splits = build_splits([first, second], seed=42, held_out_factories=set())
+
+    assert splits.split_by_asset[first.asset_id] == splits.split_by_asset[second.asset_id]
+    with pytest.raises(ValueError, match="family group crosses dataset splits"):
+        assert_no_connected_component_crosses_splits(
+            [first, second],
+            DatasetSplits(((first.asset_id, TRAIN), (second.asset_id, "gold")), NOW, 42),
+        )
 
 
 def test_near_phash_cannot_cross_train_and_gold_splits():

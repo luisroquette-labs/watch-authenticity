@@ -176,6 +176,7 @@ def build_training_record(
         object_ref=object_ref,
         reference_id=evidence.reference_id,
         watch_entity_id=grouping.watch_entity_id,
+        split_family_id=grouping.split_family_id,
         content_cluster_id=grouping.content_cluster_id,
         seller_group_id=grouping.seller_group_id,
         acquisition_batch_id=candidate.acquisition_batch_id,
