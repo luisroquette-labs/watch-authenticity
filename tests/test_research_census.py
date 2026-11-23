@@ -293,6 +293,26 @@ def test_census_rejects_tampered_v3_terminal_breakdown(field):
         run_research_census_once(cos, "private", "datasets", now=NOW)
 
 
+@pytest.mark.parametrize("schema", ["watch-auth-research-census-v2", "watch-auth-research-census-v3"])
+@pytest.mark.parametrize("bad_count", [True, 1.0])
+@pytest.mark.parametrize("field", ["probable_watch_count", "file_count"])
+def test_census_rejects_noninteger_counts_in_existing_breakdowns(schema, bad_count, field):
+    cos = COS()
+    _seed(cos)
+    run_research_census_once(cos, "private", "datasets", now=NOW)
+    key = next(key for key in cos.bodies if key.endswith("/terminal.json"))
+    tampered = json.loads(cos.bodies[key])
+    if schema == "watch-auth-research-census-v2":
+        del tampered["provisional_view_cells"]
+    tampered["schema"] = schema
+    target = tampered["provisional_cells"] if schema.endswith("v2") else tampered["provisional_view_cells"]
+    target[0][field] = bad_count
+    cos.bodies[key] = json.dumps(tampered, sort_keys=True).encode()
+
+    with pytest.raises(RuntimeError, match="incompatible terminal"):
+        run_research_census_once(cos, "private", "datasets", now=NOW)
+
+
 def test_census_fails_before_persisting_corrupt_receipt():
     cos = COS()
     _seed(cos)

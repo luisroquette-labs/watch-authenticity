@@ -153,10 +153,14 @@ def _validate_prior_terminal(
         raise RuntimeError("research census already closed with incompatible terminal")
     if schema in {"watch-auth-research-census-v2", "watch-auth-research-census-v3"}:
         cells, roles, views = _provisional_breakdown(prior["manifest_sha256s"], manifest_details)
-        if prior["provisional_cells"] != cells or prior["file_role_claim_counts"] != roles:
+        if _canonical(prior["provisional_cells"], prior["file_role_claim_counts"]) != _canonical(cells, roles):
             raise RuntimeError("research census already closed with incompatible terminal")
-        if schema == "watch-auth-research-census-v3" and prior["provisional_view_cells"] != views:
+        if schema == "watch-auth-research-census-v3" and _canonical(prior["provisional_view_cells"]) != _canonical(views):
             raise RuntimeError("research census already closed with incompatible terminal")
+
+
+def _canonical(*values: object) -> str:
+    return json.dumps(values, sort_keys=True, separators=(",", ":"))
 
 
 def _provisional_breakdown(
