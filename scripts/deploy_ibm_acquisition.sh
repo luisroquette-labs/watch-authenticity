@@ -29,6 +29,7 @@ luxury_job="watch-auth-supercloneluxury-${deployment_id}"
 cbp_job="watch-auth-cbp-${deployment_id}"
 goldsmiths_job="watch-auth-goldsmiths-${deployment_id}"
 bobs_job="watch-auth-bobswatches-${deployment_id}"
+swe_job="watch-auth-swisswatchexpo-${deployment_id}"
 speedmaster_job="watch-auth-speedmaster-${deployment_id}"
 auckland_job="watch-auth-auckland-${deployment_id}"
 daytona_job="watch-auth-daytona-${deployment_id}"
@@ -292,6 +293,39 @@ bobs_cron_args[1]=watch-auth-bobswatches-daily
 bobs_cron_args[5]="${bobs_job}"
 bobs_cron_args[7]='7 4 * * *'
 
+swe_job_args=("${job_args[@]}")
+swe_job_args[1]="${swe_job}"
+swe_job_args+=(--arg=--source --arg=swisswatchexpo)
+if ibmcloud ce job get --name "${swe_job}" --output json >/dev/null 2>&1; then
+  :
+else
+  ibmcloud ce job create "${swe_job_args[@]}"
+fi
+verify_job "${swe_job}" swisswatchexpo
+
+if link_exists "${swe_job}"; then
+  :
+else
+  link_state=$?
+  [[ "${link_state}" -eq 1 ]] || {
+    echo "trusted-profile link inventory failed" >&2
+    exit 2
+  }
+  ibmcloud iam trusted-profile-link-create "${WATCH_AUTH_TRUSTED_PROFILE_ID}" \
+    --name "${swe_job}" \
+    --cr-type CE \
+    --link-crn "${WATCH_AUTH_CE_PROJECT_CRN}" \
+    --link-component-type job \
+    --link-component-name "${swe_job}" \
+    --output json >/dev/null
+  link_exists "${swe_job}" || { echo "trusted-profile link readback failed" >&2; exit 2; }
+fi
+
+swe_cron_args=("${cron_args[@]}")
+swe_cron_args[1]=watch-auth-swisswatchexpo-daily
+swe_cron_args[5]="${swe_job}"
+swe_cron_args[7]='17 5 * * *'
+
 speedmaster_job_args=("${job_args[@]}")
 speedmaster_job_args[1]="${speedmaster_job}"
 speedmaster_job_args+=(--arg=--source --arg=wikimedia-speedmaster)
@@ -500,6 +534,12 @@ if ibmcloud ce sub cron get --name watch-auth-bobswatches-daily --output json >/
   ibmcloud ce sub cron update "${bobs_cron_args[@]}"
 else
   ibmcloud ce sub cron create "${bobs_cron_args[@]}"
+fi
+
+if ibmcloud ce sub cron get --name watch-auth-swisswatchexpo-daily --output json >/dev/null 2>&1; then
+  ibmcloud ce sub cron update "${swe_cron_args[@]}"
+else
+  ibmcloud ce sub cron create "${swe_cron_args[@]}"
 fi
 
 if ibmcloud ce sub cron get --name watch-auth-speedmaster-daily --output json >/dev/null 2>&1; then

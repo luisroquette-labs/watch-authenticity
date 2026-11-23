@@ -262,5 +262,20 @@
     "requests_per_minute": 10,
     "reason": "robots.txt advertises public product sitemaps with image URLs; no image rights clearance, so only metadata may be stored and seller authenticity claims are not independent confirmation",
     "evidence_sha256": "0a2479c9fef138de8965b9898195fd819af77cc239649e67da1e9589ea2da6c1"
+  },
+  {
+    "access_record_id": "access-swisswatchexpo-sitemap-20261123",
+    "source": "swisswatchexpo",
+    "acquisition_method": "public-sitemap",
+    "status": "active",
+    "evidence_url": "https://www.swisswatchexpo.com/robots.txt",
+    "verified_at": "2026-11-23T02:38:00Z",
+    "expires_at": "2027-11-23T02:38:00Z",
+    "allowed_image_hosts": [
+      "cdn.swisswatchexpo.com"
+    ],
+    "requests_per_minute": 10,
+    "reason": "Public product sitemaps expose stock IDs and gallery URLs; seller claims remain unconfirmed and only metadata is collected",
+    "evidence_sha256": "8131b48c21ae153ee2c6ef197ec02dc941b4c8fd9dad3a0eaf1c06355a9e82f9"
   }
 ]
