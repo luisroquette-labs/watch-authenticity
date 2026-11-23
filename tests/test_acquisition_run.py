@@ -919,7 +919,7 @@ set -eu
 printf '%s\n' "$*" >> "$CALL_LOG"
 case "$*" in
   "ce job get"*)
-    if [[ ! -f "$JOB_STATE" ]] || ! grep -qx "$5" "$JOB_STATE"; then exit 1; fi
+    if [[ ! -f "$JOB_STATE" ]] || ! grep -qx "$5" "$JOB_STATE"; then echo 'Not found' >&2; exit 1; fi
     args='["-m","acquisition.run"]'
     if [[ "$5" == watch-auth-supercloneluxury-* ]]; then args='["-m","acquisition.run","--source","supercloneluxury"]'; fi
     if [[ "$5" == watch-auth-rm-replica-* ]]; then args='["-m","acquisition.run","--source","richardmillereplica"]'; fi
@@ -952,7 +952,10 @@ case "$*" in
     printf '{"name":"CE_REGION","value":"us-south"}]}]}}}'
     ;;
   "ce job create"*) printf '%s\n' "$5" >> "$JOB_STATE" ;;
-  "ce sub cron get"*) [[ "$EXISTING_CRON" == 1 ]] ;;
+  "ce sub cron get"*)
+    if [[ "${FORBIDDEN_CRON:-0}" == 1 ]]; then echo 'This action is forbidden' >&2; exit 1; fi
+    [[ "$EXISTING_CRON" == 1 ]] || { echo 'Not found' >&2; exit 1; }
+    ;;
   "ce sub cron create"*|"ce sub cron update"*)
     if [[ "${FAIL_GOLDSMITHS_CRON:-0}" == 1 && "$*" == *watch-auth-goldsmiths-daily* ]]; then exit 2; fi
     ;;
@@ -1073,6 +1076,16 @@ esac
         f"ce sub cron {cron_action} --name watch-auth-acquisition-daily"
     )
     assert "ce job update" not in calls
+    log.write_text("")
+    forbidden = subprocess.run(
+        ["bash", str(root / "scripts/deploy_ibm_acquisition.sh")],
+        capture_output=True, text=True,
+        env={**env, "FORBIDDEN_CRON": "1"}, timeout=10,
+    )
+    assert forbidden.returncode == 2
+    assert "cron readback failed" in forbidden.stderr
+    assert "ce sub cron create" not in log.read_text()
+    assert "ce sub cron update" not in log.read_text()
     if existing_cron:
         log.write_text("")
         repeated = subprocess.run(
@@ -1139,6 +1152,42 @@ esac
     assert result.returncode == 2
     assert "staged job readback differs" in result.stderr
     assert "trusted-profile-link-create" not in log.read_text()
+    assert "ce sub cron" not in log.read_text()
+
+
+def test_deploy_does_not_create_job_when_readback_is_forbidden(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    fake = tmp_path / "ibmcloud"
+    fake.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$CALL_LOG\"\n"
+        "if [[ \"$*\" == ce\\ job\\ get* ]]; then "
+        "echo 'This action is forbidden' >&2; exit 1; fi\n"
+    )
+    fake.chmod(0o755)
+    log = tmp_path / "calls.log"
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "CALL_LOG": str(log),
+        "WATCH_AUTH_CE_PROJECT": "watch-authenticity",
+        "WATCH_AUTH_CE_PROJECT_CRN": "crn:v1:project",
+        "WATCH_AUTH_ACQUISITION_IMAGE_DIGEST": "us.icr.io/ns/acquisition@sha256:" + "a" * 64,
+        "WATCH_AUTH_REGISTRY_SECRET": "registry-pull",
+        "WATCH_AUTH_COS_BUCKET": "private",
+        "WATCH_AUTH_COS_ENDPOINT": "https://cos.example",
+        "WATCH_AUTH_COS_SERVICE_INSTANCE_ID": "cos-1",
+        "WATCH_AUTH_TRUSTED_PROFILE_ID": "profile-1",
+        "WATCH_AUTH_ACCOUNT_ID": "a" * 32,
+        "WATCH_AUTH_IAM_READER_POLICY_ID": "11111111-1111-4111-8111-111111111111",
+    }
+    result = subprocess.run(
+        ["bash", str(root / "scripts/deploy_ibm_acquisition.sh")],
+        capture_output=True, text=True, env=env, timeout=10,
+    )
+    assert result.returncode != 0
+    assert "readback failed" in result.stderr
+    assert "ce job create" not in log.read_text()
     assert "ce sub cron" not in log.read_text()
 
 
