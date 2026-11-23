@@ -2,7 +2,7 @@ import os
 import subprocess
 import sys
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -77,7 +77,7 @@ def _result(*, cursor=None, next_cursor=None) -> WikimediaDiscovery:
     return WikimediaDiscovery(page=page, candidates=(candidate,))
 
 
-def test_run_collects_before_committing_and_repeated_run_is_noop(cos, monkeypatch):
+def test_run_collects_before_committing_and_repeated_run_records_invocation(cos, monkeypatch):
     calls: list[str] = []
 
     def collect(*_args, **kwargs):
@@ -85,6 +85,7 @@ def test_run_collects_before_committing_and_repeated_run_is_noop(cos, monkeypatc
         return SimpleNamespace(accepted_candidate_ids=("candidate-123",))
 
     monkeypatch.setattr("acquisition.run.collect_batch", collect)
+    monkeypatch.setenv("CE_JOBRUN", "wikimedia-first-123")
     result = run_wikimedia_once(
         cos,
         "private",
@@ -97,13 +98,14 @@ def test_run_collects_before_committing_and_repeated_run_is_noop(cos, monkeypatc
         discover=lambda *_args, **_kwargs: _result(),
     )
     writes = cos.write_count
+    monkeypatch.setenv("CE_JOBRUN", "wikimedia-cron-123")
     repeated = run_wikimedia_once(
         cos,
         "private",
         "datasets",
         SimpleNamespace(),
         SimpleNamespace(),
-        now=NOW,
+        now=NOW + timedelta(minutes=1),
         api_client=object(),
         image_client=object(),
         discover=lambda *_args, **_kwargs: pytest.fail("completed cycle was rediscovered"),
@@ -111,9 +113,11 @@ def test_run_collects_before_committing_and_repeated_run_is_noop(cos, monkeypatc
 
     assert calls == ["actual-now"]
     assert result["state"] == "complete"
+    assert result["code_engine_jobrun"] == "wikimedia-first-123"
     assert result["accepted_candidate_ids"] == ["candidate-123"]
     assert repeated["state"] == "already_complete"
-    assert cos.write_count == writes
+    assert repeated["code_engine_jobrun"] == "wikimedia-cron-123"
+    assert cos.write_count == writes + 1
 
 
 def test_wikimedia_lane_has_independent_checkpoint(cos, monkeypatch):
@@ -282,7 +286,7 @@ def test_replica_job_attempts_datejust_after_daytona_failure(cos, monkeypatch):
     assert isinstance(error.value.exceptions[0], WikimediaAPIError)
 
 
-def test_metadata_only_source_commits_without_downloading(cos):
+def test_metadata_only_source_commits_without_downloading(cos, monkeypatch):
     page = DiscoveryPage(
         source="vsfactoryusa",
         access_record_id="access-vsfactoryusa-1",
@@ -303,6 +307,7 @@ def test_metadata_only_source_commits_without_downloading(cos):
         ),
     )
 
+    monkeypatch.setenv("CE_JOBRUN", "metadata-first-123")
     result = run_metadata_discovery_once(
         cos,
         "private",
@@ -312,19 +317,22 @@ def test_metadata_only_source_commits_without_downloading(cos):
         discover=lambda previous: page,
     )
     writes = cos.write_count
+    monkeypatch.setenv("CE_JOBRUN", "metadata-cron-123")
     repeated = run_metadata_discovery_once(
         cos,
         "private",
         "datasets",
         "vsfactoryusa",
-        now=NOW,
+        now=NOW + timedelta(minutes=1),
         discover=lambda _previous: pytest.fail("completed cycle was rediscovered"),
     )
 
     assert result["record_count"] == 1
     assert result["state"] == "complete"
+    assert result["code_engine_jobrun"] == "metadata-first-123"
     assert repeated["state"] == "already_complete"
-    assert cos.write_count == writes
+    assert repeated["code_engine_jobrun"] == "metadata-cron-123"
+    assert cos.write_count == writes + 1
 
 
 @pytest.mark.parametrize(
@@ -456,27 +464,45 @@ def test_public_rejection_survives_status_write_failure_after_cursor_commit(cos,
         "acquisition.run.collect_batch",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(UnsafeImage("invalid image")),
     )
-    monkeypatch.setattr(
-        "acquisition.run._persist_status",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("status unavailable")),
-    )
-
-    with pytest.raises(RuntimeError, match="status unavailable"):
-        run_public_image_collection_once(
-            cos, "private", "datasets", SimpleNamespace(source="wikimedia"),
-            SimpleNamespace(), SimpleNamespace(), now=NOW, image_client=object(),
-            discover=lambda _previous: page,
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "acquisition.run._persist_status",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("status unavailable")),
         )
+        with pytest.raises(RuntimeError, match="status unavailable"):
+            run_public_image_collection_once(
+                cos, "private", "datasets", SimpleNamespace(source="wikimedia"),
+                SimpleNamespace(), SimpleNamespace(), now=NOW, image_client=object(),
+                discover=lambda _previous: page,
+            )
 
     rejection_keys = [key for key in cos.bodies if "/public-downloads/rejections/" in key]
     assert len(rejection_keys) == 1
     assert b'"source_record_id":"123#image-1-bad"' in cos.bodies[rejection_keys[0]]
     assert any("/public-downloads/discovery/" in key for key in cos.bodies)
-    assert run_public_image_collection_once(
+    monkeypatch.setenv("CE_JOBRUN", "public-cron-123")
+    repeated = run_public_image_collection_once(
         cos, "private", "datasets", SimpleNamespace(source="wikimedia"),
-        SimpleNamespace(), SimpleNamespace(), now=NOW, image_client=object(),
+        SimpleNamespace(), SimpleNamespace(), now=NOW + timedelta(minutes=1), image_client=object(),
         discover=lambda _previous: pytest.fail("completed page should not be rediscovered"),
-    )["state"] == "already_complete"
+    )
+    assert repeated["state"] == "already_complete"
+    assert repeated["code_engine_jobrun"] == "public-cron-123"
+    assert any(
+        key.startswith("datasets/public-downloads/acquisition-status/")
+        and b'"code_engine_jobrun":"public-cron-123"' in body
+        for key, body in cos.bodies.items()
+    )
+
+
+def test_public_collection_rejects_naive_run_time(cos):
+    with pytest.raises(ValueError, match="timezone-aware"):
+        run_public_image_collection_once(
+            cos, "private", "datasets", SimpleNamespace(source="wikimedia"),
+            SimpleNamespace(), SimpleNamespace(),
+            now=datetime(2026, 11, 10, 19), image_client=object(),
+            discover=lambda _previous: pytest.fail("invalid time reached discovery"),
+        )
 
 
 def test_public_image_failure_is_recorded_without_advancing_checkpoint(

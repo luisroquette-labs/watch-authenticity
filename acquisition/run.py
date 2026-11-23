@@ -118,7 +118,7 @@ def run_wikimedia_once(
     )
     ledger_prefix = f"{prefix.strip('/')}/discovery/{cycle}"
     if previous is not None and previous.next_cursor is None:
-        return {"cycle": cycle, "source": "wikimedia", "state": "already_complete"}
+        return _persist_already_complete(cos_client, bucket, prefix, cycle, "wikimedia", now)
 
     try:
         result = discover(api_client, policy, access, now=now, previous=previous)
@@ -292,6 +292,9 @@ def _persist_status(
     prefix: str,
     status: dict[str, object],
 ) -> str:
+    jobrun = os.environ.get("CE_JOBRUN", "").strip()
+    if jobrun:
+        status["code_engine_jobrun"] = jobrun
     body = _canonical(status)
     digest = hashlib.sha256(body).hexdigest()
     key = f"{prefix.strip('/')}/acquisition-status/{status['cycle']}/{digest}.json"
@@ -307,6 +310,20 @@ def _persist_status(
     if _read_if_present(cos_client, bucket, key) != body:
         raise RuntimeError("acquisition terminal status readback failed")
     return key
+
+
+def _persist_already_complete(
+    cos_client: Any, bucket: str, prefix: str, cycle: str, source: str, now: datetime
+) -> dict[str, object]:
+    status: dict[str, object] = {
+        "cycle": cycle,
+        "source": source,
+        "state": "already_complete",
+        "run_started_at_utc": now.astimezone(timezone.utc).isoformat(),
+    }
+    _persist_status(cos_client, bucket, prefix, status)
+    _LOG.info("acquisition_terminal %s", _canonical(status).decode())
+    return status
 
 
 def _persist_failed(
@@ -345,7 +362,7 @@ def run_metadata_discovery_once(
         cos_client, bucket, prefix, now.date().isoformat(), source
     )
     if previous is not None and previous.next_cursor is None:
-        return {"cycle": cycle, "source": source, "state": "already_complete"}
+        return _persist_already_complete(cos_client, bucket, prefix, cycle, source, now)
     try:
         page = discover(previous)
         if not isinstance(page, DiscoveryPage) or page.source != source:
@@ -436,13 +453,17 @@ def run_public_image_collection_once(
     on_collected: Callable[[tuple[str, ...], str, str, int], None] | None = None,
 ) -> dict[str, object]:
     """Discover, privately archive every image, then commit the source cursor."""
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
     collection_prefix = f"{prefix.strip('/')}/public-downloads"
     source = policy.source
     cycle, previous = _active_cycle(
         cos_client, bucket, collection_prefix, now.date().isoformat(), source
     )
     if previous is not None and previous.next_cursor is None:
-        return {"cycle": cycle, "source": source, "state": "already_complete"}
+        return _persist_already_complete(
+            cos_client, bucket, collection_prefix, cycle, source, now
+        )
 
     page = discover(previous)
     if not isinstance(page, DiscoveryPage) or page.source != source:
