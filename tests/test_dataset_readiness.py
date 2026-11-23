@@ -375,6 +375,26 @@ def test_near_phash_cannot_cross_train_and_gold_splits():
         )
 
 
+@pytest.mark.parametrize("replica_phash", ["fc39b1e4c6653198", "fc39b1e4c6653199"])
+def test_reposted_original_cannot_be_admitted_as_fake_in_same_split(replica_phash):
+    original = replace(_record(1), phash="fc39b1e4c6653198")
+    replica_page = replace(
+        _record(2, label=Label.FAKE, grade=3),
+        phash=replica_phash,
+    )
+
+    with pytest.raises(ValueError, match="conflicting labels for similar images"):
+        build_splits([original, replica_page], seed=42, held_out_factories=set())
+
+
+def test_same_image_cannot_have_conflicting_fake_grades():
+    first = replace(_record(1, label=Label.FAKE, grade=2), phash="fc39b1e4c6653198")
+    second = replace(_record(2, label=Label.FAKE, grade=3), phash=first.phash)
+
+    with pytest.raises(ValueError, match="conflicting labels for similar images"):
+        build_splits([first, second], seed=42, held_out_factories=set())
+
+
 def test_grouped_splits_are_deterministic_for_input_order():
     records = [_record(index) for index in range(1, 21)]
 
