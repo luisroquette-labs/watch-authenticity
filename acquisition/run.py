@@ -52,6 +52,7 @@ from scrapers.goldsmiths import GoldsmithsAPIError, discover_goldsmiths
 from scrapers.metadata_http import HTTPDeadlineExceeded
 from scrapers.precisionwatches import PrecisionWatchesAPIError, discover_precisionwatches
 from scrapers.replica_sitemap import ReplicaSitemapError
+from scrapers.richardmillereplica import discover_richardmillereplica
 from scrapers.richfactoryus import discover_richfactoryus
 from scrapers.supercloneluxury import discover_supercloneluxury
 from scrapers.superclonerolex import SuperCloneRolexAPIError, discover_superclonerolex
@@ -841,7 +842,7 @@ def main(source: str = "all") -> None:
     root = Path(__file__).resolve().parents[1]
     policies = load_source_policies(root / "config/source_policies.json")
     access_registry = load_source_access_registry(root / "config/source_access.json")
-    if source not in {"all", "supercloneluxury", "cbp", "goldsmiths", "bobswatches", "swisswatchexpo", "wikimedia-speedmaster", "wikimedia-auckland", "wikimedia-classic-speedmaster", "wikimedia-daytona", "wikimedia-royal-oak", "wikimedia-counterfeit-category", "research-census"}:
+    if source not in {"all", "supercloneluxury", "richardmillereplica", "cbp", "goldsmiths", "bobswatches", "swisswatchexpo", "wikimedia-speedmaster", "wikimedia-auckland", "wikimedia-classic-speedmaster", "wikimedia-daytona", "wikimedia-royal-oak", "wikimedia-counterfeit-category", "research-census"}:
         raise ValueError("unsupported acquisition source")
     logging.basicConfig(level=logging.INFO)
     now = datetime.now(timezone.utc)
@@ -866,6 +867,16 @@ def main(source: str = "all") -> None:
                 now=now,
                 previous=previous,
                 deadline=job_deadline,
+            ),
+        )
+        return
+    if source == "richardmillereplica":
+        policy = get_source_policy(policies, source)
+        access = access_registry[source]
+        run_public_image_collection_resilient(
+            cos, bucket, prefix, policy, access, now=now,
+            discover=lambda previous: discover_richardmillereplica(
+                requests.Session(), policy, access, now=now, previous=previous
             ),
         )
         return

@@ -277,5 +277,20 @@
     "requests_per_minute": 10,
     "reason": "Public product sitemaps expose stock IDs and gallery URLs; seller claims remain unconfirmed and only metadata is collected",
     "evidence_sha256": "8131b48c21ae153ee2c6ef197ec02dc941b4c8fd9dad3a0eaf1c06355a9e82f9"
+  },
+  {
+    "access_record_id": "access-richardmillereplica-sitemap-20261123",
+    "source": "richardmillereplica",
+    "acquisition_method": "public-sitemap-product-pages",
+    "status": "active",
+    "evidence_url": "https://www.richardmillereplica.io/robots.txt",
+    "verified_at": "2026-11-23T12:35:57Z",
+    "expires_at": "2027-11-23T12:35:57Z",
+    "allowed_image_hosts": [
+      "cdn.gfimage.com"
+    ],
+    "requests_per_minute": 6,
+    "reason": "Public robots and product sitemap checked 2026-11-23; owner authorized private archival; vendor claims replicas but training remains blocked",
+    "evidence_sha256": "8ed0a7ae42564ef694211c3e249b5367651cd49c9d62807edad552c4416c3eed"
   }
 ]
