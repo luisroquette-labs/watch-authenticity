@@ -577,6 +577,36 @@ def test_batch_next_photo_preserves_examined_guidance() -> None:
     assert "Próxima verificação útil: '+j.joint.next_useful_photo" in _HTML.decode("utf-8")
 
 
+def test_visible_evidence_names_only_distinct_examined_photos() -> None:
+    class MixedService:
+        def predict(self, _body: bytes, _content_type: str, angle: str) -> dict[str, object]:
+            if angle == "caseback":
+                return {
+                    "verdict": "inconclusivo", "model_invoked": False,
+                    "observed_dial_color": "green", "observed_bezel_color": "green",
+                }
+            return {
+                "verdict": "inconclusivo", "model_invoked": True, "detected_angle": "dial",
+                "observed_dial_color": "black", "observed_bezel_color": "black",
+            }
+
+    face = _jpeg_variant(1)
+    joint = analyze_batch(MixedService(), {"images": [
+        _batch_item("dial", face),
+        _batch_item("dial", face),
+        _batch_item("caseback", _jpeg_variant(2)),
+    ]})["joint"]
+
+    assert joint["unique_visual_contents"] == 2
+    assert joint["visible_evidence"]["dial_color"] == {
+        "value": "black", "supporting_photos": 1, "photo_indices": [1],
+    }
+    assert joint["visible_evidence"]["bezel_color"] == {
+        "value": "black", "supporting_photos": 1, "photo_indices": [1],
+    }
+    assert "fotos examinadas" in _HTML.decode("utf-8")
+
+
 def test_pilot_does_not_request_another_dial_after_examining_one() -> None:
     service = PilotService.__new__(PilotService)
     setattr(service, "inspect", lambda _image: _VisualInspection("inspected", "black", "uncertain"))
@@ -622,6 +652,7 @@ def test_conflicting_dial_colors_block_reference_candidate() -> None:
     joint = analyze_batch(ConflictingPhotos(), {"images": [_batch_item("crown", _jpeg_variant(1)), _batch_item("crown", _jpeg_variant(2))]})["joint"]
     assert joint["reference_candidate"] is None
     assert joint["visible_evidence"]["dial_color"]["value"] == "uncertain"
+    assert joint["visible_evidence"]["dial_color"]["photo_indices"] == []
     assert "crown" in joint["missing_angles"]
 
 
