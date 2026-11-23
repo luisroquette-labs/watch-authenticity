@@ -100,8 +100,10 @@ def test_continuation_reads_only_next_sitemap_and_skips_prior_stock():
     client.get.side_effect = lambda url, **kwargs: _Response(bodies[url])
     kwargs = {"now": NOW, "clock": lambda: 0.0, "sleeper": lambda _: None}
     page = discover_swisswatchexpo(client, policy, access, **kwargs)
-    assert page.next_cursor is not None and page.next_cursor.endswith("|" + second)
+    assert page.next_cursor == first
     client.get.reset_mock()
+    bodies[f"{HOST}/sitemap.xml"] = f'''<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <sitemap><loc>{second}</loc></sitemap><sitemap><loc>{first}</loc></sitemap></sitemapindex>'''
     previous = DiscoveryCommit("swisswatchexpo", access.access_record_id, None,
                                "page-sha", page.next_cursor, (("53951", "record-sha"),), "commit-sha")
     continued = discover_swisswatchexpo(client, policy, access, previous=previous, **kwargs)
@@ -109,6 +111,11 @@ def test_continuation_reads_only_next_sitemap_and_skips_prior_stock():
     assert [record.source_record_id for record in continued.records] == ["53952"]
     assert second in [call.args[0] for call in client.get.call_args_list]
     assert first not in [call.args[0] for call in client.get.call_args_list]
+
+    bodies[f"{HOST}/sitemap.xml"] = f'''<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <sitemap><loc>{first}</loc></sitemap></sitemapindex>'''
+    terminal = discover_swisswatchexpo(client, policy, access, previous=previous, **kwargs)
+    assert terminal.records == () and terminal.next_cursor is None
 
 
 def test_reference_must_be_a_slug_token():

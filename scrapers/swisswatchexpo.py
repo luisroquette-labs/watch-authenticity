@@ -62,9 +62,7 @@ def discover_swisswatchexpo(
     robots = fetcher.get_bytes(f"{_ROOT}/robots.txt", 256 * 1024, "robots.txt", deadline=deadline)
     if _INDEX not in robots.decode("utf-8", errors="strict"):
         raise SwissWatchExpoDiscoveryError("robots.txt does not advertise sitemap")
-    index_body = fetcher.get_bytes(_INDEX, 256 * 1024, "sitemap index", deadline=deadline)
-    index_sha256 = hashlib.sha256(index_body).hexdigest()
-    index = _xml(index_body)
+    index = _xml(fetcher.get_bytes(_INDEX, 256 * 1024, "sitemap index", deadline=deadline))
     sitemap_urls = []
     for element in index.findall("sm:sitemap", _NS):
         url = _text(element.find("sm:loc", _NS), "sitemap URL")
@@ -73,16 +71,21 @@ def discover_swisswatchexpo(
     if not 1 <= len(sitemap_urls) <= 16 or len(sitemap_urls) != len(set(sitemap_urls)):
         raise SwissWatchExpoDiscoveryError("product sitemap inventory is invalid")
     cursor = previous.next_cursor if previous else None
-    cursor_url = cursor.partition("|")[2] if cursor else None
+    processed = tuple(cursor.split("|")) if cursor else ()
     if previous is not None and (previous.source != "swisswatchexpo"
                                  or previous.access_record_id != access.access_record_id
-                                 or cursor != f"{index_sha256}|{cursor_url}"
-                                 or cursor_url not in sitemap_urls):
+                                 or not processed or len(processed) > 16
+                                 or len(processed) != len(set(processed))
+                                 or any(_SITEMAP.fullmatch(_approved(item, _HOST).path) is None
+                                        for item in processed)):
         raise SwissWatchExpoDiscoveryError("sitemap continuation cursor is invalid")
-    index_at = sitemap_urls.index(cursor_url) if cursor_url else 0
-    url = sitemap_urls[index_at]
-    next_cursor = (f"{index_sha256}|{sitemap_urls[index_at + 1]}"
-                   if index_at + 1 < len(sitemap_urls) else None)
+    url = next((item for item in sitemap_urls if item not in processed), None)
+    if url is None:
+        return DiscoveryPage(source="swisswatchexpo", access_record_id=access.access_record_id,
+                             cursor=cursor, next_cursor=None, observed_at=now, records=())
+    processed_after = (*processed, url)
+    next_cursor = ("|".join(processed_after)
+                   if any(item not in processed_after for item in sitemap_urls) else None)
     root = _xml(fetcher.get_bytes(url, 32 * 1024 * 1024, "product sitemap", deadline=deadline))
     records: dict[str, DiscoveryRecord] = {}
     seen = dict(previous.record_hashes) if previous else {}
