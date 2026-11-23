@@ -20,6 +20,7 @@ _V1_FIELDS = {
     "confirmed_watch_count", "training_admission_count", "manifest_sha256s",
 }
 _V2_FIELDS = _V1_FIELDS | {"provisional_cells", "file_role_claim_counts"}
+_V3_FIELDS = _V2_FIELDS | {"provisional_view_cells"}
 
 
 def run_research_census_once(cos: Any, bucket: str, prefix: str, *, now: datetime) -> dict[str, object]:
@@ -79,9 +80,9 @@ def run_research_census_once(cos: Any, bucket: str, prefix: str, *, now: datetim
         files += report.file_count
         probable += report.probable_watch_count
 
-    cells, roles = _provisional_breakdown(manifest_hashes, manifest_details)
+    cells, roles, views = _provisional_breakdown(manifest_hashes, manifest_details)
     status: dict[str, object] = {
-        "schema": "watch-auth-research-census-v2",
+        "schema": "watch-auth-research-census-v3",
         "cycle": now.date().isoformat(),
         "manifest_count": len(manifest_hashes),
         "file_count": files,
@@ -91,6 +92,7 @@ def run_research_census_once(cos: Any, bucket: str, prefix: str, *, now: datetim
         "manifest_sha256s": sorted(manifest_hashes),
         "provisional_cells": cells,
         "file_role_claim_counts": roles,
+        "provisional_view_cells": views,
     }
     payload = json.dumps(status, sort_keys=True, separators=(",", ":")).encode()
     if len(payload) > _MAX_OUTPUT_BYTES:
@@ -128,8 +130,11 @@ def _validate_prior_terminal(
     schema = prior.get("schema") if isinstance(prior, dict) else None
     if (
         not isinstance(prior, dict)
-        or schema not in {"watch-auth-research-census-v1", "watch-auth-research-census-v2"}
-        or set(prior) != (_V1_FIELDS if schema == "watch-auth-research-census-v1" else _V2_FIELDS)
+        or schema not in {"watch-auth-research-census-v1", "watch-auth-research-census-v2",
+                          "watch-auth-research-census-v3"}
+        or set(prior) != {"watch-auth-research-census-v1": _V1_FIELDS,
+                          "watch-auth-research-census-v2": _V2_FIELDS,
+                          "watch-auth-research-census-v3": _V3_FIELDS}[schema]
         or prior.get("cycle") != current["cycle"]
         or prior.get("confirmed_watch_count") != 0
         or prior.get("training_admission_count") != 0
@@ -146,17 +151,24 @@ def _validate_prior_terminal(
         or prior["probable_watch_count"] != sum(manifest_details[digest][3] for digest in prior["manifest_sha256s"])
     ):
         raise RuntimeError("research census already closed with incompatible terminal")
-    if schema == "watch-auth-research-census-v2":
-        cells, roles = _provisional_breakdown(prior["manifest_sha256s"], manifest_details)
-        if prior["provisional_cells"] != cells or prior["file_role_claim_counts"] != roles:
+    if schema in {"watch-auth-research-census-v2", "watch-auth-research-census-v3"}:
+        cells, roles, views = _provisional_breakdown(prior["manifest_sha256s"], manifest_details)
+        if _canonical(prior["provisional_cells"], prior["file_role_claim_counts"]) != _canonical(cells, roles):
             raise RuntimeError("research census already closed with incompatible terminal")
+        if schema == "watch-auth-research-census-v3" and _canonical(prior["provisional_view_cells"]) != _canonical(views):
+            raise RuntimeError("research census already closed with incompatible terminal")
+
+
+def _canonical(*values: object) -> str:
+    return json.dumps(values, sort_keys=True, separators=(",", ":"))
 
 
 def _provisional_breakdown(
     digests: list[str],
     details: dict[str, tuple[str, str, int, int, tuple[str, ...]]],
-) -> tuple[list[dict[str, object]], dict[str, int]]:
+) -> tuple[list[dict[str, object]], dict[str, int], list[dict[str, object]]]:
     cells: dict[tuple[str, str], list[int]] = {}
+    view_cells: dict[tuple[str, str, str], list[int]] = {}
     roles: Counter[str] = Counter()
     for digest in digests:
         source, reference, photos, watches, file_roles = details[digest]
@@ -164,6 +176,10 @@ def _provisional_breakdown(
         cell[0] += watches
         cell[1] += photos
         roles.update(file_roles)
+        for role, count in Counter(file_roles).items():
+            view = view_cells.setdefault((source, reference, role), [0, 0])
+            view[0] += watches
+            view[1] += count
     return (
         [
             {"source": source, "reference_claim": reference,
@@ -171,6 +187,12 @@ def _provisional_breakdown(
             for (source, reference), counts in sorted(cells.items())
         ],
         dict(sorted(roles.items())),
+        [
+            {"source": source, "reference_claim": reference, "view_claim": role,
+             "class_status": "unverified", "probable_watch_count": counts[0],
+             "file_count": counts[1]}
+            for (source, reference, role), counts in sorted(view_cells.items())
+        ],
     )
 
 
