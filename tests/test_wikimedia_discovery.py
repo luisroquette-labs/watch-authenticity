@@ -353,12 +353,13 @@ def test_real_commons_license_shapes_are_normalized():
     ]
 
 
-def test_cc0_commons_license_allows_training_rights_without_authenticity_label():
+@pytest.mark.parametrize("license_url", (
+    "https://creativecommons.org/publicdomain/zero/1.0/",
+    "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+))
+def test_cc0_commons_license_allows_training_rights_without_authenticity_label(license_url):
     http = MagicMock()
-    page = _page(
-        license_name="CC0",
-        license_url="https://creativecommons.org/publicdomain/zero/1.0/",
-    )
+    page = _page(license_name="CC0", license_url=license_url)
     http.get.return_value = _Response({"query": {"pages": [page]}})
 
     candidate = _discover(http, None).candidates[0]
@@ -377,6 +378,7 @@ def test_cc0_commons_license_allows_training_rights_without_authenticity_label()
      ("Public domain", None),
      ("CC0", "https://creativecommons.org/licenses/by-sa/4.0/"),
      ("CC0", "http://creativecommons.org/publicdomain/zero/1.0/"),
+     ("CC0", "https://creativecommons.org/publicdomain/zero/1.0/deed.en#alternate"),
      ("CC0", "https://creativecommons.org:80/publicdomain/zero/1.0/#alternate")),
 )
 def test_other_commons_license_claims_remain_download_only(license_name, license_url):
