@@ -88,6 +88,12 @@ _RECOVERABLE_METADATA_ERRORS = (
     UnicodeDecodeError,
     WatchesOfSwitzerlandAPIError,
 )
+_RUNTIME_SOURCES = (
+    "all", "supercloneluxury", "richardmillereplica", "cbp", "goldsmiths",
+    "bobswatches", "swisswatchexpo", "wikimedia-speedmaster",
+    "wikimedia-auckland", "wikimedia-classic-speedmaster", "wikimedia-daytona",
+    "wikimedia-royal-oak", "wikimedia-counterfeit-category", "research-census",
+)
 
 
 def run_wikimedia_once(
@@ -842,7 +848,7 @@ def main(source: str = "all") -> None:
     root = Path(__file__).resolve().parents[1]
     policies = load_source_policies(root / "config/source_policies.json")
     access_registry = load_source_access_registry(root / "config/source_access.json")
-    if source not in {"all", "supercloneluxury", "richardmillereplica", "cbp", "goldsmiths", "bobswatches", "swisswatchexpo", "wikimedia-speedmaster", "wikimedia-auckland", "wikimedia-classic-speedmaster", "wikimedia-daytona", "wikimedia-royal-oak", "wikimedia-counterfeit-category", "research-census"}:
+    if source not in _RUNTIME_SOURCES:
         raise ValueError("unsupported acquisition source")
     logging.basicConfig(level=logging.INFO)
     now = datetime.now(timezone.utc)
@@ -1129,5 +1135,5 @@ def main(source: str = "all") -> None:
     )
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", choices=("all", "supercloneluxury", "cbp", "goldsmiths", "bobswatches", "swisswatchexpo", "wikimedia-speedmaster", "wikimedia-auckland", "wikimedia-classic-speedmaster", "wikimedia-daytona", "wikimedia-royal-oak", "wikimedia-counterfeit-category", "research-census"), default="all")
+    parser.add_argument("--source", choices=_RUNTIME_SOURCES, default="all")
     main(parser.parse_args().source)

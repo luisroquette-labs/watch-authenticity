@@ -900,6 +900,15 @@ def test_research_census_source_is_accepted_by_runtime_cli():
     assert "research-census" in result.stdout
 
 
+def test_rm_replica_source_is_accepted_by_runtime_cli():
+    result = subprocess.run(
+        [sys.executable, "-m", "acquisition.run", "--help"],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0
+    assert "richardmillereplica" in result.stdout
+
+
 @pytest.mark.parametrize("existing_cron", [False, True])
 def test_deploy_script_creates_and_rechecks_trusted_profile_link(tmp_path, existing_cron):
     root = Path(__file__).resolve().parents[1]
