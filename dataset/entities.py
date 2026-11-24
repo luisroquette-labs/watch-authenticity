@@ -84,11 +84,13 @@ class EntityAssignments(dict[str, str]):
         split_families: Mapping[str, str],
         seller_groups: Mapping[str, str],
         conflicts: Mapping[str, ClusterConflict],
+        unverified_identity_candidates: frozenset[str],
     ):
         super().__init__(entities)
         self.split_families = dict(split_families)
         self.seller_groups = dict(seller_groups)
         self.conflicts = dict(conflicts)
+        self.unverified_identity_candidates = unverified_identity_candidates
 
 
 class _UnionFind:
@@ -207,21 +209,6 @@ def assign_watch_entities(
     candidate_ids = [record.candidate_id for record in records]
     entities = _UnionFind(candidate_ids)
 
-    _union_shared_value(
-        entities,
-        records,
-        lambda record: (
-            record.source_policy_id,
-            evidence.get(record.candidate_id, EntityEvidence()).listing_id
-            or record.source_record_id,
-        ),
-    )
-    _union_shared_value(
-        entities,
-        records,
-        lambda record: _seller_serial_key(record.candidate_id, evidence),
-        ignore_none=True,
-    )
     for candidate_id, item in evidence.items():
         for linked_id in item.reviewer_linked_candidate_ids:
             entities.union(candidate_id, linked_id)
@@ -232,9 +219,47 @@ def assign_watch_entities(
         for members in entity_groups.values()
         for member in members
     }
+    by_listing: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for record in records:
+        item = evidence.get(record.candidate_id, EntityEvidence())
+        by_listing[(record.source_policy_id, item.listing_id or record.source_record_id)].append(
+            record.candidate_id
+        )
+    unverified_identity_candidates = {
+        candidate_id
+        for members in by_listing.values()
+        if len({entity_ids[candidate_id] for candidate_id in members}) > 1
+        for candidate_id in members
+    }
+    by_seller_serial: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for record in records:
+        key = _seller_serial_key(record.candidate_id, evidence)
+        if key is not None:
+            by_seller_serial[key].append(record.candidate_id)
+    unverified_identity_candidates.update(
+        candidate_id
+        for members in by_seller_serial.values()
+        if len({entity_ids[candidate_id] for candidate_id in members}) > 1
+        for candidate_id in members
+    )
 
     split_union = _UnionFind(candidate_ids)
     _union_shared_value(split_union, records, lambda record: entity_ids[record.candidate_id])
+    _union_shared_value(
+        split_union,
+        records,
+        lambda record: (
+            record.source_policy_id,
+            evidence.get(record.candidate_id, EntityEvidence()).listing_id
+            or record.source_record_id,
+        ),
+    )
+    _union_shared_value(
+        split_union,
+        records,
+        lambda record: _seller_serial_key(record.candidate_id, evidence),
+        ignore_none=True,
+    )
     _union_shared_value(
         split_union, records, lambda record: content_clusters[record.candidate_id]
     )
@@ -274,7 +299,9 @@ def assign_watch_entities(
         for member in members
     }
     conflicts = detect_cluster_conflicts(records, content_clusters, evidence)
-    return EntityAssignments(entity_ids, split_ids, seller_ids, conflicts)
+    return EntityAssignments(
+        entity_ids, split_ids, seller_ids, conflicts, frozenset(unverified_identity_candidates)
+    )
 
 
 def detect_cluster_conflicts(
@@ -356,7 +383,7 @@ def build_grouping_decision(
         watch_entity_id=entities[candidate.candidate_id],
         split_family_id=entities.split_families[candidate.candidate_id],
         seller_group_id=entities.seller_groups[candidate.candidate_id],
-        quarantined=conflict is not None,
+        quarantined=conflict is not None or candidate.candidate_id in entities.unverified_identity_candidates,
         conflict_candidate_ids=() if conflict is None else conflict.candidate_ids,
         conflict_evidence_ids=() if conflict is None else conflict.evidence_ids,
     )
@@ -395,6 +422,8 @@ def _validate_evidence(
             raise ValueError("entity evidence must contain EntityEvidence values")
         if not set(item.reviewer_linked_candidate_ids).issubset(ids):
             raise ValueError(f"reviewer link for {candidate_id} references an unknown candidate")
+        if item.reviewer_linked_candidate_ids and item.evidence_record_id is None:
+            raise ValueError("reviewer link requires evidence record")
 
 
 def _seller_serial_key(

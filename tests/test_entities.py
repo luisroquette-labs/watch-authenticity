@@ -71,7 +71,7 @@ def test_near_phash_with_conflicting_labels_is_quarantined(grouped_records):
     assert build_grouping_decision(records[1], clusters, assignments).quarantined
 
 
-def test_uncertain_same_watch_is_grouped_not_split(grouped_records):
+def test_one_listing_does_not_prove_one_physical_watch(grouped_records):
     clusters = build_content_clusters(grouped_records)
     evidence = {
         "front": EntityEvidence(listing_id="listing-1", seller_account_id="seller-1"),
@@ -80,9 +80,11 @@ def test_uncertain_same_watch_is_grouped_not_split(grouped_records):
 
     entity_ids = assign_watch_entities(grouped_records, clusters, evidence)
 
-    assert entity_ids["front"] == entity_ids["clasp"]
+    assert entity_ids["front"] != entity_ids["clasp"]
     front = next(record for record in grouped_records if record.candidate_id == "front")
     clasp = next(record for record in grouped_records if record.candidate_id == "clasp")
+    assert build_grouping_decision(front, clusters, entity_ids).quarantined
+    assert build_grouping_decision(clasp, clusters, entity_ids).quarantined
     assert build_grouping_decision(front, clusters, entity_ids).split_family_id == (
         build_grouping_decision(clasp, clusters, entity_ids).split_family_id
     )
@@ -107,12 +109,39 @@ def test_reviewer_link_and_hashed_serial_can_join_angles(grouped_records):
             seller_account_id="seller-1",
             declared_serial_sha256=serial_hash,
             reviewer_linked_candidate_ids=("front",),
+            evidence_record_id="continuous-capture-1",
         ),
     }
 
     entity_ids = assign_watch_entities(grouped_records, clusters, evidence)
 
     assert entity_ids["front"] == entity_ids["clasp"]
+    assert not build_grouping_decision(grouped_records[0], clusters, entity_ids).quarantined
+    assert not build_grouping_decision(grouped_records[2], clusters, entity_ids).quarantined
+
+
+def test_same_seller_and_copied_serial_do_not_prove_physical_identity(grouped_records):
+    clusters = build_content_clusters(grouped_records)
+    serial_hash = "9" * 64
+    evidence = {
+        "front": EntityEvidence(seller_account_id="seller-1", declared_serial_sha256=serial_hash),
+        "clasp": EntityEvidence(seller_account_id="seller-1", declared_serial_sha256=serial_hash),
+    }
+
+    assignments = assign_watch_entities(grouped_records, clusters, evidence)
+
+    assert assignments["front"] != assignments["clasp"]
+    assert assignments.split_families["front"] == assignments.split_families["clasp"]
+    assert build_grouping_decision(grouped_records[0], clusters, assignments).quarantined
+    assert build_grouping_decision(grouped_records[2], clusters, assignments).quarantined
+
+
+def test_reviewer_link_requires_recorded_evidence(grouped_records):
+    clusters = build_content_clusters(grouped_records)
+    evidence = {"clasp": EntityEvidence(reviewer_linked_candidate_ids=("front",))}
+
+    with pytest.raises(ValueError, match="reviewer link requires evidence record"):
+        assign_watch_entities(grouped_records, clusters, evidence)
 
 
 def test_reused_serial_across_sellers_stays_separate_watch_but_one_split(grouped_records):
