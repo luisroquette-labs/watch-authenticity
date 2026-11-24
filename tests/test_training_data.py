@@ -32,6 +32,23 @@ def test_training_refuses_tier_c_rows(training_fixture):
         load_training_data(cos, spec)
 
 
+def test_training_refuses_unverified_multiview_subject(training_fixture):
+    from tests.test_training_run import _canonical
+
+    _cos, _spec, manifest, splits, images = training_fixture
+    first, second = manifest["records"][:2]
+    second["subject_id"] = first["subject_id"]
+    next(source for source in manifest["source_records"]
+         if source["asset_id"] == second["asset_id"])["watch_entity_id"] = first["subject_id"]
+    manifest["freeze"]["manifest_sha256"] = hashlib.sha256(
+        _canonical(manifest["source_records"])
+    ).hexdigest()
+    cos, spec = _seed(manifest, splits, images, refresh_freeze=False)
+
+    with pytest.raises(TrainingDataRefused, match="multi-view physical identity"):
+        load_training_data(cos, spec)
+
+
 def test_training_refuses_frozen_source_with_copied_official_media(training_fixture):
     from tests.test_training_run import _canonical
 

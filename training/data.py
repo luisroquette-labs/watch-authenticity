@@ -332,6 +332,13 @@ def load_training_data(cos: Any, spec: RunSpec) -> TrainingBundle:
         ensure_rejection_groups_are_disjoint(records, split_by_asset)
     except ValueError as exc:
         raise TrainingDataRefused(str(exc)) from exc
+    subjects: dict[str, str] = {}
+    for record in records:
+        prior = subjects.setdefault(record.subject_id, record.asset_id)
+        if prior != record.asset_id:
+            raise TrainingDataRefused(
+                "multi-view physical identity lacks verified review lineage in training manifest"
+            )
 
     train_records = [record for record in records if split_by_asset[record.asset_id] == TRAIN]
     class_counts = Counter(record.model_class for record in train_records)
