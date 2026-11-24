@@ -80,7 +80,7 @@ const encode=file=>new Promise((resolve,reject)=>{
 });
 function renderReport(j,group){
   if(j.report_version){
-    let observations=j.observations.map(x=>'Foto '+x.photo+': '+x.detail+' ['+(x.visibility==='visible'?'visível segundo o modelo':'ambíguo')+']');
+    let observations=j.observations.map(x=>'Foto '+x.photo+' · '+labels[x.angle]+' · '+x.location+': '+x.detail+' ['+(x.visibility==='visible'?'visível segundo o modelo':'ambíguo')+']');
     let checks=j.technical_checks.map(x=>'Foto '+x.photo+' · '+x.field+': '+x.observed+' / ficha: '+x.expected+' ('+(x.status==='matched'?'compatível':'divergente')+')\n'+x.citation+' — '+x.url);
     let candidates=j.candidates.map(x=>[x.brand,x.family,x.reference].filter(Boolean).join(' '));
     return ['Parecer visual preliminar: '+j.conclusion_label,'Modelo: '+j.model+' · '+j.report_version,

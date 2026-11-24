@@ -69,12 +69,15 @@ class StubOpenRouter:
 
 
 @pytest.mark.parametrize("scenario, status, conclusion", [
-    ("compatible", 200, "probable_original"),
+    ("compatible", 200, "visually_compatible"),
     ("mixed", 200, "inconclusive"),
     ("color-only", 200, "inconclusive"),
     ("weak-compatibility", 200, "inconclusive"),
     ("calibre-unseen", 200, "inconclusive"),
     ("wrong-reference-code", 200, "inconclusive"),
+    ("wrong-reference-brand", 200, "inconclusive"),
+    ("equivalent-spec-words", 200, "inconclusive"),
+    ("structural-divergence", 200, "probable_fake"),
     ("wrong-photo", 503, None),
 ])
 def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | None) -> None:
@@ -90,6 +93,15 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
         answer["observations"][0].update(field="calibre", value="3235")
     elif scenario == "wrong-reference-code":
         answer["candidates"][0]["reference"] = "126610LV"
+    elif scenario == "wrong-reference-brand":
+        answer["candidates"][0].update(brand="Cartier", family="Santos")
+    elif scenario in {"equivalent-spec-words", "structural-divergence"}:
+        answer["candidates"] = [{"brand": "Cartier", "family": "Santos", "reference": "WSSA0061",
+                                 "reference_id": "cartier-santos-wssa0061"}]
+        answer["hypothesis"] = "probable_fake"
+        hand, crown = ("sword shaped", "seven-sided") if scenario == "equivalent-spec-words" else ("baton", "round")
+        answer["observations"][0].update(field="hand_shape", value=hand, detail=f"Ponteiro: {hand}")
+        answer["observations"][1].update(angle="crown", field="crown_shape", value=crown, detail=f"Coroa: {crown}")
     elif scenario == "wrong-photo":
         answer["observations"][1]["photo"] = 2
     provider = StubOpenRouter(answer)
@@ -121,10 +133,14 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
         checks = cast(list[dict[str, Any]], data["technical_checks"])
         expected_photos = {
             "compatible": [1, 3], "mixed": [1, 3], "color-only": [1, 3],
-            "weak-compatibility": [1], "calibre-unseen": [3], "wrong-reference-code": [],
+            "weak-compatibility": [1], "calibre-unseen": [3], "wrong-reference-code": [], "wrong-reference-brand": [],
+            "equivalent-spec-words": [1, 3], "structural-divergence": [1, 3],
         }
         assert [check["photo"] for check in checks] == expected_photos[scenario]
-        assert all(check["url"].startswith("https://www.rolex.com/") for check in checks)
+        brand = "cartier" if scenario in {"equivalent-spec-words", "structural-divergence"} else "rolex"
+        assert all(check["url"].startswith(f"https://www.{brand}.com/") for check in checks)
+        if scenario == "equivalent-spec-words":
+            assert {check["status"] for check in checks} == {"matched"}
 
 
 def test_scoring_preserves_denominator_and_evidence_tier() -> None:
@@ -134,12 +150,13 @@ def test_scoring_preserves_denominator_and_evidence_tier() -> None:
     cases = [{"specimen_id": name, "label": label, "evidence": evidence,
               "label_source": "test fixture", "physical_identity_confirmed": evidence == "independent"}
              for name, label, evidence in labels]
-    reports = {"a": "probable_original", "b": "inconclusive", "c": "probable_fake", "d": "probable_original"}
+    reports = {"a": "probable_original", "b": "visually_compatible", "c": "probable_fake", "d": "probable_original"}
     report = score(cases, reports)
     independent = report["independent"]
     assert (independent["correct"], independent["incorrect"], independent["inconclusive"],
             independent["unavailable"], independent["fake_called_original"],
             independent["accuracy_all_cases"]) == (1, 1, 1, 1, 1, 0.25)
     assert report["declared"]["agrees_with_claim"] == 1
+    assert independent["compatible_but_inconclusive"] == 1
     with pytest.raises(ValueError, match="unique specimen"):
         score([*cases, cases[0]], reports)

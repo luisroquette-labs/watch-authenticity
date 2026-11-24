@@ -10,7 +10,8 @@ from typing import Any
 
 def score(cases: list[dict[str, Any]], reports: dict[str, str]) -> dict[str, Any]:
     buckets = {name: {key: 0 for key in ("cases", "correct", "incorrect", "inconclusive",
-                                         "unavailable", "fake_called_original", "original_called_fake")}
+                                         "compatible_but_inconclusive", "unavailable",
+                                         "fake_called_original", "original_called_fake")}
                for name in ("independent", "declared")}
     seen: set[str] = set()
     details = []
@@ -28,7 +29,10 @@ def score(cases: list[dict[str, Any]], reports: dict[str, str]) -> dict[str, Any
         actual = reports.get(specimen, "unavailable")
         bucket = buckets[evidence]
         bucket["cases"] += 1
-        if actual in ("inconclusive", "unavailable"):
+        if actual == "visually_compatible":
+            outcome = "inconclusive"
+            bucket["compatible_but_inconclusive"] += 1
+        elif actual in ("inconclusive", "unavailable"):
             outcome = actual
         elif actual in ("probable_fake", "probable_original"):
             outcome = "correct" if actual == f"probable_{label}" else "incorrect"
