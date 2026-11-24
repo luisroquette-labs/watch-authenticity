@@ -30,6 +30,7 @@ from acquisition.types import (
     SourcePolicy,
 )
 from core.rules import REPLICA_VENDOR_SOURCES, propose_source_label
+from core.types import Label
 from infra.ibm_cos import IntegrityError, upload_verified
 
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
@@ -733,6 +734,90 @@ def _receipt_bytes(candidate: CandidateRecord) -> bytes:
         "source_url": candidate.source_url,
     }
     return json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+
+
+def load_candidate_batch(cos_client: Any, bucket: str, batch_id: str) -> tuple[CandidateRecord, ...]:
+    """Read every immutable candidate receipt in a collection batch."""
+    _safe_id(batch_id, "batch_id")
+    prefix = f"datasets/receipts/{batch_id}/"
+    census_key = prefix + "manifest.json"
+    census_body = _read_receipt(cos_client, bucket, census_key)
+    if census_body is None:
+        raise IntegrityError("candidate batch lacks a finalized census")
+    try:
+        census = json.loads(census_body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise IntegrityError("candidate batch census is invalid") from exc
+    if (
+        not isinstance(census, dict)
+        or set(census) != {"schema", "batch_id", "source", "candidate_ids",
+                          "candidate_consumption", "rejected_source_record_ids"}
+        or census["schema"] != "watch-auth-candidate-batch-v1"
+        or census["batch_id"] != batch_id
+        or not isinstance(census["source"], str)
+        or not census["source"]
+        or not isinstance(census["candidate_ids"], list)
+        or not all(isinstance(item, str) and item for item in census["candidate_ids"])
+        or census["candidate_ids"] != sorted(set(census["candidate_ids"]))
+        or not isinstance(census["candidate_consumption"], int)
+        or isinstance(census["candidate_consumption"], bool)
+        or not isinstance(census["rejected_source_record_ids"], list)
+        or not all(isinstance(item, str) for item in census["rejected_source_record_ids"])
+        or census["candidate_consumption"] != len(census["candidate_ids"]) + len(census["rejected_source_record_ids"])
+        or json.dumps(census, sort_keys=True, separators=(",", ":")).encode() != census_body
+    ):
+        raise IntegrityError("candidate batch census differs from finalized collection")
+    page = cos_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+    if not isinstance(page, dict) or page.get("IsTruncated") is not False:
+        raise IntegrityError("candidate batch receipt inventory is incomplete")
+    contents = page.get("Contents")
+    if not isinstance(contents, list) or not contents or len(contents) > 1000:
+        raise IntegrityError("candidate batch receipt inventory is empty or invalid")
+    records: list[CandidateRecord] = []
+    seen: set[str] = set()
+    for item in contents:
+        key = item.get("Key") if isinstance(item, dict) else None
+        if key == census_key:
+            continue
+        if not isinstance(key, str) or not key.startswith(prefix) or not key.endswith(".json"):
+            raise IntegrityError("candidate batch receipt key is invalid")
+        body = _read_receipt(cos_client, bucket, key)
+        if body is None:
+            raise IntegrityError("candidate batch receipt is missing")
+        try:
+            raw = json.loads(body)
+            if not isinstance(raw, dict):
+                raise ValueError("receipt is not an object")
+            record = CandidateRecord(
+                candidate_id=raw["candidate_id"],
+                acquisition_batch_id=raw["batch_id"],
+                source_policy_id=raw["policy_id"],
+                source_record_id=raw["source_record_id"],
+                source_url=raw["source_url"],
+                collected_at=datetime.fromisoformat(raw["collected_at"]),
+                declared_reference=raw["declared_reference"],
+                proposed_label=None if raw["proposed_label"] is None else Label(raw["proposed_label"]),
+                proposed_grade=raw["proposed_grade"],
+                factory=raw["factory"],
+                price_usd=None if raw["price_usd"] is None else Decimal(raw["price_usd"]),
+                raw_sha256=raw["raw_sha256"],
+                derivative_sha256=raw["derivative_sha256"],
+                phash=raw["phash"],
+                rights_record_id=raw["rights_record_id"],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise IntegrityError("candidate batch receipt cannot be parsed") from exc
+        digest = hashlib.sha256(body).hexdigest()
+        if (record.acquisition_batch_id != batch_id
+            or key != f"{prefix}{record.candidate_id}-{digest}.json"
+            or body != _receipt_bytes(record)
+            or record.candidate_id in seen):
+            raise IntegrityError("candidate batch receipt lineage differs")
+        seen.add(record.candidate_id)
+        records.append(record)
+    if sorted(seen) != census["candidate_ids"]:
+        raise IntegrityError("candidate batch receipts differ from finalized census")
+    return tuple(sorted(records, key=lambda record: record.candidate_id))
 
 
 def _upload_bytes(

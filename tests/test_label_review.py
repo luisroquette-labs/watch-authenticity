@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from acquisition.collect import _receipt_bytes, load_candidate_batch
 from acquisition.types import Angle, EvidenceTier, ReviewStatus, RightsStatus
 from core.types import Label
 from dataset.angle_review import record_usability_review
@@ -15,7 +16,7 @@ from dataset.entities import (
     build_content_clusters,
     build_grouping_decision,
 )
-from dataset.physical_link import record_physical_link_review
+from dataset.physical_link import physical_link_artifact, record_physical_link_review
 from labeling.adjudicate import (
     EvidenceTampered,
     NotTrainingEligible,
@@ -30,6 +31,63 @@ from labeling.review import (
     load_reviewer_registry,
     submit_review,
 )
+from tests.conftest import _CollectorCOS
+
+
+def _receipt_cos(records):
+    import hashlib
+    import json
+
+    cos = _CollectorCOS()
+    for record in records:
+        body = _receipt_bytes(record)
+        digest = hashlib.sha256(body).hexdigest()
+        cos.put_object(
+            Bucket="private",
+            Key=f"datasets/receipts/{record.acquisition_batch_id}/{record.candidate_id}-{digest}.json",
+            Body=body,
+            Metadata={"sha256": digest, "length": str(len(body))},
+        )
+    census = {
+        "schema": "watch-auth-candidate-batch-v1",
+        "batch_id": records[0].acquisition_batch_id,
+        "source": "partner",
+        "candidate_ids": sorted(record.candidate_id for record in records),
+        "candidate_consumption": len(records),
+        "rejected_source_record_ids": [],
+    }
+    body = json.dumps(census, sort_keys=True, separators=(",", ":")).encode()
+    digest = hashlib.sha256(body).hexdigest()
+    cos.put_object(
+        Bucket="private",
+        Key=f"datasets/receipts/{records[0].acquisition_batch_id}/manifest.json",
+        Body=body, Metadata={"sha256": digest, "length": str(len(body))},
+    )
+    return cos
+
+
+def test_identity_census_requires_finalization_and_exact_receipt_set(candidate):
+    from infra.ibm_cos import IntegrityError
+
+    cos = _receipt_cos((candidate,))
+    assert load_candidate_batch(cos, "private", candidate.acquisition_batch_id) == (candidate,)
+    manifest_key = f"datasets/receipts/{candidate.acquisition_batch_id}/manifest.json"
+    manifest_body, manifest_metadata = cos.bodies.pop(manifest_key), cos.metadata.pop(manifest_key)
+    with pytest.raises(IntegrityError, match="finalized census"):
+        load_candidate_batch(cos, "private", candidate.acquisition_batch_id)
+    cos.bodies[manifest_key], cos.metadata[manifest_key] = manifest_body, manifest_metadata
+    extra = replace(candidate, candidate_id="unlisted-photo", source_record_id="unlisted")
+    body = _receipt_bytes(extra)
+    import hashlib
+
+    digest = hashlib.sha256(body).hexdigest()
+    cos.put_object(
+        Bucket="private",
+        Key=f"datasets/receipts/{candidate.acquisition_batch_id}/{extra.candidate_id}-{digest}.json",
+        Body=body, Metadata={"sha256": digest, "length": str(len(body))},
+    )
+    with pytest.raises(IntegrityError, match="finalized census"):
+        load_candidate_batch(cos, "private", candidate.acquisition_batch_id)
 
 
 @pytest.fixture
@@ -117,7 +175,7 @@ def test_dealer_reputation_alone_is_tier_c_and_not_trainable(
             capture_style="casual",
             now=candidate.collected_at,
             reviews=[review],
-            reviewer_registry=reviewer_registry, identity_records=(candidate,),
+            reviewer_registry=reviewer_registry, cos_client=_receipt_cos((candidate,)), bucket="private",
         )
 
 
@@ -134,7 +192,7 @@ def test_copied_official_media_cannot_be_admitted_even_with_review(
         build_training_record(
             copied, evidence, grouping, rights, object_ref=object_ref,
             angle=Angle.DIAL, usability_review=None, capture_style="casual",
-            now=candidate.collected_at, reviews=[review], reviewer_registry=reviewer_registry, identity_records=(candidate,),
+            now=candidate.collected_at, reviews=[review], reviewer_registry=reviewer_registry, cos_client=_receipt_cos((candidate,)), bucket="private",
         )
 
 
@@ -380,7 +438,7 @@ def test_revoked_rights_and_price_only_grade_cannot_reach_training(
             capture_style="casual",
             now=candidate.collected_at,
             reviews=[accepted_review],
-            reviewer_registry=reviewer_registry, identity_records=(candidate,),
+            reviewer_registry=reviewer_registry, cos_client=_receipt_cos((candidate,)), bucket="private",
         )
 
     price_review = make_review(
@@ -399,7 +457,7 @@ def test_revoked_rights_and_price_only_grade_cannot_reach_training(
             capture_style="casual",
             now=candidate.collected_at,
             reviews=[price_review],
-            reviewer_registry=reviewer_registry, identity_records=(candidate,),
+            reviewer_registry=reviewer_registry, cos_client=_receipt_cos((candidate,)), bucket="private",
         )
 
 
@@ -419,7 +477,7 @@ def test_build_training_record_uses_only_accepted_evidence(
         capture_style="studio",
         now=candidate.collected_at,
         reviews=[review],
-        reviewer_registry=reviewer_registry, identity_records=(candidate,),
+        reviewer_registry=reviewer_registry, cos_client=_receipt_cos((candidate,)), bucket="private",
     )
     assert record.label is Label.FAKE
     assert record.grade == 3
@@ -429,13 +487,18 @@ def test_build_training_record_uses_only_accepted_evidence(
 def test_training_admission_recomputes_two_view_identity(
     candidate, make_review, reviewer, reviewer_registry, rights, object_ref
 ):
+    import hashlib
+
+    front_raw, clasp_raw = b"front photo", b"clasp photo"
+    candidate = replace(candidate, raw_sha256=hashlib.sha256(front_raw).hexdigest())
     clasp = replace(
         candidate, candidate_id="clasp-photo", source_record_id="same-listing-clasp",
-        raw_sha256="b" * 64, derivative_sha256="c" * 64, phash="0123456789abcdef",
+        raw_sha256=hashlib.sha256(clasp_raw).hexdigest(),
+        derivative_sha256="c" * 64, phash="0123456789abcdef",
     )
     records = (candidate, clasp)
     listing = {item.candidate_id: EntityEvidence(listing_id="listing-1") for item in records}
-    artifact = b"continuous source capture showing front, case and clasp of one watch"
+    artifact = physical_link_artifact(candidate, clasp, front_raw, clasp_raw)
     first = replace(reviewer, reviewer_id="identity-1",
                     allowed_evidence_types=(*reviewer.allowed_evidence_types,
                                             "physical_identity_review"))
@@ -454,7 +517,11 @@ def test_training_admission_recomputes_two_view_identity(
         reviewer_registry=registry,
     )
     grouping = build_grouping_decision(candidate, clusters, assignments)
-    authenticity = make_review()
+    authenticity = submit_review(
+        candidate, reviewer, proposed_label=Label.GENUINE, proposed_grade=None,
+        proposed_tier=EvidenceTier.B, evidence_type="partner_authenticated_original",
+        supporting_artifact_hashes=("a" * 64,), reviewed_at=candidate.collected_at,
+    )
     evidence = adjudicate(candidate, [authenticity], registry)
     kwargs = dict(
         object_ref=object_ref, angle=Angle.DIAL,
@@ -464,7 +531,7 @@ def test_training_admission_recomputes_two_view_identity(
         ),
         capture_style="casual", now=candidate.collected_at,
         reviews=[authenticity], reviewer_registry=registry,
-        identity_records=records, entity_evidence=listing,
+        cos_client=_receipt_cos(records), bucket="private", entity_evidence=listing,
         physical_link_reviews=links,
         physical_link_artifacts={links[0].artifact_sha256: artifact},
     )
@@ -501,7 +568,7 @@ def test_seller_declared_factory_does_not_become_training_provenance(
         capture_style="studio",
         now=declared.collected_at,
         reviews=[review],
-        reviewer_registry=reviewer_registry, identity_records=(declared,),
+        reviewer_registry=reviewer_registry, cos_client=_receipt_cos((declared,)), bucket="private",
     )
     assert record.factory is None
 
@@ -533,7 +600,7 @@ def test_factory_record_attests_named_factory_for_holdout(
             True, True, "angle-reviewer", declared.collected_at,
         ),
         capture_style="studio", now=declared.collected_at,
-        reviews=[review], reviewer_registry={qualified.reviewer_id: qualified}, identity_records=(declared,),
+        reviews=[review], reviewer_registry={qualified.reviewer_id: qualified}, cos_client=_receipt_cos((declared,)), bucket="private",
     )
     assert record.factory == "verified-factory"
 
@@ -552,7 +619,7 @@ def test_unverified_capture_style_cannot_enter_training(
         ),
         now=candidate.collected_at,
         reviews=[review],
-        reviewer_registry=reviewer_registry, identity_records=(candidate,),
+        reviewer_registry=reviewer_registry, cos_client=_receipt_cos((candidate,)), bucket="private",
     )
 
     with pytest.raises(NotTrainingEligible, match="capture style"):
@@ -580,7 +647,7 @@ def test_build_training_record_rejects_grouping_from_another_candidate(
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
-            reviewer_registry=reviewer_registry, identity_records=(candidate,),
+            reviewer_registry=reviewer_registry, cos_client=_receipt_cos((candidate,)), bucket="private",
         )
 
 
@@ -603,7 +670,7 @@ def test_build_training_record_rejects_tampered_evidence(
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
-            reviewer_registry=reviewer_registry, identity_records=(candidate,),
+            reviewer_registry=reviewer_registry, cos_client=_receipt_cos((candidate,)), bucket="private",
         )
 
 
@@ -646,7 +713,7 @@ def test_build_training_record_rejects_rehashed_result_not_supported_by_reviews(
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
-            reviewer_registry=reviewer_registry, identity_records=(candidate,),
+            reviewer_registry=reviewer_registry, cos_client=_receipt_cos((candidate,)), bucket="private",
         )
 
 
@@ -678,7 +745,7 @@ def test_build_training_record_rejects_candidate_changed_after_review(
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
-            reviewer_registry=reviewer_registry, identity_records=(candidate,),
+            reviewer_registry=reviewer_registry, cos_client=_receipt_cos((candidate,)), bucket="private",
         )
 
 
@@ -712,7 +779,7 @@ def test_build_training_record_rejects_rights_outside_validity(
             capture_style="studio",
             now=invalid_now,
             reviews=[review],
-            reviewer_registry=reviewer_registry, identity_records=(candidate,),
+            reviewer_registry=reviewer_registry, cos_client=_receipt_cos((candidate,)), bucket="private",
         )
 
 
@@ -739,7 +806,7 @@ def test_build_training_record_rejects_unlinked_image(
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
-            reviewer_registry=reviewer_registry, identity_records=(candidate,),
+            reviewer_registry=reviewer_registry, cos_client=_receipt_cos((candidate,)), bucket="private",
         )
 
 
@@ -788,5 +855,5 @@ def test_training_requires_matching_visible_usable_angle(
         build_training_record(
             candidate, evidence, grouping, rights, object_ref=object_ref,
             angle=Angle.DIAL, usability_review=usability, capture_style="studio",
-            now=candidate.collected_at, reviews=[review], reviewer_registry=reviewer_registry, identity_records=(candidate,),
+            now=candidate.collected_at, reviews=[review], reviewer_registry=reviewer_registry, cos_client=_receipt_cos((candidate,)), bucket="private",
         )

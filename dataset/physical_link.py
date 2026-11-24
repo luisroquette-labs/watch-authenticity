@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import tempfile
@@ -44,6 +46,58 @@ def _payload(review: PhysicalLinkReview) -> dict[str, object]:
     }
 
 
+def physical_link_artifact(
+    left: CandidateRecord,
+    right: CandidateRecord,
+    left_raw: bytes,
+    right_raw: bytes,
+) -> bytes:
+    if left.candidate_id == right.candidate_id:
+        raise ValueError("physical link requires two candidates")
+    pair = sorted(((left.candidate_id, left.raw_sha256, left_raw),
+                   (right.candidate_id, right.raw_sha256, right_raw)))
+    if any(not isinstance(body, bytes) or not body or len(body) > 25 * 1024 * 1024
+           or hashlib.sha256(body).hexdigest() != digest for _, digest, body in pair):
+        raise ValueError("physical link images differ from archived raw hashes")
+    return _canonical({
+        "schema": "watch-auth-physical-link-images-v1",
+        "images": [
+            {"candidate_id": candidate_id, "raw_sha256": digest,
+             "raw_base64": base64.b64encode(body).decode("ascii")}
+            for candidate_id, digest, body in pair
+        ],
+    })
+
+
+def _verify_artifact(artifact: bytes, pair: Sequence[tuple[str, str]]) -> None:
+    if len(pair) != 2:
+        raise ValueError("physical link artifact requires exactly two images")
+    if not isinstance(artifact, bytes) or len(artifact) > 70 * 1024 * 1024:
+        raise ValueError("physical link artifact is invalid or too large")
+    try:
+        document = json.loads(artifact)
+        if (not isinstance(document, dict)
+            or set(document) != {"schema", "images"}
+            or document["schema"] != "watch-auth-physical-link-images-v1"
+            or not isinstance(document["images"], list)
+            or len(document["images"]) != 2):
+            raise ValueError("physical link artifact schema is invalid")
+        for item, (candidate_id, digest) in zip(document["images"], pair, strict=True):
+            if (not isinstance(item, dict)
+                or set(item) != {"candidate_id", "raw_sha256", "raw_base64"}
+                or item["candidate_id"] != candidate_id
+                or item["raw_sha256"] != digest
+                or not isinstance(item["raw_base64"], str)):
+                raise ValueError("physical link artifact image binding is invalid")
+            body = base64.b64decode(item["raw_base64"], validate=True)
+            if not body or len(body) > 25 * 1024 * 1024 or hashlib.sha256(body).hexdigest() != digest:
+                raise ValueError("physical link artifact image hash differs")
+    except (UnicodeDecodeError, json.JSONDecodeError, binascii.Error, TypeError) as exc:
+        raise ValueError("physical link artifact cannot be decoded") from exc
+    if _canonical(document) != artifact:
+        raise ValueError("physical link artifact must be canonical")
+
+
 def record_physical_link_review(
     left: CandidateRecord,
     right: CandidateRecord,
@@ -56,6 +110,9 @@ def record_physical_link_review(
         raise ValueError("physical link requires two candidates")
     if not isinstance(artifact, bytes) or not artifact:
         raise ValueError("physical link requires the examined artifact bytes")
+    pair = tuple(sorted(((left.candidate_id, left.raw_sha256),
+                         (right.candidate_id, right.raw_sha256))))
+    _verify_artifact(artifact, pair)
     if not isinstance(visual_basis, str) or len(visual_basis.strip()) < 12:
         raise ValueError("physical link requires a specific visual basis")
     if reviewed_at.tzinfo is None or reviewed_at.utcoffset() is None:
@@ -69,8 +126,6 @@ def record_physical_link_review(
     if {left.acquisition_batch_id, right.acquisition_batch_id,
         left.source_policy_id, right.source_policy_id} & set(reviewer.prohibited_contributor_groups):
         raise ValueError("reviewer cannot approve own contributor group")
-    pair = sorted(((left.candidate_id, left.raw_sha256),
-                   (right.candidate_id, right.raw_sha256)))
     review = PhysicalLinkReview(
         candidate_ids=(pair[0][0], pair[1][0]),
         raw_sha256s=(pair[0][1], pair[1][1]),
@@ -117,6 +172,7 @@ def verified_physical_links(
             or len(review.visual_basis.strip()) < 12
             or hashlib.sha256(_canonical(_payload(review))).hexdigest() != review.review_sha256):
             raise ValueError("physical link review differs from examined evidence")
+        _verify_artifact(artifact, tuple(zip(review.candidate_ids, review.raw_sha256s, strict=True)))
         pair = review.candidate_ids
         if pair in artifact_by_pair and artifact_by_pair[pair] != review.artifact_sha256:
             raise ValueError("physical link reviewers disagree on evidence")

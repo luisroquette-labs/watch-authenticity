@@ -540,6 +540,21 @@ def run_public_image_collection_once(
         )
         if _immutable_review_document(cos_client, bucket, rejection_key, rejection_record) != rejection_record:
             raise RuntimeError("public image rejection readback differs")
+    census = {
+        "schema": "watch-auth-candidate-batch-v1",
+        "batch_id": batch_id,
+        "source": source,
+        "candidate_ids": sorted(accepted_candidate_ids),
+        "candidate_consumption": len(candidates),
+        "rejected_source_record_ids": sorted(item["source_record_id"] for item in rejected_images),
+    }
+    if len(set(accepted_candidate_ids)) != len(accepted_candidate_ids) or (
+        len(accepted_candidate_ids) + len(rejected_images) != len(candidates)
+    ):
+        raise RuntimeError("candidate batch cannot be finalized with duplicate or missing images")
+    census_key = f"datasets/receipts/{batch_id}/manifest.json"
+    if _immutable_review_document(cos_client, bucket, census_key, census) != census:
+        raise RuntimeError("candidate batch census readback differs")
     if on_collected is not None:
         on_collected(tuple(accepted_candidate_ids), cycle, batch_id, len(candidates))
     commit = append_discovery_page(

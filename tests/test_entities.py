@@ -20,7 +20,11 @@ from dataset.entities import (
     find_near_duplicate_pairs,
     hamming_distance_hex,
 )
-from dataset.physical_link import persist_physical_link_review, record_physical_link_review
+from dataset.physical_link import (
+    persist_physical_link_review,
+    physical_link_artifact,
+    record_physical_link_review,
+)
 from labeling.review import ReviewerRecord
 
 
@@ -94,9 +98,13 @@ def test_one_listing_does_not_prove_one_physical_watch(grouped_records):
 
 
 def test_two_independent_hash_bound_reviews_link_views(grouped_records):
-    front, clasp = grouped_records[0], grouped_records[2]
+    import hashlib
+
+    front_raw, clasp_raw = b"front photo", b"clasp photo"
+    front = replace(grouped_records[0], raw_sha256=hashlib.sha256(front_raw).hexdigest())
+    clasp = replace(grouped_records[2], raw_sha256=hashlib.sha256(clasp_raw).hexdigest())
     records = [front, clasp]
-    artifact = b"continuous capture of one watch, front through clasp"
+    artifact = physical_link_artifact(front, clasp, front_raw, clasp_raw)
     reviewers = {
         name: ReviewerRecord(
             name, ("physical_identity_review",), ("9" if name.endswith("a") else "8") * 64,
@@ -154,13 +162,15 @@ def test_physical_link_review_persists_artifact_and_review_by_content_hash(
 ):
     import hashlib
 
-    front, clasp = grouped_records[0], grouped_records[2]
+    front_raw, clasp_raw = b"front photo", b"clasp photo"
+    front = replace(grouped_records[0], raw_sha256=hashlib.sha256(front_raw).hexdigest())
+    clasp = replace(grouped_records[2], raw_sha256=hashlib.sha256(clasp_raw).hexdigest())
     reviewer = ReviewerRecord(
         "reviewer-a", ("physical_identity_review",), "9" * 64,
         front.collected_at - timedelta(days=1), front.collected_at + timedelta(days=1),
         (), False,
     )
-    artifact = b"source capture with continuous front and clasp views"
+    artifact = physical_link_artifact(front, clasp, front_raw, clasp_raw)
     review = record_physical_link_review(
         front, clasp, artifact, "continuous rotation with visible matching bracelet",
         reviewer, front.collected_at,

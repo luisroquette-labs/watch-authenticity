@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -415,6 +416,10 @@ def test_public_collection_downloads_every_discovered_image_before_committing(
     assert result["rejection_key"] is None
     assert result["state"] == "complete"
     assert any("/public-downloads/discovery/" in key for key in cos.bodies)
+    batch_id = next(key.split("/")[2] for key in cos.bodies if key.startswith("datasets/receipts/") and key.endswith("/manifest.json"))
+    census = json.loads(cos.bodies[f"datasets/receipts/{batch_id}/manifest.json"])
+    assert census["candidate_ids"] == sorted(result["accepted_candidate_ids"])
+    assert census["candidate_consumption"] == 3
 
 
 def test_public_wave_records_unsafe_image_and_commits_remaining_candidates(cos, monkeypatch):
@@ -449,6 +454,10 @@ def test_public_wave_records_unsafe_image_and_commits_remaining_candidates(cos, 
     }]
     assert result["rejection_key"] in cos.bodies
     assert cos.bodies[result["rejection_key"]]
+    batch_id = next(key.split("/")[2] for key in cos.bodies if key.startswith("datasets/receipts/") and key.endswith("/manifest.json"))
+    census = json.loads(cos.bodies[f"datasets/receipts/{batch_id}/manifest.json"])
+    assert census["candidate_ids"] == ["candidate-good"]
+    assert census["rejected_source_record_ids"] == ["123#image-1-bad"]
     assert any("/public-downloads/discovery/" in key for key in cos.bodies)
 
 
@@ -1509,8 +1518,12 @@ def test_review_result_reused_after_cursor_write_failure(cos, monkeypatch):
             raise RuntimeError("cursor write unavailable")
         return append_discovery_page(*args, **kwargs)
     monkeypatch.setattr("acquisition.run.append_discovery_page", append)
-    monkeypatch.setattr("acquisition.run.collect_batch",
-                        lambda *args, **kwargs: SimpleNamespace(accepted_candidate_ids=("candidate",)))
+    def collect(records, *_args, **_kwargs):
+        image_number = int(records[0].source_record_id.split("#image-")[1].split("-")[0])
+        candidate_id = "candidate" if image_number == 1 else f"candidate-{image_number}"
+        return SimpleNamespace(accepted_candidate_ids=(candidate_id,))
+
+    monkeypatch.setattr("acquisition.run.collect_batch", collect)
     record = replace(_result().page.records[0], source="partner", seller_group_id="seller",
                      image_ids=tuple(f"image-{i}" for i in range(20)),
                      image_urls=tuple(f"https://upload.wikimedia.org/{i}.jpg" for i in range(20)))
@@ -1518,7 +1531,7 @@ def test_review_result_reused_after_cursor_write_failure(cos, monkeypatch):
     reviews = []
     def review(target, ids, batch_id):
         reviews.append(ids)
-        return {"candidate": "watch-1"}, (row,)
+        return {item: "watch-1" for item in ids}, (row,)
     kwargs = dict(policies={"partner": policy}, accesses={"partner": access},
                   authorizations={"partner": authorization}, discoveries={"partner": lambda p: page},
                   now=NOW, image_client=object(), review=review)

@@ -17,8 +17,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
+from acquisition.collect import load_candidate_batch
 from acquisition.types import (
     Angle,
     CandidateRecord,
@@ -111,7 +113,8 @@ def build_training_record(
     now: datetime,
     reviews: Sequence[ReviewDecision],
     reviewer_registry: Mapping[str, ReviewerRecord],
-    identity_records: Sequence[CandidateRecord],
+    cos_client: Any,
+    bucket: str,
     entity_evidence: Mapping[str, EntityEvidence] | None = None,
     physical_link_reviews: Sequence[PhysicalLinkReview] = (),
     physical_link_artifacts: Mapping[str, bytes] | None = None,
@@ -147,6 +150,7 @@ def build_training_record(
         raise NotTrainingEligible("evidence differs from immutable review decisions")
     if grouping.quarantined or not evidence.tier.training_eligible:
         raise NotTrainingEligible("candidate evidence is not training eligible")
+    identity_records = load_candidate_batch(cos_client, bucket, candidate.acquisition_batch_id)
     if candidate not in identity_records:
         raise NotTrainingEligible("reviewed identity census does not contain this candidate")
     clusters = build_content_clusters(identity_records)
