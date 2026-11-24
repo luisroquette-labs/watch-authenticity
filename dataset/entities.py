@@ -11,6 +11,8 @@ from typing import Iterable, Mapping, Sequence
 from acquisition.types import CandidateRecord
 from core.types import Label
 from dataset.dedup import HAMMING_DEDUP_THRESHOLD
+from dataset.physical_link import PhysicalLinkReview, verified_physical_links
+from labeling.review import ReviewerRecord
 
 _PHASH_64 = re.compile(r"^[0-9a-f]{16}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -196,15 +198,27 @@ def assign_watch_entities(
     records: Sequence[CandidateRecord],
     content_clusters: Mapping[str, str],
     evidence: Mapping[str, EntityEvidence] | None = None,
+    *,
+    physical_link_reviews: Sequence[PhysicalLinkReview] = (),
+    physical_link_artifacts: Mapping[str, bytes] | None = None,
+    reviewer_registry: Mapping[str, ReviewerRecord] | None = None,
 ) -> EntityAssignments:
     _validate_records(records)
     evidence = evidence or {}
     _validate_mapping_keys(records, content_clusters, "content clusters")
     _validate_evidence(records, evidence)
     candidate_ids = [record.candidate_id for record in records]
+    verified_links = verified_physical_links(
+        records, physical_link_reviews, physical_link_artifacts or {}, reviewer_registry or {}
+    )
+    entity_union = _UnionFind(candidate_ids)
+    for left, right in verified_links:
+        entity_union.union(left, right)
+    entity_groups = _groups(entity_union, candidate_ids)
     entity_ids = {
-        candidate_id: _stable_id("watch", (candidate_id,))
-        for candidate_id in candidate_ids
+        member: _stable_id("watch", members)
+        for members in entity_groups.values()
+        for member in members
     }
     by_listing: dict[tuple[str, str], list[str]] = defaultdict(list)
     for record in records:
@@ -228,6 +242,17 @@ def assign_watch_entities(
         for members in by_seller_serial.values()
         if len({entity_ids[candidate_id] for candidate_id in members}) > 1
         for candidate_id in members
+    )
+    by_entity: dict[str, list[CandidateRecord]] = defaultdict(list)
+    for record in records:
+        by_entity[entity_ids[record.candidate_id]].append(record)
+    unverified_identity_candidates.update(
+        record.candidate_id
+        for members in by_entity.values()
+        if len({item.declared_reference for item in members}) > 1
+        or len({(item.proposed_label, item.proposed_grade)
+                for item in members if item.proposed_label is not None}) > 1
+        for record in members
     )
     split_union = _UnionFind(candidate_ids)
     _union_shared_value(split_union, records, lambda record: entity_ids[record.candidate_id])

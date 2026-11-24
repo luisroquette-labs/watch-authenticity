@@ -15,6 +15,7 @@ from dataset.entities import (
     build_content_clusters,
     build_grouping_decision,
 )
+from dataset.physical_link import record_physical_link_review
 from labeling.adjudicate import (
     EvidenceTampered,
     NotTrainingEligible,
@@ -116,7 +117,7 @@ def test_dealer_reputation_alone_is_tier_c_and_not_trainable(
             capture_style="casual",
             now=candidate.collected_at,
             reviews=[review],
-            reviewer_registry=reviewer_registry,
+            reviewer_registry=reviewer_registry, identity_records=(candidate,),
         )
 
 
@@ -133,7 +134,7 @@ def test_copied_official_media_cannot_be_admitted_even_with_review(
         build_training_record(
             copied, evidence, grouping, rights, object_ref=object_ref,
             angle=Angle.DIAL, usability_review=None, capture_style="casual",
-            now=candidate.collected_at, reviews=[review], reviewer_registry=reviewer_registry,
+            now=candidate.collected_at, reviews=[review], reviewer_registry=reviewer_registry, identity_records=(candidate,),
         )
 
 
@@ -379,7 +380,7 @@ def test_revoked_rights_and_price_only_grade_cannot_reach_training(
             capture_style="casual",
             now=candidate.collected_at,
             reviews=[accepted_review],
-            reviewer_registry=reviewer_registry,
+            reviewer_registry=reviewer_registry, identity_records=(candidate,),
         )
 
     price_review = make_review(
@@ -398,7 +399,7 @@ def test_revoked_rights_and_price_only_grade_cannot_reach_training(
             capture_style="casual",
             now=candidate.collected_at,
             reviews=[price_review],
-            reviewer_registry=reviewer_registry,
+            reviewer_registry=reviewer_registry, identity_records=(candidate,),
         )
 
 
@@ -418,11 +419,64 @@ def test_build_training_record_uses_only_accepted_evidence(
         capture_style="studio",
         now=candidate.collected_at,
         reviews=[review],
-        reviewer_registry=reviewer_registry,
+        reviewer_registry=reviewer_registry, identity_records=(candidate,),
     )
     assert record.label is Label.FAKE
     assert record.grade == 3
     assert record.evidence_record_id == evidence.evidence_record_id
+
+
+def test_training_admission_recomputes_two_view_identity(
+    candidate, make_review, reviewer, reviewer_registry, rights, object_ref
+):
+    clasp = replace(
+        candidate, candidate_id="clasp-photo", source_record_id="same-listing-clasp",
+        raw_sha256="b" * 64, derivative_sha256="c" * 64, phash="0123456789abcdef",
+    )
+    records = (candidate, clasp)
+    listing = {item.candidate_id: EntityEvidence(listing_id="listing-1") for item in records}
+    artifact = b"continuous source capture showing front, case and clasp of one watch"
+    first = replace(reviewer, reviewer_id="identity-1",
+                    allowed_evidence_types=(*reviewer.allowed_evidence_types,
+                                            "physical_identity_review"))
+    second = replace(first, reviewer_id="identity-2", qualification_artifact_sha256="8" * 64)
+    registry = {**reviewer_registry, first.reviewer_id: first, second.reviewer_id: second}
+    links = [
+        record_physical_link_review(candidate, clasp, artifact,
+                                    "continuous rotation of one case and bracelet",
+                                    expert, candidate.collected_at)
+        for expert in (first, second)
+    ]
+    clusters = build_content_clusters(records)
+    assignments = assign_watch_entities(
+        records, clusters, listing, physical_link_reviews=links,
+        physical_link_artifacts={links[0].artifact_sha256: artifact},
+        reviewer_registry=registry,
+    )
+    grouping = build_grouping_decision(candidate, clusters, assignments)
+    authenticity = make_review()
+    evidence = adjudicate(candidate, [authenticity], registry)
+    kwargs = dict(
+        object_ref=object_ref, angle=Angle.DIAL,
+        usability_review=record_usability_review(
+            candidate.candidate_id, candidate.derivative_sha256, Angle.DIAL,
+            True, True, "angle-reviewer", candidate.collected_at,
+        ),
+        capture_style="casual", now=candidate.collected_at,
+        reviews=[authenticity], reviewer_registry=registry,
+        identity_records=records, entity_evidence=listing,
+        physical_link_reviews=links,
+        physical_link_artifacts={links[0].artifact_sha256: artifact},
+    )
+    admitted = build_training_record(candidate, evidence, grouping, rights, **kwargs)
+    assert admitted.watch_entity_id == assignments[clasp.candidate_id]
+
+    with pytest.raises(NotTrainingEligible, match="physical grouping differs"):
+        build_training_record(candidate, evidence, grouping, rights,
+                              **{**kwargs, "physical_link_reviews": links[:1]})
+    with pytest.raises(NotTrainingEligible, match="physical grouping differs"):
+        build_training_record(candidate, evidence, replace(grouping, watch_entity_id="forged"),
+                              rights, **kwargs)
 
 
 def test_seller_declared_factory_does_not_become_training_provenance(
@@ -447,7 +501,7 @@ def test_seller_declared_factory_does_not_become_training_provenance(
         capture_style="studio",
         now=declared.collected_at,
         reviews=[review],
-        reviewer_registry=reviewer_registry,
+        reviewer_registry=reviewer_registry, identity_records=(declared,),
     )
     assert record.factory is None
 
@@ -479,7 +533,7 @@ def test_factory_record_attests_named_factory_for_holdout(
             True, True, "angle-reviewer", declared.collected_at,
         ),
         capture_style="studio", now=declared.collected_at,
-        reviews=[review], reviewer_registry={qualified.reviewer_id: qualified},
+        reviews=[review], reviewer_registry={qualified.reviewer_id: qualified}, identity_records=(declared,),
     )
     assert record.factory == "verified-factory"
 
@@ -498,7 +552,7 @@ def test_unverified_capture_style_cannot_enter_training(
         ),
         now=candidate.collected_at,
         reviews=[review],
-        reviewer_registry=reviewer_registry,
+        reviewer_registry=reviewer_registry, identity_records=(candidate,),
     )
 
     with pytest.raises(NotTrainingEligible, match="capture style"):
@@ -526,7 +580,7 @@ def test_build_training_record_rejects_grouping_from_another_candidate(
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
-            reviewer_registry=reviewer_registry,
+            reviewer_registry=reviewer_registry, identity_records=(candidate,),
         )
 
 
@@ -549,7 +603,7 @@ def test_build_training_record_rejects_tampered_evidence(
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
-            reviewer_registry=reviewer_registry,
+            reviewer_registry=reviewer_registry, identity_records=(candidate,),
         )
 
 
@@ -592,7 +646,7 @@ def test_build_training_record_rejects_rehashed_result_not_supported_by_reviews(
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
-            reviewer_registry=reviewer_registry,
+            reviewer_registry=reviewer_registry, identity_records=(candidate,),
         )
 
 
@@ -624,7 +678,7 @@ def test_build_training_record_rejects_candidate_changed_after_review(
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
-            reviewer_registry=reviewer_registry,
+            reviewer_registry=reviewer_registry, identity_records=(candidate,),
         )
 
 
@@ -658,7 +712,7 @@ def test_build_training_record_rejects_rights_outside_validity(
             capture_style="studio",
             now=invalid_now,
             reviews=[review],
-            reviewer_registry=reviewer_registry,
+            reviewer_registry=reviewer_registry, identity_records=(candidate,),
         )
 
 
@@ -685,7 +739,7 @@ def test_build_training_record_rejects_unlinked_image(
             capture_style="studio",
             now=candidate.collected_at,
             reviews=[review],
-            reviewer_registry=reviewer_registry,
+            reviewer_registry=reviewer_registry, identity_records=(candidate,),
         )
 
 
@@ -734,5 +788,5 @@ def test_training_requires_matching_visible_usable_angle(
         build_training_record(
             candidate, evidence, grouping, rights, object_ref=object_ref,
             angle=Angle.DIAL, usability_review=usability, capture_style="studio",
-            now=candidate.collected_at, reviews=[review], reviewer_registry=reviewer_registry,
+            now=candidate.collected_at, reviews=[review], reviewer_registry=reviewer_registry, identity_records=(candidate,),
         )

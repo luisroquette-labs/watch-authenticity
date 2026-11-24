@@ -32,6 +32,7 @@ _EVIDENCE_TIERS = {
     "seller_text": EvidenceTier.C,
     "price": EvidenceTier.C,
     "owner_claim": EvidenceTier.C,
+    "physical_identity_review": EvidenceTier.C,
 }
 _SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 
