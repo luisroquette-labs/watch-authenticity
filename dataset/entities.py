@@ -30,7 +30,6 @@ class EntityEvidence:
     listing_id: str | None = None
     seller_account_id: str | None = None
     declared_serial_sha256: str | None = None
-    reviewer_linked_candidate_ids: tuple[str, ...] = ()
     accepted_label: Label | None = None
     accepted_grade: int | None = None
     evidence_record_id: str | None = None
@@ -47,14 +46,34 @@ class EntityEvidence:
             self.declared_serial_sha256
         ):
             raise ValueError("declared_serial_sha256 must be lowercase SHA-256")
-        if len(set(self.reviewer_linked_candidate_ids)) != len(
-            self.reviewer_linked_candidate_ids
-        ) or any(not item.strip() for item in self.reviewer_linked_candidate_ids):
-            raise ValueError("reviewer links must be unique non-empty candidate IDs")
         if self.accepted_label is Label.GENUINE and self.accepted_grade is not None:
             raise ValueError("genuine evidence cannot have a grade")
         if self.accepted_grade is not None and self.accepted_label is not Label.FAKE:
             raise ValueError("accepted grade requires a fake label")
+
+
+@dataclass(frozen=True)
+class PhysicalLinkEvidence:
+    candidate_ids: tuple[str, str]
+    raw_sha256s: tuple[str, str]
+    artifact_sha256: str
+    evidence_record_id: str
+    reviewer_id: str
+    basis: str
+
+    def __post_init__(self) -> None:
+        if (
+            len(self.candidate_ids) != 2
+            or tuple(sorted(set(self.candidate_ids))) != self.candidate_ids
+            or any(not candidate_id.strip() for candidate_id in self.candidate_ids)
+            or len(self.raw_sha256s) != 2
+            or any(_SHA256.fullmatch(value) is None for value in self.raw_sha256s)
+            or _SHA256.fullmatch(self.artifact_sha256) is None
+            or not self.evidence_record_id.strip()
+            or not self.reviewer_id.strip()
+            or self.basis not in {"continuous_capture", "individual_mark", "custody_record"}
+        ):
+            raise ValueError("physical link evidence is invalid")
 
 
 @dataclass(frozen=True)
@@ -201,6 +220,7 @@ def assign_watch_entities(
     records: Sequence[CandidateRecord],
     content_clusters: Mapping[str, str],
     evidence: Mapping[str, EntityEvidence] | None = None,
+    physical_links: Sequence[PhysicalLinkEvidence] = (),
 ) -> EntityAssignments:
     _validate_records(records)
     evidence = evidence or {}
@@ -209,9 +229,19 @@ def assign_watch_entities(
     candidate_ids = [record.candidate_id for record in records]
     entities = _UnionFind(candidate_ids)
 
-    for candidate_id, item in evidence.items():
-        for linked_id in item.reviewer_linked_candidate_ids:
-            entities.union(candidate_id, linked_id)
+    by_candidate = {record.candidate_id: record for record in records}
+    linked_pairs: set[tuple[str, str]] = set()
+    for link in physical_links:
+        if not isinstance(link, PhysicalLinkEvidence) or link.candidate_ids in linked_pairs:
+            raise ValueError("physical links must be unique evidence records")
+        if any(
+            candidate_id not in by_candidate
+            or by_candidate[candidate_id].raw_sha256 != raw_sha256
+            for candidate_id, raw_sha256 in zip(link.candidate_ids, link.raw_sha256s)
+        ):
+            raise ValueError("physical link does not bind the candidate images")
+        linked_pairs.add(link.candidate_ids)
+        entities.union(*link.candidate_ids)
 
     entity_groups = _groups(entities, candidate_ids)
     entity_ids = {
@@ -241,6 +271,11 @@ def assign_watch_entities(
         for members in by_seller_serial.values()
         if len({entity_ids[candidate_id] for candidate_id in members}) > 1
         for candidate_id in members
+    )
+    ambiguous_entities = {entity_ids[candidate_id] for candidate_id in unverified_identity_candidates}
+    unverified_identity_candidates.update(
+        candidate_id for candidate_id, entity_id in entity_ids.items()
+        if entity_id in ambiguous_entities
     )
 
     split_union = _UnionFind(candidate_ids)
@@ -420,10 +455,6 @@ def _validate_evidence(
     for candidate_id, item in evidence.items():
         if not isinstance(item, EntityEvidence):
             raise ValueError("entity evidence must contain EntityEvidence values")
-        if not set(item.reviewer_linked_candidate_ids).issubset(ids):
-            raise ValueError(f"reviewer link for {candidate_id} references an unknown candidate")
-        if item.reviewer_linked_candidate_ids and item.evidence_record_id is None:
-            raise ValueError("reviewer link requires evidence record")
 
 
 def _seller_serial_key(
