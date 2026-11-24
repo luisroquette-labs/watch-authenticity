@@ -13,7 +13,6 @@ from acquisition.types import CandidateRecord
 from core.types import Label
 from dataset.entities import (
     EntityEvidence,
-    PhysicalLinkEvidence,
     assign_watch_entities,
     build_content_clusters,
     build_grouping_decision,
@@ -101,29 +100,6 @@ def test_visual_similarity_alone_does_not_assert_physical_watch_identity(grouped
     assert entity_ids.split_families["front"] == entity_ids.split_families["repost"]
 
 
-def test_reviewer_link_and_hashed_serial_can_join_angles(grouped_records):
-    clusters = build_content_clusters(grouped_records)
-    serial_hash = "9" * 64
-    evidence = {
-        "front": EntityEvidence(seller_account_id="seller-1", declared_serial_sha256=serial_hash),
-        "clasp": EntityEvidence(
-            seller_account_id="seller-1",
-            declared_serial_sha256=serial_hash,
-        ),
-    }
-    link = PhysicalLinkEvidence(
-        candidate_ids=("clasp", "front"), raw_sha256s=("3" * 64, "1" * 64),
-        artifact_sha256="a" * 64, evidence_record_id="continuous-capture-1",
-        reviewer_id="reviewer-1", basis="continuous_capture",
-    )
-
-    entity_ids = assign_watch_entities(grouped_records, clusters, evidence, (link,))
-
-    assert entity_ids["front"] == entity_ids["clasp"]
-    assert not build_grouping_decision(grouped_records[0], clusters, entity_ids).quarantined
-    assert not build_grouping_decision(grouped_records[2], clusters, entity_ids).quarantined
-
-
 def test_same_seller_and_copied_serial_do_not_prove_physical_identity(grouped_records):
     clusters = build_content_clusters(grouped_records)
     serial_hash = "9" * 64
@@ -140,36 +116,18 @@ def test_same_seller_and_copied_serial_do_not_prove_physical_identity(grouped_re
     assert build_grouping_decision(grouped_records[2], clusters, assignments).quarantined
 
 
-def test_physical_link_rejects_unbound_candidate_images(grouped_records):
+def test_unrelated_evidence_record_cannot_join_photos_from_one_listing(grouped_records):
     clusters = build_content_clusters(grouped_records)
-    link = PhysicalLinkEvidence(
-        candidate_ids=("clasp", "front"), raw_sha256s=("3" * 64, "9" * 64),
-        artifact_sha256="a" * 64, evidence_record_id="continuous-capture-1",
-        reviewer_id="reviewer-1", basis="continuous_capture",
-    )
+    evidence = {
+        "front": EntityEvidence(listing_id="listing-1", evidence_record_id="unrelated-record"),
+        "clasp": EntityEvidence(listing_id="listing-1", evidence_record_id="unrelated-record"),
+    }
 
-    with pytest.raises(ValueError, match="does not bind"):
-        assign_watch_entities(grouped_records, clusters, physical_links=(link,))
+    assignments = assign_watch_entities(grouped_records, clusters, evidence)
 
-
-def test_ambiguous_listing_quarantines_entire_linked_entity(grouped_records):
-    records = [
-        grouped_records[0],
-        replace(grouped_records[1], source_record_id="listing-clasp"),
-        grouped_records[2],
-    ]
-    clusters = build_content_clusters(records)
-    link = PhysicalLinkEvidence(
-        candidate_ids=("clasp", "front"), raw_sha256s=("3" * 64, "1" * 64),
-        artifact_sha256="a" * 64, evidence_record_id="continuous-capture-1",
-        reviewer_id="reviewer-1", basis="continuous_capture",
-    )
-
-    assignments = assign_watch_entities(records, clusters, physical_links=(link,))
-
-    assert assignments["front"] == assignments["clasp"]
-    assert assignments["clasp"] != assignments["repost"]
-    assert all(build_grouping_decision(record, clusters, assignments).quarantined for record in records)
+    assert assignments["front"] != assignments["clasp"]
+    assert build_grouping_decision(grouped_records[0], clusters, assignments).quarantined
+    assert build_grouping_decision(grouped_records[2], clusters, assignments).quarantined
 
 
 def test_reused_serial_across_sellers_stays_separate_watch_but_one_split(grouped_records):

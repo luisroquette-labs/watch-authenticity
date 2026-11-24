@@ -53,30 +53,6 @@ class EntityEvidence:
 
 
 @dataclass(frozen=True)
-class PhysicalLinkEvidence:
-    candidate_ids: tuple[str, str]
-    raw_sha256s: tuple[str, str]
-    artifact_sha256: str
-    evidence_record_id: str
-    reviewer_id: str
-    basis: str
-
-    def __post_init__(self) -> None:
-        if (
-            len(self.candidate_ids) != 2
-            or tuple(sorted(set(self.candidate_ids))) != self.candidate_ids
-            or any(not candidate_id.strip() for candidate_id in self.candidate_ids)
-            or len(self.raw_sha256s) != 2
-            or any(_SHA256.fullmatch(value) is None for value in self.raw_sha256s)
-            or _SHA256.fullmatch(self.artifact_sha256) is None
-            or not self.evidence_record_id.strip()
-            or not self.reviewer_id.strip()
-            or self.basis not in {"continuous_capture", "individual_mark", "custody_record"}
-        ):
-            raise ValueError("physical link evidence is invalid")
-
-
-@dataclass(frozen=True)
 class ClusterConflict:
     candidate_ids: tuple[str, ...]
     evidence_ids: tuple[str, ...]
@@ -220,34 +196,15 @@ def assign_watch_entities(
     records: Sequence[CandidateRecord],
     content_clusters: Mapping[str, str],
     evidence: Mapping[str, EntityEvidence] | None = None,
-    physical_links: Sequence[PhysicalLinkEvidence] = (),
 ) -> EntityAssignments:
     _validate_records(records)
     evidence = evidence or {}
     _validate_mapping_keys(records, content_clusters, "content clusters")
     _validate_evidence(records, evidence)
     candidate_ids = [record.candidate_id for record in records]
-    entities = _UnionFind(candidate_ids)
-
-    by_candidate = {record.candidate_id: record for record in records}
-    linked_pairs: set[tuple[str, str]] = set()
-    for link in physical_links:
-        if not isinstance(link, PhysicalLinkEvidence) or link.candidate_ids in linked_pairs:
-            raise ValueError("physical links must be unique evidence records")
-        if any(
-            candidate_id not in by_candidate
-            or by_candidate[candidate_id].raw_sha256 != raw_sha256
-            for candidate_id, raw_sha256 in zip(link.candidate_ids, link.raw_sha256s)
-        ):
-            raise ValueError("physical link does not bind the candidate images")
-        linked_pairs.add(link.candidate_ids)
-        entities.union(*link.candidate_ids)
-
-    entity_groups = _groups(entities, candidate_ids)
     entity_ids = {
-        member: _stable_id("watch", members)
-        for members in entity_groups.values()
-        for member in members
+        candidate_id: _stable_id("watch", (candidate_id,))
+        for candidate_id in candidate_ids
     }
     by_listing: dict[tuple[str, str], list[str]] = defaultdict(list)
     for record in records:
@@ -272,12 +229,6 @@ def assign_watch_entities(
         if len({entity_ids[candidate_id] for candidate_id in members}) > 1
         for candidate_id in members
     )
-    ambiguous_entities = {entity_ids[candidate_id] for candidate_id in unverified_identity_candidates}
-    unverified_identity_candidates.update(
-        candidate_id for candidate_id, entity_id in entity_ids.items()
-        if entity_id in ambiguous_entities
-    )
-
     split_union = _UnionFind(candidate_ids)
     _union_shared_value(split_union, records, lambda record: entity_ids[record.candidate_id])
     _union_shared_value(
