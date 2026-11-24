@@ -90,6 +90,7 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
         answer["observations"][0]["value"] = "blue"
     elif scenario == "weak-compatibility":
         answer["observations"][1].update(visibility="ambiguous", value=None)
+        answer["next_verification"] = "Peça a abertura da caixa."
     elif scenario == "calibre-unseen":
         answer["observations"][0].update(field="calibre", value="3235")
     elif scenario == "wrong-reference-code":
@@ -155,6 +156,9 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
         assert data["decision_reason"] == expected_reason
         if scenario == "cartier-crown-ambiguous":
             assert "coroa de perfil" in data["next_verification"]
+        if scenario == "weak-compatibility":
+            assert "janela de data perpendicular" in data["next_verification"]
+            assert "autenticidade segue em aberto" in data["next_verification"]
         if scenario == "mixed":
             assert "um relógio por vez" in data["next_verification"]
 

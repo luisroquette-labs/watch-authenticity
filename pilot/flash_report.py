@@ -207,6 +207,8 @@ class FlashReport:
                 reason = "reference_unresolved"
             elif len(structural_fields) < 2:
                 reason = "catalog_gap"
+                if remaining:
+                    next_verification = _PHOTO_FOR_FIELD[remaining[0]] + " Isso ajuda a conferir a referência. A autenticidade segue em aberto."
             elif remaining:
                 reason = "detail_not_verified"
                 next_verification = _PHOTO_FOR_FIELD[remaining[0]]
