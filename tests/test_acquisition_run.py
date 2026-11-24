@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess
@@ -119,6 +120,37 @@ def test_run_collects_before_committing_and_repeated_run_records_invocation(cos,
     assert repeated["state"] == "already_complete"
     assert repeated["code_engine_jobrun"] == "wikimedia-cron-123"
     assert cos.write_count == writes + 1
+
+
+def test_wikimedia_finalizes_candidate_census_before_cursor(cos, monkeypatch, candidate):
+    from acquisition.collect import _receipt_bytes, load_candidate_batch
+
+    collected = []
+
+    def collect(*_args, **kwargs):
+        record = replace(
+            candidate,
+            acquisition_batch_id=kwargs["batch_id"],
+            source_url="https://commons.wikimedia.org/wiki/File:Watch.jpg",
+        )
+        body = _receipt_bytes(record)
+        digest = hashlib.sha256(body).hexdigest()
+        cos.put_object(
+            Bucket="private",
+            Key=f"datasets/receipts/{record.acquisition_batch_id}/{record.candidate_id}-{digest}.json",
+            Body=body, Metadata={"sha256": digest, "length": str(len(body))},
+        )
+        collected.append(record)
+        return SimpleNamespace(accepted_candidate_ids=(record.candidate_id,))
+
+    monkeypatch.setattr("acquisition.run.collect_batch", collect)
+    result = run_wikimedia_once(
+        cos, "private", "datasets", SimpleNamespace(), SimpleNamespace(),
+        now=NOW, api_client=object(), image_client=object(),
+        discover=lambda *_args, **_kwargs: _result(),
+    )
+    assert result["state"] == "complete"
+    assert load_candidate_batch(cos, "private", collected[0].acquisition_batch_id) == tuple(collected)
 
 
 def test_wikimedia_lane_has_independent_checkpoint(cos, monkeypatch):

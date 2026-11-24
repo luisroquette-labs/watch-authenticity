@@ -149,6 +149,10 @@ def run_wikimedia_once(
                 now=now,
                 rights_evidence=candidate.rights_evidence,
             )
+            _finalize_candidate_batch(
+                cos_client, bucket, batch_id, "wikimedia",
+                receipt.accepted_candidate_ids, 1, (),
+            )
             accepted.extend(receipt.accepted_candidate_ids)
 
         commit = append_discovery_page(
@@ -540,21 +544,10 @@ def run_public_image_collection_once(
         )
         if _immutable_review_document(cos_client, bucket, rejection_key, rejection_record) != rejection_record:
             raise RuntimeError("public image rejection readback differs")
-    census = {
-        "schema": "watch-auth-candidate-batch-v1",
-        "batch_id": batch_id,
-        "source": source,
-        "candidate_ids": sorted(accepted_candidate_ids),
-        "candidate_consumption": len(candidates),
-        "rejected_source_record_ids": sorted(item["source_record_id"] for item in rejected_images),
-    }
-    if len(set(accepted_candidate_ids)) != len(accepted_candidate_ids) or (
-        len(accepted_candidate_ids) + len(rejected_images) != len(candidates)
-    ):
-        raise RuntimeError("candidate batch cannot be finalized with duplicate or missing images")
-    census_key = f"datasets/receipts/{batch_id}/manifest.json"
-    if _immutable_review_document(cos_client, bucket, census_key, census) != census:
-        raise RuntimeError("candidate batch census readback differs")
+    _finalize_candidate_batch(
+        cos_client, bucket, batch_id, source, accepted_candidate_ids,
+        len(candidates), tuple(item["source_record_id"] for item in rejected_images),
+    )
     if on_collected is not None:
         on_collected(tuple(accepted_candidate_ids), cycle, batch_id, len(candidates))
     commit = append_discovery_page(
@@ -578,6 +571,32 @@ def run_public_image_collection_once(
     _persist_status(cos_client, bucket, collection_prefix, status)
     _LOG.info("acquisition_terminal %s", _canonical(status).decode())
     return status
+
+
+def _finalize_candidate_batch(
+    cos_client: Any,
+    bucket: str,
+    batch_id: str,
+    source: str,
+    candidate_ids: Sequence[str],
+    candidate_consumption: int,
+    rejected_source_record_ids: Sequence[str],
+) -> None:
+    if len(set(candidate_ids)) != len(candidate_ids) or (
+        len(candidate_ids) + len(rejected_source_record_ids) != candidate_consumption
+    ):
+        raise RuntimeError("candidate batch cannot be finalized with duplicate or missing images")
+    census = {
+        "schema": "watch-auth-candidate-batch-v1",
+        "batch_id": batch_id,
+        "source": source,
+        "candidate_ids": sorted(candidate_ids),
+        "candidate_consumption": candidate_consumption,
+        "rejected_source_record_ids": sorted(rejected_source_record_ids),
+    }
+    census_key = f"datasets/receipts/{batch_id}/manifest.json"
+    if _immutable_review_document(cos_client, bucket, census_key, census) != census:
+        raise RuntimeError("candidate batch census readback differs")
 
 
 def run_planned_public_collection_once(
