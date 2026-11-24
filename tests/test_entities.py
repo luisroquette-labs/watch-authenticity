@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import replace
+from datetime import timedelta
 from itertools import combinations
 
 import pytest
@@ -19,6 +20,12 @@ from dataset.entities import (
     find_near_duplicate_pairs,
     hamming_distance_hex,
 )
+from dataset.physical_link import (
+    persist_physical_link_review,
+    physical_link_artifact,
+    record_physical_link_review,
+)
+from labeling.review import ReviewerRecord
 
 
 def test_syndicated_listing_with_identical_bytes_shares_content_cluster(grouped_records):
@@ -88,6 +95,102 @@ def test_one_listing_does_not_prove_one_physical_watch(grouped_records):
     assert build_grouping_decision(front, clusters, entity_ids).split_family_id == (
         build_grouping_decision(clasp, clusters, entity_ids).split_family_id
     )
+
+
+def test_two_independent_hash_bound_reviews_link_views(grouped_records):
+    import hashlib
+
+    front_raw, clasp_raw = b"front photo", b"clasp photo"
+    front = replace(grouped_records[0], raw_sha256=hashlib.sha256(front_raw).hexdigest())
+    clasp = replace(grouped_records[2], raw_sha256=hashlib.sha256(clasp_raw).hexdigest())
+    records = [front, clasp]
+    artifact = physical_link_artifact(front, clasp, front_raw, clasp_raw)
+    reviewers = {
+        name: ReviewerRecord(
+            name, ("physical_identity_review",), ("9" if name.endswith("a") else "8") * 64,
+            front.collected_at - timedelta(days=1),
+            front.collected_at + timedelta(days=1), (), False,
+        )
+        for name in ("reviewer-a", "reviewer-b")
+    }
+    basis = "continuous wrist and bracelet rotation with no removal"
+    reviews = [
+        record_physical_link_review(front, clasp, artifact, basis, reviewer, front.collected_at)
+        for reviewer in reviewers.values()
+    ]
+    clusters = build_content_clusters(records)
+    listing = {item.candidate_id: EntityEvidence(listing_id="listing-1") for item in records}
+    kwargs = dict(physical_link_reviews=reviews,
+                  physical_link_artifacts={reviews[0].artifact_sha256: artifact},
+                  reviewer_registry=reviewers)
+
+    pending = assign_watch_entities(records, clusters, listing,
+                                    physical_link_reviews=reviews[:1],
+                                    physical_link_artifacts=kwargs["physical_link_artifacts"],
+                                    reviewer_registry=reviewers)
+    assert all(build_grouping_decision(item, clusters, pending).quarantined for item in records)
+    duplicate_qualification = dict(reviewers)
+    duplicate_qualification["reviewer-b"] = replace(
+        reviewers["reviewer-b"], qualification_artifact_sha256="9" * 64,
+    )
+    duplicate_review = record_physical_link_review(
+        front, clasp, artifact, basis, duplicate_qualification["reviewer-b"],
+        front.collected_at,
+    )
+    duplicate = assign_watch_entities(
+        records, clusters, listing,
+        physical_link_reviews=[reviews[0], duplicate_review],
+        physical_link_artifacts=kwargs["physical_link_artifacts"],
+        reviewer_registry=duplicate_qualification,
+    )
+    assert all(build_grouping_decision(item, clusters, duplicate).quarantined for item in records)
+    linked = assign_watch_entities(records, clusters, listing, **kwargs)
+    assert linked[front.candidate_id] == linked[clasp.candidate_id]
+    assert all(not build_grouping_decision(item, clusters, linked).quarantined for item in records)
+
+    with pytest.raises(ValueError, match="examined evidence"):
+        assign_watch_entities(records, clusters, listing, **{**kwargs,
+            "physical_link_artifacts": {reviews[0].artifact_sha256: b"other capture"}})
+    with pytest.raises(ValueError, match="examined evidence"):
+        changed = replace(clasp, raw_sha256="f" * 64)
+        assign_watch_entities([front, changed], build_content_clusters([front, changed]), listing,
+                              **kwargs)
+
+
+def test_physical_link_review_persists_artifact_and_review_by_content_hash(
+    grouped_records, monkeypatch
+):
+    import hashlib
+
+    front_raw, clasp_raw = b"front photo", b"clasp photo"
+    front = replace(grouped_records[0], raw_sha256=hashlib.sha256(front_raw).hexdigest())
+    clasp = replace(grouped_records[2], raw_sha256=hashlib.sha256(clasp_raw).hexdigest())
+    reviewer = ReviewerRecord(
+        "reviewer-a", ("physical_identity_review",), "9" * 64,
+        front.collected_at - timedelta(days=1), front.collected_at + timedelta(days=1),
+        (), False,
+    )
+    artifact = physical_link_artifact(front, clasp, front_raw, clasp_raw)
+    review = record_physical_link_review(
+        front, clasp, artifact, "continuous rotation with visible matching bracelet",
+        reviewer, front.collected_at,
+    )
+    uploads = []
+
+    def upload(_cos, path, bucket, key, digest):
+        body = path.read_bytes()
+        assert hashlib.sha256(body).hexdigest() == digest
+        uploads.append((bucket, key, body))
+        return object()
+
+    monkeypatch.setattr("dataset.physical_link.upload_verified", upload)
+    persist_physical_link_review(object(), "private", review, artifact)
+    assert len(uploads) == 2
+    assert uploads[0][2] == artifact
+    assert uploads[1][1].endswith(review.review_sha256)
+    with pytest.raises(ValueError, match="artifact bytes differ"):
+        persist_physical_link_review(object(), "private", review, b"changed")
+    assert len(uploads) == 2
 
 
 def test_visual_similarity_alone_does_not_assert_physical_watch_identity(grouped_records):

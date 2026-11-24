@@ -17,8 +17,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
+from acquisition.collect import load_candidate_batch
 from acquisition.types import (
     Angle,
     CandidateRecord,
@@ -31,8 +33,15 @@ from acquisition.types import (
 )
 from core.types import Label, ManifestRecord
 from dataset.angle_review import AngleUsabilityReview, verify_usability_review
-from dataset.entities import GroupingDecision
+from dataset.entities import (
+    EntityEvidence,
+    GroupingDecision,
+    assign_watch_entities,
+    build_content_clusters,
+    build_grouping_decision,
+)
 from dataset.media_reuse import is_known_official_media_reuse
+from dataset.physical_link import PhysicalLinkReview
 from infra.ibm_types import ObjectRef
 from labeling.adjudicate import NotTrainingEligible, adjudicate, verify_evidence_record
 from labeling.review import ReviewerRecord, candidate_digest
@@ -104,6 +113,11 @@ def build_training_record(
     now: datetime,
     reviews: Sequence[ReviewDecision],
     reviewer_registry: Mapping[str, ReviewerRecord],
+    cos_client: Any,
+    bucket: str,
+    entity_evidence: Mapping[str, EntityEvidence] | None = None,
+    physical_link_reviews: Sequence[PhysicalLinkReview] = (),
+    physical_link_artifacts: Mapping[str, bytes] | None = None,
     gold_candidate_ids: frozenset[str] = frozenset(),
     is_augmented: bool = False,
     rejection_subtype: str | None = None,
@@ -136,6 +150,20 @@ def build_training_record(
         raise NotTrainingEligible("evidence differs from immutable review decisions")
     if grouping.quarantined or not evidence.tier.training_eligible:
         raise NotTrainingEligible("candidate evidence is not training eligible")
+    identity_records = load_candidate_batch(cos_client, bucket, candidate.acquisition_batch_id)
+    if candidate not in identity_records:
+        raise NotTrainingEligible("reviewed identity census does not contain this candidate")
+    clusters = build_content_clusters(identity_records)
+    assignments = assign_watch_entities(
+        identity_records,
+        clusters,
+        entity_evidence,
+        physical_link_reviews=physical_link_reviews,
+        physical_link_artifacts=physical_link_artifacts,
+        reviewer_registry=reviewer_registry,
+    )
+    if grouping != build_grouping_decision(candidate, clusters, assignments):
+        raise NotTrainingEligible("physical grouping differs from verified identity census")
     if (
         evidence.candidate_id != candidate.candidate_id
         or grouping.candidate_id != candidate.candidate_id
