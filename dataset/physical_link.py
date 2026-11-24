@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from acquisition.types import CandidateRecord
-from infra.ibm_cos import upload_verified
+from infra.ibm_cos import download_verified, upload_verified
 from infra.ibm_types import ObjectRef
 from labeling.review import ReviewerRecord, reviewer_digest
 
@@ -208,3 +208,41 @@ def persist_physical_link_review(
             review_bytes_sha256,
         )
     return artifact_ref, review_ref
+
+
+def verify_persisted_physical_link_reviews(
+    cos_client: object,
+    bucket: str,
+    reviews: Sequence[PhysicalLinkReview],
+    artifacts: Mapping[str, bytes],
+) -> None:
+    if any(not isinstance(review, PhysicalLinkReview) for review in reviews):
+        raise ValueError("persisted physical link review type is invalid")
+    if set(artifacts) != {review.artifact_sha256 for review in reviews}:
+        raise ValueError("persisted physical link artifact set differs from reviews")
+    with tempfile.TemporaryDirectory(prefix="watch-physical-link-readback-") as directory:
+        destination = Path(directory)
+        for artifact_sha256, artifact in artifacts.items():
+            if not isinstance(artifact, bytes) or hashlib.sha256(artifact).hexdigest() != artifact_sha256:
+                raise ValueError("persisted physical link artifact hash differs")
+            path = destination / artifact_sha256
+            download_verified(
+                cos_client, bucket,
+                f"datasets/physical-links/artifacts/{artifact_sha256}",
+                path, artifact_sha256,
+            )
+            if path.read_bytes() != artifact:
+                raise ValueError("persisted physical link artifact differs from examined bytes")
+        for review in reviews:
+            if hashlib.sha256(_canonical(_payload(review))).hexdigest() != review.review_sha256:
+                raise ValueError("persisted physical link review digest differs")
+            body = _canonical({**_payload(review), "review_sha256": review.review_sha256})
+            path = destination / review.review_sha256
+            download_verified(
+                cos_client, bucket,
+                f"datasets/physical-links/reviews/{review.review_sha256}/"
+                f"{hashlib.sha256(body).hexdigest()}",
+                path, hashlib.sha256(body).hexdigest(),
+            )
+            if path.read_bytes() != body:
+                raise ValueError("persisted physical link review differs from supplied decision")
