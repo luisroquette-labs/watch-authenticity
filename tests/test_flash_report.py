@@ -77,6 +77,7 @@ class StubOpenRouter:
     ("wrong-reference-code", 200, "inconclusive"),
     ("wrong-reference-brand", 200, "inconclusive"),
     ("equivalent-spec-words", 200, "inconclusive"),
+    ("cartier-crown-ambiguous", 200, "inconclusive"),
     ("structural-divergence", 200, "probable_fake"),
     ("wrong-photo", 503, None),
 ])
@@ -89,19 +90,22 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
         answer["observations"][0]["value"] = "blue"
     elif scenario == "weak-compatibility":
         answer["observations"][1].update(visibility="ambiguous", value=None)
+        answer["next_verification"] = "Peça a abertura da caixa."
     elif scenario == "calibre-unseen":
         answer["observations"][0].update(field="calibre", value="3235")
     elif scenario == "wrong-reference-code":
         answer["candidates"][0]["reference"] = "126610LV"
     elif scenario == "wrong-reference-brand":
         answer["candidates"][0].update(brand="Cartier", family="Santos")
-    elif scenario in {"equivalent-spec-words", "structural-divergence"}:
+    elif scenario in {"equivalent-spec-words", "structural-divergence", "cartier-crown-ambiguous"}:
         answer["candidates"] = [{"brand": "Cartier", "family": "Santos", "reference": "WSSA0061",
                                  "reference_id": "cartier-santos-wssa0061"}]
         answer["hypothesis"] = "probable_fake"
-        hand, crown = ("sword shaped", "seven-sided") if scenario == "equivalent-spec-words" else ("baton", "round")
+        hand, crown = ("baton", "round") if scenario == "structural-divergence" else ("sword shaped", "seven-sided")
         answer["observations"][0].update(field="hand_shape", value=hand, detail=f"Ponteiro: {hand}")
         answer["observations"][1].update(angle="crown", field="crown_shape", value=crown, detail=f"Coroa: {crown}")
+        if scenario == "cartier-crown-ambiguous":
+            answer["observations"][1].update(visibility="ambiguous", value=None)
     elif scenario == "wrong-photo":
         answer["observations"][1]["photo"] = 2
     provider = StubOpenRouter(answer)
@@ -134,13 +138,29 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
         expected_photos = {
             "compatible": [1, 3], "mixed": [1, 3], "color-only": [1, 3],
             "weak-compatibility": [1], "calibre-unseen": [3], "wrong-reference-code": [], "wrong-reference-brand": [],
-            "equivalent-spec-words": [1, 3], "structural-divergence": [1, 3],
+            "equivalent-spec-words": [1, 3], "structural-divergence": [1, 3], "cartier-crown-ambiguous": [1],
         }
         assert [check["photo"] for check in checks] == expected_photos[scenario]
-        brand = "cartier" if scenario in {"equivalent-spec-words", "structural-divergence"} else "rolex"
+        brand = answer["candidates"][0]["brand"].lower()
+        if scenario == "wrong-reference-brand":
+            assert not checks
         assert all(check["url"].startswith(f"https://www.{brand}.com/") for check in checks)
         if scenario == "equivalent-spec-words":
             assert {check["status"] for check in checks} == {"matched"}
+        assert data["model_hypothesis"] == answer["hypothesis"]
+        expected_reason = {
+            "mixed": "unlinked_photos", "wrong-reference-code": "reference_unresolved",
+            "wrong-reference-brand": "reference_unresolved", "structural-divergence": None,
+            "equivalent-spec-words": "compatible_or_insufficient", "cartier-crown-ambiguous": "detail_not_verified",
+        }.get(scenario, "catalog_gap")
+        assert data["decision_reason"] == expected_reason
+        if scenario == "cartier-crown-ambiguous":
+            assert "coroa de perfil" in data["next_verification"]
+        if scenario == "weak-compatibility":
+            assert "janela de data perpendicular" in data["next_verification"]
+            assert "autenticidade segue em aberto" in data["next_verification"]
+        if scenario == "mixed":
+            assert "um relógio por vez" in data["next_verification"]
 
 
 def test_scoring_preserves_denominator_and_evidence_tier() -> None:

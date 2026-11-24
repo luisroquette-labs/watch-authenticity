@@ -88,6 +88,7 @@ function renderReport(j,group){
       'Fotos examinadas: '+(j.examined_photos.map(x=>x+' ('+group[x-1].file.name+')').join(', ')||'nenhuma'),
       'Detalhes nas fotos:\n'+(observations.join('\n')||'nenhum detalhe registrado'),
       'Comparações com fonte técnica:\n'+(checks.join('\n')||'nenhuma comparação verificável no catálogo disponível'),
+      ...(j.decision_reason_text?['O que limita o parecer: '+j.decision_reason_text]:[]),
       'Limites: '+j.limits.join(' '),'Próxima verificação: '+j.next_verification].join('\n\n');
   }
   let lines=j.results.map((item,i)=>(i+1)+'. '+group[i].file.name+': '+item.message);
