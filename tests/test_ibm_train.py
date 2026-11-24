@@ -25,9 +25,11 @@ from infra.ibm_evidence import run_spec_sha256
 from infra.ibm_train import (
     IBMClients,
     consume_authorization,
-    launch_training,
     parse_run_spec,
     reconcile_pending_authorization,
+)
+from infra.ibm_train import (
+    _legacy_launch_training as launch_training,
 )
 from infra.ibm_types import (
     AuthorizationDecision,
@@ -41,6 +43,11 @@ from tests.conftest import NOW, valid_run_spec
 from tests.test_ibm_canary import INSTANCE_ID, canary_clients, observation_bytes
 from tests.test_ibm_cos import FakeCOS
 from training.run import RunResult, WaveRunResult
+
+
+def test_public_training_launch_is_retired_before_touching_provider():
+    with pytest.raises(PermissionError, match="custom training is retired"):
+        subject.launch_training(None, None, confirm=True, now=NOW)
 
 
 def _spec():
