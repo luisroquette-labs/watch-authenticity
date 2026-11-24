@@ -50,7 +50,7 @@ def release_bundle():
                 angle="dial",
                 source_domain=("unseen-genuine.com" if split == CROSS_SOURCE
                                else f"evaluation-{split_index}.example.co.za"),
-                subject_id=f"evaluation-watch-{split_index}",
+                subject_id=f"evaluation-watch-{split_index}-{item_index}",
                 provenance_id=f"evaluation-proof-{index}",
                 factory="vsf" if is_factory else None,
             )
@@ -222,8 +222,8 @@ def test_high_average_cannot_hide_false_reassurance_on_confirmed_quality_fake(re
         release_bundle, fake_answer="no_visible_inconsistency", genuine_answer="fake_likely"
     )
     high_quality = evaluate_entity_safety(release_bundle, safety)[-1]
-    assert high_quality.total == 2
-    assert high_quality.false_reassurance == 2
+    assert high_quality.total == 3
+    assert high_quality.false_reassurance == 3
     assert high_quality.false_reassurance_upper95 == 1.0
     report = EvaluationReport(
         release_bundle.freeze_sha256, MODEL_SHA, 0.03, 0.8,
@@ -237,7 +237,7 @@ def test_high_average_cannot_hide_false_reassurance_on_confirmed_quality_fake(re
     assert decision.provisional_entity_cohorts[-1].conclusion_counts == (
         ("fake_likely", 0),
         ("inconclusive", 0),
-        ("no_visible_inconsistency", 2),
+        ("no_visible_inconsistency", 3),
         ("rejection", 0),
     )
 
