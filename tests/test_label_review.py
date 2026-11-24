@@ -16,7 +16,11 @@ from dataset.entities import (
     build_content_clusters,
     build_grouping_decision,
 )
-from dataset.physical_link import physical_link_artifact, record_physical_link_review
+from dataset.physical_link import (
+    persist_physical_link_review,
+    physical_link_artifact,
+    record_physical_link_review,
+)
 from labeling.adjudicate import (
     EvidenceTampered,
     NotTrainingEligible,
@@ -523,6 +527,7 @@ def test_training_admission_recomputes_two_view_identity(
         supporting_artifact_hashes=("a" * 64,), reviewed_at=candidate.collected_at,
     )
     evidence = adjudicate(candidate, [authenticity], registry)
+    cos = _receipt_cos(records)
     kwargs = dict(
         object_ref=object_ref, angle=Angle.DIAL,
         usability_review=record_usability_review(
@@ -531,12 +536,23 @@ def test_training_admission_recomputes_two_view_identity(
         ),
         capture_style="casual", now=candidate.collected_at,
         reviews=[authenticity], reviewer_registry=registry,
-        cos_client=_receipt_cos(records), bucket="private", entity_evidence=listing,
+        cos_client=cos, bucket="private", entity_evidence=listing,
         physical_link_reviews=links,
         physical_link_artifacts={links[0].artifact_sha256: artifact},
     )
+    with pytest.raises(NotTrainingEligible, match="persisted physical link"):
+        build_training_record(candidate, evidence, grouping, rights, **kwargs)
+    for link in links:
+        persist_physical_link_review(cos, "private", link, artifact)
     admitted = build_training_record(candidate, evidence, grouping, rights, **kwargs)
     assert admitted.watch_entity_id == assignments[clasp.candidate_id]
+
+    review_key = next(key for key in cos.bodies if key.startswith("datasets/physical-links/reviews/"))
+    original_review = cos.bodies[review_key]
+    cos.bodies[review_key] = b"tampered review"
+    with pytest.raises(NotTrainingEligible, match="persisted physical link"):
+        build_training_record(candidate, evidence, grouping, rights, **kwargs)
+    cos.bodies[review_key] = original_review
 
     with pytest.raises(NotTrainingEligible, match="physical grouping differs"):
         build_training_record(candidate, evidence, grouping, rights,

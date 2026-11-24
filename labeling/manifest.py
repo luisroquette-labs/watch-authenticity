@@ -41,7 +41,8 @@ from dataset.entities import (
     build_grouping_decision,
 )
 from dataset.media_reuse import is_known_official_media_reuse
-from dataset.physical_link import PhysicalLinkReview
+from dataset.physical_link import PhysicalLinkReview, verify_persisted_physical_link_reviews
+from infra.ibm_cos import IntegrityError
 from infra.ibm_types import ObjectRef
 from labeling.adjudicate import NotTrainingEligible, adjudicate, verify_evidence_record
 from labeling.review import ReviewerRecord, candidate_digest
@@ -153,6 +154,12 @@ def build_training_record(
     identity_records = load_candidate_batch(cos_client, bucket, candidate.acquisition_batch_id)
     if candidate not in identity_records:
         raise NotTrainingEligible("reviewed identity census does not contain this candidate")
+    try:
+        verify_persisted_physical_link_reviews(
+            cos_client, bucket, physical_link_reviews, physical_link_artifacts or {}
+        )
+    except (ValueError, FileNotFoundError, IntegrityError) as exc:
+        raise NotTrainingEligible(f"persisted physical link evidence is invalid: {exc}") from exc
     clusters = build_content_clusters(identity_records)
     assignments = assign_watch_entities(
         identity_records,
