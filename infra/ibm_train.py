@@ -719,6 +719,16 @@ def launch_training(
     confirm: bool,
     now: datetime,
 ) -> RunEvent:
+    raise PermissionError("IBM custom training is retired; watch reports use the LLM pilot")
+
+
+def _legacy_launch_training(
+    clients: IBMClients,
+    run: AuthorizedRun,
+    *,
+    confirm: bool,
+    now: datetime,
+) -> RunEvent:
     """Run one authorized lifecycle and always tear down a created/adopted VSI."""
 
     if confirm is not True:

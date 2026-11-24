@@ -108,7 +108,7 @@ def test_ibm_only_mocked_e2e_persists_artifacts_and_resource_deletions(monkeypat
     import training.worker as worker
     from core.types import ModelClass
     from infra.ibm_cos import load_event_inventory, load_immutable_json
-    from infra.ibm_train import IBMClients, authorize_training, launch_training
+    from infra.ibm_train import IBMClients, _legacy_launch_training, authorize_training
     from infra.ibm_types import run_spec_transport_sha256
     from tests.conftest import NOW, valid_credit, valid_post_promo_plan, valid_pricing, vpc_instance
     from tests.test_ibm_canary import canary_clients
@@ -241,7 +241,7 @@ def test_ibm_only_mocked_e2e_persists_artifacts_and_resource_deletions(monkeypat
     client.delete_volume.side_effect = delete_volume
     client.delete_public_gateway.side_effect = delete_gateway
 
-    terminal = launch_training(IBMClients(client, tagger, cos), run, confirm=True, now=NOW)
+    terminal = _legacy_launch_training(IBMClients(client, tagger, cos), run, confirm=True, now=NOW)
 
     assert worker_calls == ["train"]
     client.create_instance.assert_called_once()

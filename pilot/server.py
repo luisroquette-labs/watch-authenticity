@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image, UnidentifiedImageError
 
+from pilot.flash_research import ReportUnavailable
 from pilot.visual_evidence import (
     bezel_color_hint,
     consensus,
@@ -38,6 +39,7 @@ MAX_HEADER_SECONDS = 10
 MAX_REQUEST_SECONDS = 120
 ALLOWED_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 ANGLES = frozenset({"dial", "cyclops", "rehaut", "crown", "clasp", "caseback"})
+_LOCAL_WARNING = "Ainda não detecta falsificações: não há classificador de autenticidade treinado e validado neste serviço. Esta prévia descreve cores do mostrador e aro somente quando a vista informada é mostrador; outras vistas são recebidas, mas não examinadas. Não identifica marca ou referência nem confirma autenticidade."
 _HTML = r"""<!doctype html>
 <html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Prévia visual de relógios</title>
@@ -51,7 +53,7 @@ input[type=file]{width:100%;box-sizing:border-box;margin-left:0;margin-right:0}
 .item,#r{overflow-wrap:anywhere}.warn{color:#ffcc66}
 </style>
 <main><h1>Prévia visual de relógios</h1>
-<p class="warn">Ainda não detecta falsificações: não há classificador de autenticidade treinado e validado neste serviço. Esta prévia descreve cores do mostrador e aro somente quando a vista informada é mostrador; outras vistas são recebidas, mas não examinadas. Não identifica marca ou referência nem confirma autenticidade.</p>
+<p class="warn">@WARNING@</p>
 <label>Fotos (1 a 6, até 15 MB cada)<br><input id="f" type="file" multiple accept="image/jpeg,image/png,image/webp"></label>
 <p>Por padrão, cada foto recebe um relatório separado. Para combinar ângulos da mesma peça, escolha o mesmo número de relógio nas fotos correspondentes.</p>
 <div id="angles"></div><button id="b">Analisar</button><div id="r">Escolha fotos nítidas.</div></main>
@@ -62,7 +64,7 @@ f.onchange=()=>{
   if(f.files.length>6){r.textContent='Máximo de 6 imagens.';return}
   [...f.files].forEach((file,i)=>{
     let row=document.createElement('div');row.className='item';
-    let text=document.createElement('span');text.textContent=file.name+' — Vista informada (esta prévia verifica mostrador e aro): ';
+    let text=document.createElement('span');text.textContent=file.name+' — Vista informada: ';
     let select=document.createElement('select');select.dataset.index=i;select.setAttribute('aria-label','Vista da foto '+file.name);
     Object.entries(labels).forEach(([value,label])=>select.add(new Option(label,value)));
     let groupLabel=document.createElement('label');groupLabel.textContent=' Relógio nesta foto: ';
@@ -77,6 +79,17 @@ const encode=file=>new Promise((resolve,reject)=>{
   reader.onerror=()=>reject(new Error('Não foi possível ler a imagem.'));reader.readAsDataURL(file);
 });
 function renderReport(j,group){
+  if(j.report_version){
+    let observations=j.observations.map(x=>'Foto '+x.photo+' · '+labels[x.angle]+' · '+x.location+': '+x.detail+' ['+(x.visibility==='visible'?'visível segundo o modelo':'ambíguo')+']');
+    let checks=j.technical_checks.map(x=>'Foto '+x.photo+' · '+x.field+': '+x.observed+' / ficha: '+x.expected+' ('+(x.status==='matched'?'compatível':'divergente')+')\n'+x.citation+' — '+x.url);
+    let candidates=j.candidates.map(x=>[x.brand,x.family,x.reference].filter(Boolean).join(' '));
+    return ['Parecer visual preliminar: '+j.conclusion_label,'Modelo: '+j.model+' · '+j.report_version,
+      'Referências possíveis: '+(candidates.join('; ')||'não identificadas'),
+      'Fotos examinadas: '+(j.examined_photos.map(x=>x+' ('+group[x-1].file.name+')').join(', ')||'nenhuma'),
+      'Detalhes nas fotos:\n'+(observations.join('\n')||'nenhum detalhe registrado'),
+      'Comparações com fonte técnica:\n'+(checks.join('\n')||'nenhuma comparação verificável no catálogo disponível'),
+      'Limites: '+j.limits.join(' '),'Próxima verificação: '+j.next_verification].join('\n\n');
+  }
   let lines=j.results.map((item,i)=>(i+1)+'. '+group[i].file.name+': '+item.message);
   let ev=j.joint.visible_evidence;
   let colors={green:'verde',black:'preto',blue:'azul',uncertain:'não verificada'};
@@ -118,7 +131,7 @@ b.onclick=async()=>{
   }catch(error){r.textContent=reports.join('\n\n')+'\nErro: '+error.message}
   finally{clearInterval(timer);f.disabled=false;b.disabled=false;angles.querySelectorAll('select').forEach(x=>x.disabled=false)}
 };
-</script></html>""".encode("utf-8")
+</script></html>""".replace("@WARNING@", _LOCAL_WARNING).encode("utf-8")
 
 
 class PredictService(Protocol):
@@ -272,9 +285,7 @@ def decode_image(body: bytes, content_type: str) -> Image.Image:
         raise ValueError("arquivo de imagem invalido") from exc
 
 
-def analyze_batch(
-    service: PredictService, payload: object
-) -> dict[str, Any]:
+def batch_photos(payload: object) -> list[tuple[str, str, bytes]]:
     if not isinstance(payload, dict) or not isinstance(payload.get("images"), list):
         raise ValueError("images deve ser uma lista")
     images = payload["images"]
@@ -312,7 +323,13 @@ def analyze_batch(
         if decoded_total > MAX_BATCH_DECODED_BYTES:
             raise ValueError("lote decodificado excede o limite")
         encoded_images.append((angle, content_type, body))
+    return encoded_images
 
+
+def analyze_batch(
+    service: PredictService, payload: object
+) -> dict[str, Any]:
+    encoded_images = batch_photos(payload)
     results: list[dict[str, Any]] = []
     observed_angles: set[str] = set()
     model_checked_images = 0
@@ -471,7 +488,16 @@ def analyze_batch(
     }
 
 
-def handler(service: PredictService, password: str | None = None) -> type[BaseHTTPRequestHandler]:
+def handler(
+    service: PredictService | None, password: str | None = None, *,
+    report: Callable[[list[tuple[str, str, bytes]]], dict[str, object]] | None = None,
+) -> type[BaseHTTPRequestHandler]:
+    page = _HTML if report is None else _HTML.replace(
+        _LOCAL_WARNING.encode(),
+        "Piloto com Gemini Flash. As fotos são enviadas ao OpenRouter para análise visual. Envie somente fotos que você pode compartilhar. O relatório é preliminar e o desempenho em relógios autenticados está em avaliação.".encode(),
+        1,
+    )
+
     class Handler(BaseHTTPRequestHandler):
         def setup(self) -> None:
             super().setup()
@@ -521,9 +547,9 @@ def handler(service: PredictService, password: str | None = None) -> type[BaseHT
                 return
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(_HTML)))
+            self.send_header("Content-Length", str(len(page)))
             self.end_headers()
-            self.wfile.write(_HTML)
+            self.wfile.write(page)
 
         def do_POST(self) -> None:  # noqa: N802
             if not self._authorized():
@@ -531,6 +557,9 @@ def handler(service: PredictService, password: str | None = None) -> type[BaseHT
             parsed = urlsplit(self.path)
             if parsed.path not in {"/predict", "/predict/batch"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            if parsed.path == "/predict" and service is None:
+                self._json(HTTPStatus.NOT_FOUND, {"error": "use /predict/batch"})
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -554,8 +583,14 @@ def handler(service: PredictService, password: str | None = None) -> type[BaseHT
                 if parsed.path == "/predict/batch":
                     if self.headers.get("Content-Type", "").split(";", 1)[0] != "application/json":
                         raise ValueError("o lote deve usar application/json")
-                    payload = analyze_batch(service, json.loads(body))
+                    batch = json.loads(body)
+                    if report is not None:
+                        payload = report(batch_photos(batch))
+                    else:
+                        assert service is not None
+                        payload = analyze_batch(service, batch)
                 else:
+                    assert service is not None
                     angle = parse_qs(parsed.query).get("angle", [""])[0]
                     payload = service.predict(body, self.headers.get("Content-Type", ""), angle)
                 self._json(HTTPStatus.OK, payload)
@@ -563,6 +598,8 @@ def handler(service: PredictService, password: str | None = None) -> type[BaseHT
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             except (TimeoutError, socket.timeout):
                 self._json(HTTPStatus.REQUEST_TIMEOUT, {"error": "tempo de envio excedido"})
+            except ReportUnavailable as exc:
+                self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(exc)})
 
         def _json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode()
@@ -614,7 +651,9 @@ class PilotHTTPServer(ThreadingHTTPServer):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", type=Path, required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--checkpoint", type=Path)
+    mode.add_argument("--gemini-flash", action="store_true")
     parser.add_argument(
         "--knowledge", type=Path,
         default=None,
@@ -627,8 +666,16 @@ def main() -> None:
     password = os.environ.get("WATCH_AUTH_PILOT_PASSWORD")
     if args.host != "127.0.0.1" and (not password or len(password) < 24):
         raise SystemExit("public bind requires WATCH_AUTH_PILOT_PASSWORD (24+ characters)")
-    service = PilotService(args.checkpoint, args.knowledge)
-    server = PilotHTTPServer((args.host, args.port), handler(service, password))
+    if args.gemini_flash:
+        from pilot.flash_report import FlashReport
+
+        key = os.environ.get("WATCH_AUTH_OPENROUTER_PILOT_KEY", "")
+        if not key:
+            raise SystemExit("gemini pilot requires WATCH_AUTH_OPENROUTER_PILOT_KEY")
+        route = handler(None, password, report=FlashReport(key))
+    else:
+        route = handler(PilotService(args.checkpoint, args.knowledge), password)
+    server = PilotHTTPServer((args.host, args.port), route)
     print(f"Prévia visual: {args.host}:{args.port}", flush=True)
     server.serve_forever()
 
