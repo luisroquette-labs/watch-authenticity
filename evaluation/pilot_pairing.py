@@ -124,6 +124,7 @@ def replay_with_review(
     result = {
         "capture": capture,
         "prepared_photos": prepared_photos,
+        "prepared_media_sha256": _digest(prepared_photos),
         "previous_policy": report["conclusion"],
         "previous_policy_reason": report["decision_reason"],
         "gemini_hypothesis": report["model_hypothesis"],

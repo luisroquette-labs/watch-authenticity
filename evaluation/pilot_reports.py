@@ -16,6 +16,7 @@ _PARTITIONS = ("development", "calibration", "test")
 _COHORTS = ("representative", "stress")
 _LABELS = ("fake", "original")
 _METHODS = ("physical_examination", "specimen_specific_document", "manufacturer_service")
+_ROUTES = ("previous_policy", "gemini_only", "with_review")
 
 
 def _text(value: Any) -> TypeGuard[str]:
@@ -80,6 +81,7 @@ def _is_confirmed(case: dict[str, Any], record: dict[str, Any]) -> bool:
         and _text(record.get("reviewer_id"))
         and record.get("verification_method") in _METHODS
         and _sha256(record.get("evidence_sha256"))
+        and _sha256(record.get("physical_identity_sha256"))
     )
 
 
@@ -113,8 +115,11 @@ def census(
     if len({case["specimen_id"] for case in cases}) != len(cases):
         raise ValueError("manifest requires unique specimen IDs")
     partitions_by_key: dict[tuple[str, str], set[str]] = defaultdict(set)
+    specimens_by_key: dict[tuple[str, str], set[str]] = defaultdict(set)
     case_keys: dict[str, list[tuple[str, str]]] = {}
-    independent_photo_owners: Counter[tuple[str, str]] = Counter()
+    partitions_by_case = {case["specimen_id"]: case.get("partition") for case in cases}
+    independent_key_owners: Counter[tuple[str, str]] = Counter()
+    confirmed: set[str] = set()
     for case in cases:
         specimen = case["specimen_id"]
         partition = case.get("partition")
@@ -127,16 +132,49 @@ def census(
         ] if isinstance(photos, list) else []
         if _text(family):
             keys.append(("split_family", family))
+        for kind in ("prepared_request", "prepared_media"):
+            digest = case.get(f"{kind}_sha256")
+            if _sha256(digest):
+                keys.append((kind, digest))
         if isinstance(clusters, list):
             keys.extend(("provenance", value) for value in clusters if _text(value))
-        case_keys[specimen] = keys
-        if partition in _PARTITIONS:
-            for key in keys:
-                partitions_by_key[key].add(partition)
-            if _is_confirmed(case, records.get(specimen, {})):
-                independent_photo_owners.update(
-                    (partition, digest) for kind, digest in keys if kind == "photo"
+        confirmation = records.get(specimen, {})
+        if _is_confirmed(case, confirmation):
+            confirmed.add(specimen)
+            keys.extend((kind, confirmation[field]) for kind, field in (
+                ("physical_identity", "physical_identity_sha256"), ("evidence", "evidence_sha256"),
+            ))
+            independent_key_owners.update(
+                key for key in keys if key[0] in (
+                    "photo", "prepared_request", "prepared_media", "physical_identity", "evidence",
                 )
+            )
+        case_keys[specimen] = keys
+        for key in keys:
+            specimens_by_key[key].add(specimen)
+            if partition in _PARTITIONS:
+                partitions_by_key[key].add(partition)
+
+    cross_partition_members: set[str] = set()
+    remaining = set(case_keys)
+    for specimen in case_keys:
+        if specimen not in remaining:
+            continue
+        component = {specimen}
+        frontier = [specimen]
+        visited_keys: set[tuple[str, str]] = set()
+        while frontier:
+            current = frontier.pop()
+            for key in case_keys[current]:
+                if key not in visited_keys:
+                    visited_keys.add(key)
+                    unseen = specimens_by_key[key] - component
+                    component.update(unseen)
+                    frontier.extend(unseen)
+        remaining.difference_update(component)
+        if len({partitions_by_case[member] for member in component
+                if partitions_by_case[member] in _PARTITIONS}) > 1:
+            cross_partition_members.update(component)
 
     details = []
     counts: dict[str, dict[str, Counter[str]]] = defaultdict(lambda: defaultdict(Counter))
@@ -174,14 +212,15 @@ def census(
             _text(value) for value in clusters
         ):
             gaps.append("missing_provenance_or_split_family")
-        for kind in sorted({
+        direct_leaks = {
             key[0] for key in case_keys[specimen] if len(partitions_by_key[key]) > 1
-        }):
-            blocked.append(f"cross_partition_{kind}")
-        if evidence == "independent" and case.get("partition") in _PARTITIONS and any(
-            independent_photo_owners[(case["partition"], digest)] > 1 for digest in photos
-        ):
-            blocked.append("photo_shared_by_independent_specimens")
+        }
+        blocked.extend(f"cross_partition_{kind}" for kind in sorted(direct_leaks))
+        if not direct_leaks and specimen in cross_partition_members:
+            blocked.append("cross_partition_component")
+        if specimen in confirmed:
+            duplicates = {key[0] for key in case_keys[specimen] if independent_key_owners[key] > 1}
+            blocked.extend(f"{kind}_shared_by_independent_specimens" for kind in sorted(duplicates))
         for provider in sorted(models):
             permission = rights.get(provider) if isinstance(rights, dict) else None
             if permission is not True:
@@ -189,8 +228,12 @@ def census(
                 blocked.append(f"rights_{state}:{provider}")
         if evidence != "independent":
             gaps.append("declared_label" if evidence == "declared" else "control_only")
-        elif not _is_confirmed(case, records.get(specimen, {})):
+        elif specimen not in confirmed:
             gaps.append("missing_or_mismatched_confirmation")
+        if evidence == "independent" and not _sha256(case.get("prepared_request_sha256")):
+            gaps.append("missing_prepared_request_sha256")
+        if evidence == "independent" and not _sha256(case.get("prepared_media_sha256")):
+            gaps.append("missing_prepared_media_sha256")
         if not _text(reference) or reference.casefold() == "unknown":
             gaps.append("unknown_reference")
         if evidence == "independent" and (not _text(generation) or generation.casefold() == "unknown"):
@@ -231,9 +274,10 @@ def score(
 
 def score_frozen(
     manifest_bytes: bytes,
-    reports: dict[str, str],
+    run_bytes: bytes,
     *,
     manifest_sha256: str,
+    run_sha256: str,
     confirmation_bytes: bytes,
     confirmation_sha256: str,
     cohort: str,
@@ -242,6 +286,8 @@ def score_frozen(
         raise ValueError("test manifest does not match the frozen SHA-256")
     if cohort not in _COHORTS:
         raise ValueError("unknown test cohort")
+    if not _sha256(run_sha256) or hashlib.sha256(run_bytes).hexdigest() != run_sha256:
+        raise ValueError("run receipt does not match the trusted SHA-256")
     manifest = _read_json(manifest_bytes)
     admitted = census(manifest, confirmation_bytes=confirmation_bytes,
                       confirmation_sha256=confirmation_sha256)
@@ -251,7 +297,55 @@ def score_frozen(
         if case["partition"] == "test" and case["cohort"] == cohort
         and case["specimen_id"] in eligible
     ]
-    return _score_cases(test_cases, reports)
+    run = _read_json(run_bytes)
+    if (
+        not isinstance(run, dict) or run.get("capture_mode") != "live_provider"
+        or run.get("manifest_sha256") != manifest_sha256
+        or run.get("confirmations_sha256") != confirmation_sha256
+        or run.get("cohort") != cohort or run.get("freeze") != manifest["freeze"]
+        or run.get("route") not in _ROUTES or not isinstance(run.get("reports"), dict)
+    ):
+        raise ValueError("run receipt does not match the live frozen test")
+    reports: dict[str, str] = {}
+    cases_by_id = {case["specimen_id"]: case for case in test_cases}
+    models = manifest["freeze"]["models"]
+    gemini_ids: set[str] = set()
+    gpt_ids: set[str] = set()
+    for specimen, receipt in run["reports"].items():
+        case = cases_by_id.get(specimen)
+        if case is None:
+            raise ValueError("run receipt refers to an unknown specimen")
+        if (
+            not isinstance(receipt, dict)
+            or receipt.get("photo_sha256s") != _photo_hashes(case)
+            or receipt.get("prepared_request_sha256") != case["prepared_request_sha256"]
+            or receipt.get("gemini_media_sha256") != case["prepared_media_sha256"]
+            or receipt.get("technical_facts_sha256") != manifest["freeze"]["technical_sources_sha256"]
+            or receipt.get("gemini_model") != models["gemini"]
+            or not _sha256(receipt.get("gemini_response_sha256"))
+            or not _text(receipt.get("gemini_response_id"))
+            or receipt["gemini_response_id"] in gemini_ids
+        ):
+            raise ValueError("run receipt does not match the specimen or Gemini capture")
+        if run["route"] == "with_review":
+            if (
+                receipt.get("gpt_model") != models["gpt"]
+                or receipt.get("gpt_media_sha256") != case["prepared_media_sha256"]
+                or receipt.get("gpt_technical_facts_sha256") != manifest["freeze"]["technical_sources_sha256"]
+                or not _sha256(receipt.get("gpt_request_sha256"))
+                or not _sha256(receipt.get("gpt_response_sha256"))
+                or not _text(receipt.get("gpt_response_id"))
+                or receipt["gpt_response_id"] in gpt_ids
+            ):
+                raise ValueError("run receipt lacks a matching GPT capture")
+            gpt_ids.add(receipt["gpt_response_id"])
+        gemini_ids.add(receipt["gemini_response_id"])
+        reports[specimen] = receipt.get("conclusion")
+    return {
+        **_score_cases(test_cases, reports),
+        "frozen_run": {"route": run["route"], "cohort": cohort,
+                       "manifest_sha256": manifest_sha256, "run_sha256": run_sha256},
+    }
 
 
 def _score_cases(cases: list[dict[str, Any]], reports: dict[str, str]) -> dict[str, Any]:
@@ -301,7 +395,7 @@ def _score_cases(cases: list[dict[str, Any]], reports: dict[str, str]) -> dict[s
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(epilog="Use census MANIFEST or frozen MANIFEST REPORTS.")
+    parser = argparse.ArgumentParser(epilog="Use census MANIFEST or frozen MANIFEST RUN_RECEIPT.")
     args_list = sys.argv[1:]
     mode = args_list[0] if args_list and args_list[0] in {"census", "frozen"} else "declared"
     if mode != "declared":
@@ -309,7 +403,9 @@ def main() -> None:
         parser.add_argument("manifest", type=Path, help="Private paired evaluation manifest JSON")
     else:
         parser.add_argument("cases", type=Path, help="Frozen JSON list of specimens and label provenance")
-    if mode != "census":
+    if mode == "frozen":
+        parser.add_argument("run_receipt", type=Path, help="Trusted live run receipt JSON")
+    elif mode == "declared":
         parser.add_argument("reports", type=Path, help="JSON object mapping specimen IDs to conclusions")
     if mode != "declared":
         parser.add_argument("--confirmations", type=Path, required=mode == "frozen",
@@ -318,6 +414,7 @@ def main() -> None:
                             help="Expected SHA-256 from the trusted evaluator")
     if mode == "frozen":
         parser.add_argument("--manifest-sha256", required=True)
+        parser.add_argument("--run-sha256", required=True, help="Expected run SHA-256 from the trusted evaluator")
         parser.add_argument("--cohort", choices=_COHORTS, required=True)
     args = parser.parse_args(args_list)
     if mode == "census":
@@ -325,8 +422,9 @@ def main() -> None:
                         confirmation_bytes=args.confirmations.read_bytes() if args.confirmations else None,
                         confirmation_sha256=args.confirmations_sha256)
     elif mode == "frozen":
-        result = score_frozen(args.manifest.read_bytes(), _read_json(args.reports.read_bytes()),
+        result = score_frozen(args.manifest.read_bytes(), args.run_receipt.read_bytes(),
                               manifest_sha256=args.manifest_sha256, cohort=args.cohort,
+                              run_sha256=args.run_sha256,
                               confirmation_bytes=args.confirmations.read_bytes(),
                               confirmation_sha256=args.confirmations_sha256)
     else:

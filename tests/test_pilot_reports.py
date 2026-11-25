@@ -22,6 +22,8 @@ def _case(specimen: str, label: str | None = "fake", **fields: Any) -> dict[str,
         "capture_type": "inspection",
         "split_family": specimen,
         "provenance_clusters": [f"source:{specimen}"],
+        "prepared_request_sha256": hashlib.sha256(f"{specimen}:request".encode()).hexdigest(),
+        "prepared_media_sha256": hashlib.sha256(f"{specimen}:prepared-media".encode()).hexdigest(),
         "photos": [
             {"sha256": hashlib.sha256(f"{specimen}:{angle}".encode()).hexdigest(), "angle": angle}
             for angle in ("dial", "crown")
@@ -53,7 +55,8 @@ def _confirmations(*cases: dict[str, Any], **fields: Any) -> dict[str, Any]:
             "photo_sha256s": [photo["sha256"] for photo in case["photos"]],
             "reviewer_id": "fixture-reviewer",
             "verification_method": "specimen_specific_document",
-            "evidence_sha256": "e" * 64,
+            "evidence_sha256": hashlib.sha256(f"{case['specimen_id']}:evidence".encode()).hexdigest(),
+            "physical_identity_sha256": hashlib.sha256(f"{case['specimen_id']}:identity".encode()).hexdigest(),
             **fields,
         }
         for case in cases
@@ -77,6 +80,7 @@ def test_declared_scores_without_confirmation_and_cannot_promote_itself() -> Non
     ("generation", "previous"),
     ("label", "original"),
     ("reviewer_id", ""),
+    ("physical_identity_sha256", ""),
     ("evidence_sha256", "z" * 64),
     ("verification_method", "seller_claim"),
     ("verification_method", "model_analysis"),
@@ -112,6 +116,7 @@ def test_independent_confirmation_cannot_be_reordered_reassigned_or_tampered() -
 
 @pytest.mark.parametrize(("field", "reason"), [
     ("photos", "cross_partition_photo"),
+    ("prepared_request_sha256", "cross_partition_prepared_request"),
     ("split_family", "cross_partition_split_family"),
     ("provenance_clusters", "cross_partition_provenance"),
 ])
@@ -121,8 +126,11 @@ def test_cross_partition_reposts_and_related_specimens_cannot_enter(
     first = _case("a", partition="development")
     second = _case("b", **{field: first[field]})
     result = census(_manifest(first, second), **_confirmations(first, second))
+    reasons = [reason]
+    if field in ("photos", "prepared_request_sha256"):
+        reasons.append(reason.removeprefix("cross_partition_") + "_shared_by_independent_specimens")
     assert result["cases"] == [
-        {"specimen_id": key, "status": "blocked", "reasons": [reason]} for key in ("a", "b")
+        {"specimen_id": key, "status": "blocked", "reasons": reasons} for key in ("a", "b")
     ]
     with pytest.raises(ValueError, match="unique specimen"):
         census(_manifest(first, {**first, "partition": "test"}))
@@ -186,6 +194,61 @@ def test_two_confirmed_ids_cannot_inflate_scoring_with_the_same_photo() -> None:
     assert result["cases"][0] == {"specimen_id": "a", "status": "eligible", "reasons": []}
 
 
+def test_transitive_provenance_cannot_move_into_test() -> None:
+    first = _case("a", partition="development", provenance_clusters=["seller:x"])
+    bridge = _case("b", provenance_clusters=["seller:x", "factory:y"])
+    last = _case("c", provenance_clusters=["factory:y"])
+    result = census(_manifest(first, bridge, last), **_confirmations(first, bridge, last))
+    assert result["cases"][2] == {
+        "specimen_id": "c", "status": "blocked", "reasons": ["cross_partition_component"],
+    }
+
+
+@pytest.mark.parametrize(("field", "kind"), [
+    ("physical_identity_sha256", "physical_identity"), ("evidence_sha256", "evidence"),
+])
+def test_two_verified_ids_cannot_reuse_identity_or_examination_artifact(field: str, kind: str) -> None:
+    first, second = _case("a"), _case("b")
+    result = census(_manifest(first, second), **_confirmations(first, second, **{field: "f" * 64}))
+    assert result["cases"] == [
+        {"specimen_id": key, "status": "blocked", "reasons": [f"{kind}_shared_by_independent_specimens"]}
+        for key in ("a", "b")
+    ]
+
+
+def _run_receipt(case: dict[str, Any], conclusion: str) -> dict[str, Any]:
+    return {
+        "photo_sha256s": [photo["sha256"] for photo in case["photos"]],
+        "prepared_request_sha256": case["prepared_request_sha256"],
+        "gemini_media_sha256": case["prepared_media_sha256"],
+        "technical_facts_sha256": "c" * 64,
+        "gemini_model": "model-version-a",
+        "gemini_response_id": f"provider-response-{case['specimen_id']}",
+        "gemini_response_sha256": "9" * 64,
+        "conclusion": conclusion,
+    }
+
+
+def _frozen_inputs(*cases: dict[str, Any]) -> tuple[bytes, dict[str, Any], dict[str, Any]]:
+    manifest = _manifest(*cases)
+    data = json.dumps(manifest).encode()
+    params = {
+        "manifest_sha256": hashlib.sha256(data).hexdigest(), "cohort": "representative",
+        **_confirmations(*cases),
+    }
+    run = {
+        "capture_mode": "live_provider", "route": "gemini_only", "freeze": manifest["freeze"],
+        "manifest_sha256": params["manifest_sha256"], "confirmations_sha256": params["confirmation_sha256"],
+        "cohort": params["cohort"], "reports": {},
+    }
+    return data, params, run
+
+
+def _frozen_score(data: bytes, params: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
+    raw = json.dumps(run).encode()
+    return score_frozen(data, raw, run_sha256=hashlib.sha256(raw).hexdigest(), **params)
+
+
 def test_frozen_score_includes_every_admitted_test_case_in_its_cohort() -> None:
     cases = [
         _case("correct"), _case("error"), _case("compatible", "original"), _case("missing"),
@@ -193,21 +256,50 @@ def test_frozen_score_includes_every_admitted_test_case_in_its_cohort() -> None:
         _case("calibration", partition="calibration"), _case("stress", cohort="stress"),
         _case("seller", evidence="declared"),
     ]
-    data = json.dumps(_manifest(*cases)).encode()
-    params = {
-        "manifest_sha256": hashlib.sha256(data).hexdigest(), "cohort": "representative",
-        **_confirmations(*cases),
+    data, params, run = _frozen_inputs(*cases)
+    run["reports"] = {
+        case["specimen_id"]: _run_receipt(case, conclusion)
+        for case, conclusion in zip(cases[:3], ("probable_fake", "probable_original", "visually_compatible"))
     }
-    reports = {
-        "correct": "probable_fake", "error": "probable_original", "compatible": "visually_compatible",
-    }
-    independent = score_frozen(data, reports, **params)["independent"]
+    independent = _frozen_score(data, params, run)["independent"]
     assert (independent["correct"], independent["incorrect"], independent["inconclusive"],
             independent["unavailable"], independent["fake_called_original"],
             independent["accuracy_all_cases"]) == (1, 1, 1, 1, 1, 0.25)
     assert independent["compatible_but_inconclusive"] == 1
-    for specimen in ("denied", "calibration", "stress", "seller"):
+    for case in cases[4:]:
         with pytest.raises(ValueError, match="unknown specimen"):
-            score_frozen(data, {**reports, specimen: "probable_fake"}, **params)
+            _frozen_score(data, params, {**run, "reports": {case["specimen_id"]: _run_receipt(case, "probable_fake")}})
     with pytest.raises(ValueError, match="frozen SHA-256"):
-        score_frozen(data + b" ", reports, **params)
+        _frozen_score(data + b" ", params, run)
+
+
+def test_frozen_score_refuses_unpinned_mock_or_mismatched_run() -> None:
+    case = _case("a")
+    data, params, run = _frozen_inputs(case)
+    with pytest.raises(ValueError, match="trusted SHA-256"):
+        score_frozen(data, json.dumps(run).encode(), run_sha256="9" * 64, **params)
+    for change in ({"capture_mode": "simulated"}, {"freeze": {}}, {"manifest_sha256": "9" * 64}):
+        with pytest.raises(ValueError, match="does not match the live frozen test"):
+            _frozen_score(data, params, {**run, **change})
+    with pytest.raises(ValueError, match="does not match the specimen or Gemini capture"):
+        _frozen_score(data, params, {**run, "reports": {"a": "probable_fake"}})
+    receipt = _run_receipt(case, "probable_fake")
+    for change in ({"photo_sha256s": receipt["photo_sha256s"][::-1]},
+                   {"gemini_model": "wrong-model"}, {"prepared_request_sha256": "7" * 64}):
+        with pytest.raises(ValueError, match="does not match the specimen or Gemini capture"):
+            _frozen_score(data, params, {**run, "reports": {"a": {**receipt, **change}}})
+    with pytest.raises(ValueError, match="lacks a matching GPT capture"):
+        _frozen_score(data, params, {**run, "route": "with_review", "reports": {"a": receipt}})
+    reviewed = {
+        **run,
+        "route": "with_review",
+        "reports": {"a": {
+            **receipt, "gpt_model": "model-version-b", "gpt_response_id": "provider-gpt-response-a",
+            "gpt_media_sha256": case["prepared_media_sha256"], "gpt_technical_facts_sha256": "c" * 64,
+            "gpt_request_sha256": "6" * 64, "gpt_response_sha256": "7" * 64,
+        }},
+    }
+    assert _frozen_score(data, params, reviewed)["independent"]["correct"] == 1
+    reviewed["reports"]["a"]["gpt_media_sha256"] = "5" * 64
+    with pytest.raises(ValueError, match="lacks a matching GPT capture"):
+        _frozen_score(data, params, reviewed)
