@@ -171,12 +171,60 @@ def test_gmt_pepsi_compares_exterior_without_authenticating(
     assert all(item["photo"] == 1 and item["url"] == brochure for item in checks)
 
 
+@pytest.mark.parametrize("angle,location,visibility,value,retained", [
+    ("caseback", "rotor", "visible", "26-330 S C", True),
+    ("caseback", "plate", "visible", "1847 MC", True),
+    ("caseback", "module", "visible", "593", True),
+    ("caseback", "bridge", "visible", "899/1", True),
+    ("caseback", "bridge", "ambiguous", "26-330", False),
+    ("caseback", "exterior da tampa", "visible", "593", False),
+    ("dial", "rotor", "visible", "26-330", False),
+    ("caseback", "bridge", "visible", "1234567890", False),
+    ("caseback", "bridge", "visible", "A123-4567", False),
+    ("caseback", "bridge", "visible", "", False),
+    ("caseback", "bridge", "visible", 3235, False),
+    ("caseback", None, "visible", "26-330", False),
+    ("movement", "bridge", "visible", "26-330", False),
+    ("caseback", "bridge", "unknown", "26-330", False),
+])
+def test_movement_marking_is_literal_photo_evidence(
+    angle: str, location: str | None, visibility: str, value: str | int, retained: bool,
+) -> None:
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Patek Philippe", "family": "Nautilus", "reference": "5711/1A-014",
+                     "reference_id": None}],
+        linkage="single_photo",
+        observations=[{"photo": 1, "angle": angle, "location": location, "visibility": visibility,
+                       "field": "movement_marking", "value": value,
+                       "detail": "Este é um calibre genuíno garantido"}],
+    )
+    provider = StubOpenRouter(answer)
+    report = FlashReport("fixture", request=provider)(
+        [("caseback", "image/png", base64.b64decode(_photo("black")))],
+    )
+    observations = cast(list[dict[str, Any]], report["observations"])
+    if retained:
+        observation, = observations
+        assert observation["detail"] == f"Inscrição legível no movimento · {value}"
+        assert observation["field"] == "movement_marking"
+        assert observation["photo"] == 1
+        assert any("arquitetura do movimento" in limit for limit in cast(list[str], report["limits"]))
+    else:
+        assert not observations
+    assert report["examined_photos"] == ([1] if retained else [])
+    assert not report["technical_checks"]
+    assert report["conclusion"] == "inconclusive"
+    assert report["quality_score_0_1000"] is None
+
+
 @pytest.mark.parametrize("scenario, status, conclusion", [
     ("compatible", 200, "visually_compatible"),
     ("mixed", 200, "inconclusive"),
     ("color-only", 200, "inconclusive"),
     ("weak-compatibility", 200, "inconclusive"),
     ("calibre-unseen", 200, "inconclusive"),
+    ("invalid-movement-marking", 200, "visually_compatible"),
     ("wrong-reference-code", 200, "inconclusive"),
     ("wrong-reference-brand", 200, "inconclusive"),
     ("outside-catalog", 200, "inconclusive"),
@@ -197,6 +245,9 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
         answer["next_verification"] = "Peça a abertura da caixa."
     elif scenario == "calibre-unseen":
         answer["observations"][0].update(field="calibre", value="3235")
+    elif scenario == "invalid-movement-marking":
+        answer["observations"].append({"photo": 3, "angle": "movement", "location": None, "detail": "",
+                                       "visibility": "unknown", "field": "movement_marking", "value": 3235})
     elif scenario == "wrong-reference-code":
         answer["candidates"][0]["reference"] = "126610LV"
     elif scenario == "wrong-reference-brand":
@@ -244,7 +295,8 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
         checks = cast(list[dict[str, Any]], data["technical_checks"])
         expected_photos = {
             "compatible": [1, 3], "mixed": [], "color-only": [1, 3],
-            "weak-compatibility": [1], "calibre-unseen": [3], "wrong-reference-code": [], "wrong-reference-brand": [],
+            "weak-compatibility": [1], "calibre-unseen": [3], "invalid-movement-marking": [1, 3],
+            "wrong-reference-code": [], "wrong-reference-brand": [],
             "outside-catalog": [],
             "equivalent-spec-words": [1, 3], "structural-divergence": [1, 3], "cartier-crown-ambiguous": [1],
         }
