@@ -106,6 +106,96 @@ def test_uncertain_single_watch_view_requests_an_overlapping_second_view() -> No
     assert "uma parte que já aparece na primeira" in str(report["next_verification"])
 
 
+@pytest.mark.parametrize(("value", "visibility", "second_reading", "reject"), [
+    ("no date", "visible", None, True),
+    ("no date", "ambiguous", None, False),
+    ("6 o'clock", "visible", None, False),
+    ("no date", "visible", "6 o'clock", False),
+    ("no date", "visible", "3 o'clock", False),
+    ("3 o'clock", "visible", "12 o'clock", False),
+])
+def test_visible_date_layout_conflict_rejects_the_exact_candidate(
+    value: str, visibility: str, second_reading: str | None, reject: bool,
+) -> None:
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Cartier", "family": "Santos de Cartier", "reference": "WSSA0018",
+                     "reference_id": "cartier-santos-wssa0018", "photo": 1}],
+        observations=[{"photo": 1, "angle": "dial", "location": "6 horas", "detail": "Janela de data.",
+                       "visibility": visibility, "field": "date_position", "value": value}],
+        next_verification="Procure a referência 4072 no fundo.",
+    )
+    if second_reading is not None:
+        answer["observations"].append({**answer["observations"][0], "photo": 3, "value": second_reading})
+    report = FlashReport("fixture").build_report(answer, {1, 3})
+    candidate, = cast(list[dict[str, Any]], report["candidates"])
+    assert (candidate["reference"] is None) is reject
+    assert report["conclusion"] == "inconclusive"
+    if second_reading is not None:
+        assert report["decision_reason"] == "date_readings_disagree"
+        assert "mostrador de frente" in str(report["next_verification"])
+    if reject:
+        assert candidate["reference_id"] is None and candidate["family"] == "Santos de Cartier"
+        assert report["decision_reason"] == "reference_conflict"
+        assert "WSSA0018" in str(report["decision_reason_text"])
+        assert "4072" not in str(report["next_verification"])
+        assert "fundo" in str(report["next_verification"])
+        check, = cast(list[dict[str, Any]], report["technical_checks"])
+        assert check["reference_id"] == "cartier-santos-wssa0018"
+        assert check["status"] == "conflicting" and check["photo"] == 1
+        assert check["url"].startswith("https://www.cartier.com/")
+
+
+@pytest.mark.parametrize("multiple", [False, True])
+def test_date_rejects_exact_candidate_without_promoting_another_identity(multiple: bool) -> None:
+    answer = _answer()
+    santos = {"brand": "Cartier", "family": "Santos de Cartier", "photo": 1}
+    answer.update(
+        candidates=[{**santos, "reference": "WSSA0018", "reference_id": None}],
+        observations=[{"photo": 1, "angle": "dial", "location": "mostrador", "detail": "Sem janela de data.",
+                       "visibility": "visible", "field": "date_position", "value": "no date"}],
+        next_verification="Procure a referência 4072 no fundo.",
+    )
+    if multiple:
+        answer["candidates"].append({**santos, "reference": "WSSA0029", "reference_id": "cartier-santos-wssa0029"})
+    result = FlashReport("fixture").build_report(answer, {1, 3})
+    candidates = cast(list[dict[str, Any]], result["candidates"])
+    assert candidates[0]["reference"] is None and candidates[0]["reference_id"] is None
+    assert result["decision_reason"] == "reference_conflict"
+    assert result["conclusion"] == "inconclusive"
+    assert "4072" not in str(result["next_verification"])
+    checks = cast(list[dict[str, Any]], result["technical_checks"])
+    statuses = {"cartier-santos-wssa0018": "conflicting"}
+    if multiple:
+        assert candidates[1]["reference"] == "WSSA0029"
+        statuses["cartier-santos-wssa0029"] = "matched"
+    assert {check["reference_id"]: check["status"] for check in checks} == statuses
+
+
+def test_santos_medium_date_layout_is_sent_and_matches_without_guessing_a_case_code() -> None:
+    builder = FlashReport("fixture")
+    content, _ = builder.prepare([])
+    prompt = str(content[0]["text"])
+    assert "cartier-santos-wssa0029: no date" in prompt
+    assert "cartier-santos-wssa0018: 6 o'clock" in prompt
+    assert "field date_position" in prompt
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Cartier", "family": "Santos de Cartier", "reference": "WSSA0029",
+                     "reference_id": "cartier-santos-wssa0029", "photo": 1}],
+        observations=[{"photo": 1, "angle": "dial", "location": "mostrador", "detail": "Sem janela de data.",
+                       "visibility": "visible", "field": "date_position", "value": "no date"}],
+        next_verification="Procure a referência 4072 no fundo.",
+    )
+    report = builder.build_report(answer, {1, 3})
+    assert report["conclusion"] == "inconclusive"
+    candidate, = cast(list[dict[str, Any]], report["candidates"])
+    assert candidate["reference"] == "WSSA0029"
+    check, = cast(list[dict[str, Any]], report["technical_checks"])
+    assert check["reference_id"] == "cartier-santos-wssa0029" and check["status"] == "matched"
+    assert "4072" not in str(report["next_verification"])
+
+
 @pytest.mark.parametrize("non_watch", [None, "3", [2], [True], [1, 1]])
 def test_watchless_photo_indices_must_be_distinct_prepared_inputs(non_watch: object) -> None:
     answer = {**_answer(), "non_watch_photos": non_watch}
@@ -462,6 +552,9 @@ def test_catalogue_feedback_preserves_uncertainty(scenario: str, reason: str) ->
     ("independently_confirmed_divergence", "probable_fake"),
     ("unavailable", "unavailable"),
     ("mixed", "inconclusive"),
+    ("date_reference_conflict", "inconclusive"),
+    ("date_readings_disagree", "inconclusive"),
+    ("date_reference_unresolved", "inconclusive"),
     ("wrong_case", None),
     ("wrong_photo", None),
     ("wrong_fact", None),
@@ -472,6 +565,20 @@ def test_local_replay_shares_gemini_capture_and_blinds_reviewer(
     answer = _answer()
     if scenario == "mixed":
         answer["linkage"] = "mixed"
+    date_scenario = scenario in ("date_reference_conflict", "date_readings_disagree", "date_reference_unresolved")
+    if date_scenario:
+        answer["candidates"] = [{"brand": "Cartier", "family": "Santos de Cartier", "reference": "WSSA0018",
+                                 "reference_id": "cartier-santos-wssa0018", "photo": 1}]
+        answer["observations"] = [{"photo": 1, "angle": "dial", "location": "6 horas",
+                                   "detail": "Sem janela de data.", "visibility": "visible",
+                                   "field": "date_position", "value": "no date"}]
+    if scenario == "date_readings_disagree":
+        answer["observations"][0].update(value="3 o'clock", detail="Data às 3.")
+        answer["observations"].append({**answer["observations"][0], "photo": 3,
+                                       "field": "DATE_POSITION", "value": "12 o'clock", "detail": "Data às 12."})
+    if scenario == "date_reference_unresolved":
+        answer["candidates"][0]["reference_id"] = None
+        answer["observations"][0].update(value="6 o'clock", detail="Data às 6.")
     if scenario == "independently_confirmed_divergence":
         answer["hypothesis"] = "probable_fake"
         answer["observations"][0].update(value="blue", detail="Mostrador azul")
@@ -497,7 +604,10 @@ def test_local_replay_shares_gemini_capture_and_blinds_reviewer(
         for field in request["review_fields"].values():
             fact = request["facts"][field["source_fact_id"]]
             assert set(fact) == {"reference_id", "angle", "field", "expected", "url", "citation"}
-            assert fact["reference_id"] == "rolex-submariner-126610ln"
+            expected_reference = (
+                "cartier-santos-wssa0018" if date_scenario else "rolex-submariner-126610ln"
+            )
+            assert fact["reference_id"] == expected_reference
         encoded = json.dumps(request)
         assert "seller-fixture" not in encoded and '"probable_original"' not in encoded
         assert '"probable_fake"' not in encoded and '"hypothesis"' not in encoded
@@ -507,7 +617,8 @@ def test_local_replay_shares_gemini_capture_and_blinds_reviewer(
                 "claim_id": key, "photo_id": item["photo_id"],
                 "source_fact_id": item["source_fact_id"], "reading": "Leitura simulada.",
                 "status": "contradicted" if (
-                    scenario == "independently_confirmed_divergence" and item["field"] == "dial_color"
+                    scenario in ("date_reference_conflict", "date_readings_disagree")
+                    or scenario == "independently_confirmed_divergence" and item["field"] == "dial_color"
                 ) else "supported",
             }
             for key, item in request["review_fields"].items()
@@ -531,6 +642,11 @@ def test_local_replay_shares_gemini_capture_and_blinds_reviewer(
         assert result["gemini_hypothesis"] == answer["hypothesis"]
         assert result["gemini_only"] == ("inconclusive" if scenario == "mixed" else answer["hypothesis"])
         assert result["with_review"] == expected
+        if date_scenario:
+            reason = scenario if scenario == "date_readings_disagree" else scenario.removeprefix("date_")
+            assert result["previous_policy_reason"] == reason
+            assert result["review_status"] == "needs_verification"
+            assert not result["disputed_claim_ids"]
         if scenario == "different_reading":
             disputed, = result["disputed_claim_ids"]
             assert result["review_findings"][disputed]["status"] == "not_visible"

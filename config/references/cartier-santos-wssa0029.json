@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "reference_id": "cartier-santos-wssa0029",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "WSSA0029",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0029.html",
+      "citation": "Cartier WSSA0029 · Product Description > Ref.",
+      "observed_at": "2026-11-25",
+      "applicable_angles": []
+    },
+    {
+      "field": "date_position",
+      "value": "no date",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0029.html",
+      "citation": "Cartier WSSA0029 · foto oficial de frente, mostrador completo sem janela de data",
+      "observed_at": "2026-11-25",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "case_width_mm",
+      "value": "35.1",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0029.html",
+      "citation": "Cartier WSSA0029 · Product Description > Case width",
+      "observed_at": "2026-11-25",
+      "applicable_angles": []
+    }
+  ]
+}
