@@ -38,6 +38,67 @@ def _answer() -> dict[str, Any]:
     }
 
 
+@pytest.mark.parametrize(("family", "reference", "reference_id", "expected_id", "reason"), [
+    ("Collection", "F-91W-1", None, "casio-f91w-1", "catalog_gap"),
+    ("F-91W", "F-91W-1", "casio-f91w-1", "casio-f91w-1", "catalog_gap"),
+    ("G-Shock", "F-91W-1", None, None, "reference_unresolved"),
+    ("Collection", "F-91W", None, None, "reference_unresolved"),
+    ("Collection", "F-91W-3", None, None, "catalog_gap"),
+    ("Collection", "F-91W-1/F-91W-3", None, None, "reference_unresolved"),
+    ("Collection", "F-91W-1", "rolex-submariner-126610ln", None, "reference_unresolved"),
+])
+def test_flash_resolves_only_exact_official_commercial_designation(
+    family: str, reference: str, reference_id: str | None, expected_id: str | None, reason: str,
+) -> None:
+    answer = {
+        "candidates": [{"brand": "Casio", "family": family, "reference": reference,
+                        "reference_id": reference_id}],
+        "linkage": "consistent",
+        "hypothesis": "probable_original",
+        "observations": [
+            {"photo": 1, "angle": "dial", "location": "visor", "detail": "Visor digital",
+             "visibility": "visible", "field": "display_type", "value": "digital"},
+        ],
+        "next_verification": "Fotografe a inscrição do fundo.",
+    }
+    report = FlashReport("fixture").build_report(answer, {1, 2})
+    candidates = cast(list[dict[str, Any]], report["candidates"])
+    assert candidates[0]["reference_id"] == expected_id
+    assert candidates[0]["reference"] == reference
+    checks = cast(list[dict[str, Any]], report["technical_checks"])
+    if expected_id:
+        check, = checks
+        assert check["photo"] == 1
+        assert check["field"] == "display_type"
+        assert check["status"] == "matched"
+        assert check["url"].startswith("https://www.casio.com/")
+    else:
+        assert not checks
+    assert report["conclusion"] == "inconclusive"
+    assert report["decision_reason"] == reason
+
+
+@pytest.mark.parametrize("case", ["wrong_brand", "mixed", "multiple_candidates", "catalogue_collision"])
+def test_commercial_designation_cannot_override_uncertain_identity(case: str) -> None:
+    answer = _answer()
+    candidate = {"brand": "Casio", "family": "Collection", "reference": "F-91W-1", "reference_id": None}
+    answer["candidates"] = [candidate]
+    reporter = FlashReport("fixture")
+    if case == "wrong_brand":
+        candidate["brand"] = "Seiko"
+    elif case == "mixed":
+        answer["linkage"] = "mixed"
+    elif case == "multiple_candidates":
+        answer["candidates"].append({**candidate, "reference": "F-91W-3"})
+    else:
+        reporter.reference_code_owners[("casio", "f91w1")].add("casio-other-registered-id")
+    report = reporter.build_report(answer, {1, 3})
+    assert not report["technical_checks"]
+    assert report["conclusion"] == "inconclusive"
+    assert report["decision_reason"] == ("unlinked_photos" if case == "mixed" else "reference_unresolved")
+    assert all(item["reference_id"] is None for item in cast(list[dict[str, Any]], report["candidates"]))
+
+
 class _Response:
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload

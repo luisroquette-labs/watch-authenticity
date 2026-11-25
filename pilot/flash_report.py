@@ -22,7 +22,7 @@ from reference_intelligence.compare import assess_reference
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
-VERSION = "flash-photo-report-v4"
+VERSION = "flash-photo-report-v5"
 CONCLUSIONS = {
     "probable_fake": "Divergências que justificam investigar falsificação",
     "visually_compatible": "Compatível nos detalhes examinados · autenticidade inconclusiva",
@@ -103,6 +103,21 @@ class FlashReport:
             for row in catalog["references"]
             if (config / "references" / f"{row['reference_id']}.json").is_file()
         }
+        self.commercial_identities: dict[str, set[tuple[str, str, str]]] = {}
+        self.reference_code_owners: dict[tuple[str, str], set[str]] = {}
+        self.family_codes: set[tuple[str, str]] = set()
+        for reference_id, (brand, family, code) in self.reference_identity.items():
+            official = [claim for claim in self.claims.get(reference_id, ()) if claim.source_class.authoritative]
+            designations = {_identity(claim.value) for claim in official
+                            if claim.field == "reference_designation" and _REFERENCE_CODE.fullmatch(claim.value)}
+            for reference_code in designations | {code}:
+                self.reference_code_owners.setdefault((brand, reference_code), set()).add(reference_id)
+            if len(designations) == 1 and code not in designations:
+                designation, = designations
+                families = {family} | {_identity(claim.value) for claim in official if claim.field == "family_alias"}
+                self.commercial_identities[reference_id] = {(brand, alias, designation) for alias in families}
+                self.family_codes.add((brand, family))
+        self.known_reference_codes = {code for _, code in self.reference_code_owners}
         official_claims = [
             claim for claims in self.claims.values() for claim in claims
             if claim.source_class.authoritative
@@ -169,12 +184,21 @@ class FlashReport:
             candidate = {key: None if value is None else _text(value, 100)
                          for key, value in item.items()}
             identity = tuple(_identity(candidate[key]) for key in ("brand", "family", "reference"))
-            if (len(candidates) == 1 and candidate["reference_id"] is None
-                and _REFERENCE_CODE.fullmatch(candidate["reference"] or "")
-                and _UNRESOLVED_IDENTITY.isdisjoint(identity[:2])):
-                outside_catalog = all(reference != identity[2] for _, _, reference in self.reference_identity.values())
-            if self.reference_identity.get(candidate["reference_id"] or "") != identity:
+            proposed_id = candidate["reference_id"]
+            if self.reference_identity.get(proposed_id or "") != identity:
                 candidate["reference_id"] = None
+                if len(candidates) == 1 and _REFERENCE_CODE.fullmatch(candidate["reference"] or ""):
+                    brand, family, code = identity
+                    matches = [key for key, identities in self.commercial_identities.items()
+                               if (brand, family, code) in identities]
+                    if (linkage in ("single_photo", "consistent") and len(matches) == 1
+                        and self.reference_code_owners.get((brand, code)) == {matches[0]}
+                        and proposed_id in (None, matches[0])):
+                        candidate["reference_id"] = matches[0]
+                    outside_catalog = (
+                        proposed_id is None and _UNRESOLVED_IDENTITY.isdisjoint((brand, family))
+                        and code not in self.known_reference_codes and (brand, code) not in self.family_codes
+                    )
             parsed_candidates.append(candidate)
         reference_id = parsed_candidates[0]["reference_id"] if len(parsed_candidates) == 1 else None
         claims = self.claims.get(reference_id or "", ())

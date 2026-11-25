@@ -12,6 +12,15 @@
       "applicable_angles": []
     },
     {
+      "field": "family_alias",
+      "value": "Collection",
+      "source_class": "official_brand",
+      "source_url": "https://www.casio.com/europe/watches/casio/product.F-91W-1/",
+      "citation": "Product gallery > abbreviated label from CASIO TIMELESS COLLECTION",
+      "observed_at": "2026-11-25",
+      "applicable_angles": []
+    },
+    {
       "field": "display_type",
       "value": "digital",
       "source_class": "official_brand",
