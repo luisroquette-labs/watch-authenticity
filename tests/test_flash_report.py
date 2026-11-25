@@ -98,6 +98,8 @@ def test_gmt_pepsi_compares_exterior_without_authenticating(
     assert len(provider.posts) == 1
     assert reference_id in provider.posts[0]["messages"][0]["content"][0]["text"]
     assert report["conclusion"] == conclusion
+    observations = cast(list[dict[str, Any]], report["observations"])
+    assert {item["field"] for item in observations} == {"dial_color", "date_magnifier", "bezel_color"}
     checks = cast(list[dict[str, Any]], report["technical_checks"])
     assert {item["field"]: item["status"] for item in checks} == {
         "dial_color": "matched", "date_magnifier": "matched", "bezel_color": comparison,
@@ -170,7 +172,7 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
     assert response.json().get("conclusion") == conclusion
     if status == 200:
         data = response.json()
-        assert data["examined_photos"] == [1, 3]
+        assert data["examined_photos"] == ([3] if scenario == "calibre-unseen" else [1, 3])
         checks = cast(list[dict[str, Any]], data["technical_checks"])
         expected_photos = {
             "compatible": [1, 3], "mixed": [1, 3], "color-only": [1, 3],
