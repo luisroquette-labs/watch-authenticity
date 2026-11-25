@@ -67,7 +67,7 @@ def replay_with_review(
     review: Callable[[dict[str, Any]], object],
 ) -> dict[str, Any]:
     """Rehearse the three arms with injected responses and one Gemini capture."""
-    content, indices = report_builder.prepare(photos)
+    content, indices, monochrome = report_builder.prepare_with_monochrome(photos)
     facts: dict[str, dict[str, Any]] = {}
     for claims in report_builder.claims.values():
         for claim in claims:
@@ -83,7 +83,7 @@ def replay_with_review(
     model_response_id = metadata.get("model_response_id")
     if metadata.get("model") != MODEL or not isinstance(model_response_id, str):
         raise ValueError("the Gemini response must identify the pinned model and response")
-    report = report_builder.build_report(answer, indices)
+    report = report_builder.build_report(answer, indices, monochrome=monochrome)
     checks = cast(list[dict[str, Any]], report["technical_checks"])
     fields: dict[str, dict[str, Any]] = {}
     expected_statuses: dict[str, set[str]] = {}
@@ -136,8 +136,9 @@ def replay_with_review(
     reference_unsettled = report["decision_reason"] in (
         "reference_conflict", "date_readings_disagree", "reference_unresolved",
     )
+    color_limited = report["conclusion"] == "inconclusive" and bool(report["color_limited_photos"])
     if not fields:
-        if report["decision_reason"] == "date_readings_disagree":
+        if report["decision_reason"] == "date_readings_disagree" or color_limited:
             return {**result, "with_review": "inconclusive", "review_status": "needs_verification"}
         return result
     token = _digest(asdict(capture))
@@ -181,7 +182,7 @@ def replay_with_review(
         findings_by_claim[claim_id] = {**target, "status": status, "reading": reading.strip()}
         if expected_statuses[claim_id] != {status}:
             disputed_claim_ids.append(claim_id)
-    needs_verification = bool(disputed_claim_ids) or reference_unsettled
+    needs_verification = bool(disputed_claim_ids) or reference_unsettled or color_limited
     return {
         **result,
         "with_review": "inconclusive" if needs_verification else hypothesis,
