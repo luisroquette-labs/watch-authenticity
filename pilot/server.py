@@ -21,8 +21,9 @@ from typing import Any, Callable, Protocol
 from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image, UnidentifiedImageError
+from requests import RequestException
 
-from pilot.flash_research import ReportUnavailable
+from pilot.flash_research import ReportUnavailable, check_flash_budget
 from pilot.visual_evidence import (
     bezel_color_hint,
     consensus,
@@ -650,7 +651,7 @@ class PilotHTTPServer(ThreadingHTTPServer):
             self._slots.release()
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--checkpoint", type=Path)
@@ -661,7 +662,7 @@ def main() -> None:
     )
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--host", default="127.0.0.1")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not 1024 <= args.port <= 65535:
         raise SystemExit("port must be between 1024 and 65535")
     password = os.environ.get("WATCH_AUTH_PILOT_PASSWORD")
@@ -673,6 +674,11 @@ def main() -> None:
         key = os.environ.get("WATCH_AUTH_OPENROUTER_PILOT_KEY", "")
         if not key:
             raise SystemExit("gemini pilot requires WATCH_AUTH_OPENROUTER_PILOT_KEY")
+        if args.host != "127.0.0.1":
+            try:
+                check_flash_budget(key)
+            except (RequestException, RuntimeError, ValueError, TypeError, AttributeError, KeyError):
+                raise SystemExit("Gemini pilot provider or spending envelope unavailable") from None
         route = handler(None, password, report=FlashReport(key))
     else:
         route = handler(PilotService(args.checkpoint, args.knowledge), password)

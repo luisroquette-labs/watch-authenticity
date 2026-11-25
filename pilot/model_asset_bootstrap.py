@@ -47,10 +47,19 @@ def download_models(client: Any, bucket: str, manifest: dict[str, Any], root: Pa
 
 
 def main() -> None:
+    from pilot.server import main as serve
+
+    mode = os.environ.get("WATCH_AUTH_PILOT_MODE", "local-vision")
+    bind = ["--host", "0.0.0.0", "--port", "8080"]
+    if mode == "gemini":
+        serve(["--gemini-flash", *bind])
+        return
+    if mode != "local-vision":
+        raise SystemExit("WATCH_AUTH_PILOT_MODE must be local-vision or gemini")
+
     from ibm_cloud_sdk_core.authenticators import ContainerAuthenticator
 
     from infra.ibm_cos import create_oauth_cos_client
-    from pilot.server import main as serve
 
     bucket = os.environ["WATCH_AUTH_COS_BUCKET"]
     auth = ContainerAuthenticator(iam_profile_id=os.environ["WATCH_AUTH_TRUSTED_PROFILE_ID"])
@@ -62,9 +71,7 @@ def main() -> None:
     manifest = json.loads((Path(__file__).resolve().parents[1] / "config/pilot_model_sources.json").read_text())
     download_models(client, bucket, manifest, MODEL_DIR)
     os.environ["WATCH_AUTH_DETECTOR_CHECKPOINT"] = str(MODEL_DIR / "owlv2")
-    import sys
-    sys.argv = [sys.argv[0], "--checkpoint", str(MODEL_DIR / "smolvlm"), "--host", "0.0.0.0", "--port", "8080"]
-    serve()
+    serve(["--checkpoint", str(MODEL_DIR / "smolvlm"), *bind])
 
 
 if __name__ == "__main__":
