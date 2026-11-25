@@ -10,8 +10,9 @@ import pytest
 import requests
 from PIL import Image
 
-from evaluation.pilot_reports import score
+from evaluation.pilot_pairing import replay_with_review
 from pilot.flash_report import FlashReport
+from pilot.flash_research import complete_flash
 from pilot.server import PilotHTTPServer, handler
 
 
@@ -163,20 +164,83 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
             assert "um relógio por vez" in data["next_verification"]
 
 
-def test_scoring_preserves_denominator_and_evidence_tier() -> None:
-    labels = [("a", "fake", "independent"), ("b", "original", "independent"),
-              ("c", "fake", "independent"), ("d", "original", "declared"),
-              ("e", "fake", "independent")]
-    cases = [{"specimen_id": name, "label": label, "evidence": evidence,
-              "label_source": "test fixture", "physical_identity_confirmed": evidence == "independent"}
-             for name, label, evidence in labels]
-    reports = {"a": "probable_original", "b": "visually_compatible", "c": "probable_fake", "d": "probable_original"}
-    report = score(cases, reports)
-    independent = report["independent"]
-    assert (independent["correct"], independent["incorrect"], independent["inconclusive"],
-            independent["unavailable"], independent["fake_called_original"],
-            independent["accuracy_all_cases"]) == (1, 1, 1, 1, 1, 0.25)
-    assert report["declared"]["agrees_with_claim"] == 1
-    assert independent["compatible_but_inconclusive"] == 1
-    with pytest.raises(ValueError, match="unique specimen"):
-        score([*cases, cases[0]], reports)
+@pytest.mark.parametrize(("scenario", "expected"), [
+    ("agree", "probable_original"),
+    ("different_reading", "inconclusive"),
+    ("independently_confirmed_divergence", "probable_fake"),
+    ("unavailable", "unavailable"),
+    ("mixed", "inconclusive"),
+    ("wrong_case", None),
+    ("wrong_photo", None),
+    ("wrong_fact", None),
+])
+def test_local_replay_shares_gemini_capture_and_blinds_reviewer(
+    scenario: str, expected: str | None,
+) -> None:
+    answer = _answer()
+    if scenario == "mixed":
+        answer["linkage"] = "mixed"
+    if scenario == "independently_confirmed_divergence":
+        answer["hypothesis"] = "probable_fake"
+        answer["observations"][0].update(value="blue", detail="Mostrador azul")
+    provider = StubOpenRouter(answer)
+    builder = FlashReport("fixture", request=provider)
+    black, white = (base64.b64decode(_photo(color)) for color in ("black", "white"))
+    photos = [("dial", "image/png", black), ("rehaut", "image/png", black),
+              ("cyclops", "image/png", white)]
+    calls = []
+
+    def gemini(content: list[dict[str, object]]) -> tuple[object, dict[str, object]]:
+        return complete_flash("fixture", content, request=provider)
+
+    def review(request: dict[str, Any]) -> object:
+        calls.append(request)
+        assert set(request) == {"case_token", "photo_ids", "photos", "facts", "review_fields"}
+        assert request["photo_ids"] == [1, 3]
+        captured = provider.posts[0]["messages"][0]["content"]
+        assert [item["image_url"] for item in request["photos"]] == [
+            item["image_url"] for item in captured if item["type"] == "image_url"
+        ]
+        assert request["facts"] == json.loads(captured[0]["text"].split("Fatos técnicos oficiais:\n")[1])
+        for field in request["review_fields"].values():
+            fact = request["facts"][field["source_fact_id"]]
+            assert set(fact) == {"reference_id", "angle", "field", "expected", "url", "citation"}
+            assert fact["reference_id"] == "rolex-submariner-126610ln"
+        encoded = json.dumps(request)
+        assert "seller-fixture" not in encoded and '"probable_original"' not in encoded
+        assert '"probable_fake"' not in encoded and '"hypothesis"' not in encoded
+        assert "Mostrador preto" not in encoded and "Mostrador azul" not in encoded
+        findings = [
+            {
+                "claim_id": key, "photo_id": item["photo_id"],
+                "source_fact_id": item["source_fact_id"], "reading": "Leitura simulada.",
+                "status": "contradicted" if (
+                    scenario == "independently_confirmed_divergence" and item["field"] == "dial_color"
+                ) else "supported",
+            }
+            for key, item in request["review_fields"].items()
+        ]
+        if scenario == "different_reading":
+            findings[0]["status"] = "not_visible"
+        if scenario == "wrong_photo":
+            findings[0]["photo_id"] = 2
+        if scenario == "wrong_fact":
+            findings[0]["source_fact_id"] = "different-fact"
+        token = "different-case" if scenario == "wrong_case" else request["case_token"]
+        return None if scenario == "unavailable" else {"case_token": token, "findings": findings}
+
+    if expected is None:
+        with pytest.raises(ValueError, match="different case|requested evidence"):
+            replay_with_review(builder, "seller-fixture", photos, gemini, review)
+    else:
+        result = replay_with_review(builder, "seller-fixture", photos, gemini, review)
+        assert result["previous_policy"] == builder.build_report(answer, {1, 3})["conclusion"]
+        assert [item["photo_id"] for item in result["prepared_photos"]] == [1, 3]
+        assert result["gemini_hypothesis"] == answer["hypothesis"]
+        assert result["gemini_only"] == ("inconclusive" if scenario == "mixed" else answer["hypothesis"])
+        assert result["with_review"] == expected
+        if scenario == "different_reading":
+            disputed, = result["disputed_claim_ids"]
+            assert result["review_findings"][disputed]["status"] == "not_visible"
+    assert len(calls) == (0 if scenario == "mixed" else 1)
+    assert len(provider.posts) == 1

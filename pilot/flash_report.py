@@ -98,7 +98,7 @@ class FlashReport:
             if (config / "references" / f"{row['reference_id']}.json").is_file()
         }
 
-    def __call__(self, photos: list[tuple[str, str, bytes]]) -> dict[str, object]:
+    def prepare(self, photos: list[tuple[str, str, bytes]]) -> tuple[list[dict[str, object]], set[int]]:
         fields = sorted({claim.field for claims in self.claims.values() for claim in claims
                          if claim.applicable_angles and claim.source_class.authoritative})
         content: list[dict[str, object]] = [{"type": "text", "text": (
@@ -122,11 +122,15 @@ class FlashReport:
                 {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," +
                  base64.b64encode(output.getvalue()).decode()}},
             ])
+        return content, indices
+
+    def __call__(self, photos: list[tuple[str, str, bytes]]) -> dict[str, object]:
+        content, indices = self.prepare(photos)
         if not self.lock.acquire(blocking=False):
             raise ReportUnavailable("Já há uma análise Gemini em andamento. Tente após ela terminar.")
         try:
             answer, metadata = complete_flash(self.key, content, request=self.request)
-            return {**metadata, **self._report(answer, indices)}
+            return {**metadata, **self.build_report(answer, indices)}
         except requests.RequestException:
             raise ReportUnavailable("O OpenRouter não concluiu a análise. O resultado ficou indisponível.") from None
         except (RuntimeError, ValueError, TypeError, AttributeError, KeyError):
@@ -134,7 +138,7 @@ class FlashReport:
         finally:
             self.lock.release()
 
-    def _report(self, answer: object, indices: set[int]) -> dict[str, object]:
+    def build_report(self, answer: object, indices: set[int]) -> dict[str, object]:
         if not isinstance(answer, dict) or set(answer) != {
             "candidates", "observations", "linkage", "hypothesis", "next_verification"
         }:
@@ -255,7 +259,8 @@ def _technical_checks(
                     status = CheckStatus.CONFLICTING
                 else:
                     continue
-                checks.append({"field": field, "photo": item["photo"], "observed": check.observed,
+                checks.append({"field": field, "photo": item["photo"], "angle": angle.value,
+                               "observed": check.observed,
                                "expected": check.expected, "status": status.value,
                                "citation": check.citation, "url": check.source_url})
     return checks
