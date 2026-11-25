@@ -91,7 +91,7 @@ def _identity(value: str | None) -> str:
 
 def _read_movement_marking(item: dict[str, Any], indices: set[int]) -> dict[str, Any] | None:
     photo, location, value = item.get("photo"), item.get("location"), item.get("value")
-    if (type(photo) is not int or photo not in indices or item.get("angle") != "caseback"
+    if (not isinstance(photo, int) or isinstance(photo, bool) or photo not in indices or item.get("angle") != "caseback"
         or item.get("visibility") != "visible" or not isinstance(location, str) or not isinstance(value, str)):
         return None
     region = _MOVEMENT_REGIONS.get(location.strip().casefold())
