@@ -130,8 +130,11 @@ def test_casio_f91w_official_claims_do_not_authenticate_research_photos() -> Non
     reference = "casio-f91w-1"
     claims = load_knowledge(Path(f"config/references/{reference}.json"), reference)
 
-    assert len(claims) == 9
+    assert len(claims) == 10
     assert all(claim.source_class is SourceClass.OFFICIAL_BRAND for claim in claims)
+    assert [(claim.value, claim.applicable_angles) for claim in claims if claim.field == "family_alias"] == [
+        ("Collection", ())
+    ]
     assert [(claim.value, claim.applicable_angles) for claim in claims if claim.field == "module_guide_number"] == [
         ("593", ())
     ]
