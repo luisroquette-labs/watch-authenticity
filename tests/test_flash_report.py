@@ -171,6 +171,46 @@ def test_gmt_pepsi_compares_exterior_without_authenticating(
     assert all(item["photo"] == 1 and item["url"] == brochure for item in checks)
 
 
+@pytest.mark.parametrize("angle,location,visibility,value,retained", [
+    ("caseback", "rotor", "visible", "26-330 S C", True),
+    ("caseback", "plate", "visible", "1847 MC", True),
+    ("caseback", "module", "visible", "593", True),
+    ("caseback", "bridge", "ambiguous", "26-330", False),
+    ("caseback", "exterior da tampa", "visible", "593", False),
+    ("dial", "rotor", "visible", "26-330", False),
+    ("caseback", "bridge", "visible", "1234567890", False),
+])
+def test_movement_marking_is_literal_photo_evidence(
+    angle: str, location: str, visibility: str, value: str, retained: bool,
+) -> None:
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Patek Philippe", "family": "Nautilus", "reference": "5711/1A-014",
+                     "reference_id": None}],
+        linkage="single_photo",
+        observations=[{"photo": 1, "angle": angle, "location": location, "visibility": visibility,
+                       "field": "movement_marking", "value": value,
+                       "detail": "Este é um calibre genuíno garantido"}],
+    )
+    provider = StubOpenRouter(answer)
+    report = FlashReport("fixture", request=provider)(
+        [("caseback", "image/png", base64.b64decode(_photo("black")))],
+    )
+    observations = cast(list[dict[str, Any]], report["observations"])
+    if retained:
+        observation, = observations
+        assert observation["detail"] == f"Inscrição legível no movimento · {value}"
+        assert observation["field"] == "movement_marking"
+        assert observation["photo"] == 1
+        assert any("arquitetura do movimento" in limit for limit in cast(list[str], report["limits"]))
+    else:
+        assert not observations
+    assert report["examined_photos"] == ([1] if retained else [])
+    assert not report["technical_checks"]
+    assert report["conclusion"] == "inconclusive"
+    assert report["quality_score_0_1000"] is None
+
+
 @pytest.mark.parametrize("scenario, status, conclusion", [
     ("compatible", 200, "visually_compatible"),
     ("mixed", 200, "inconclusive"),
