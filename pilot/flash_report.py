@@ -10,7 +10,7 @@ import re
 from datetime import date
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import AbstractSet, Any
 
 import requests
 from PIL import ImageOps
@@ -59,6 +59,12 @@ _CROWN_SHAPE_DETAILS = {
     "7 sided": "Coroa com sete lados.",
     "faceted": "Coroa de contorno facetado.",
     "round": "Coroa de contorno arredondado.",
+}
+_COLOR_LOCATIONS = {
+    "bezel_color": "aro",
+    "bezel_scale_color": "escala do aro",
+    "crown_stone_color": "pedra da coroa",
+    "dial_color": "mostrador",
 }
 _IDENTITY_ALIASES = {"patekphilippe": "patek", "santosdecartier": "santos"}
 _REFERENCE_CODE = re.compile(r"(?=.*[0-9])[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*")
@@ -156,6 +162,12 @@ class FlashReport:
         self.nonvisual_fields = {claim.field for claim in official_claims} - self.visual_fields
 
     def prepare(self, photos: list[tuple[str, str, bytes]]) -> tuple[list[dict[str, object]], set[int]]:
+        content, indices, _ = self.prepare_with_monochrome(photos)
+        return content, indices
+
+    def prepare_with_monochrome(
+        self, photos: list[tuple[str, str, bytes]],
+    ) -> tuple[list[dict[str, object]], set[int], set[int]]:
         date_layouts = "; ".join(
             f"{claim.reference_id}: {claim.value}"
             for claims in self.claims.values() for claim in claims
@@ -168,6 +180,7 @@ class FlashReport:
             f"\nData segundo as fichas oficiais, para comparação com a foto: {date_layouts}."
         )}]
         indices: set[int] = set()
+        monochrome: set[int] = set()
         seen: set[bytes] = set()
         for index, (angle, mime, raw) in enumerate(photos, 1):
             with decode_image(raw, mime) as decoded, ImageOps.exif_transpose(decoded) as image:
@@ -176,6 +189,9 @@ class FlashReport:
                     continue
                 seen.add(digest)
                 image.thumbnail((1536, 1536))
+                red, green, blue = (channel.tobytes() for channel in image.split())
+                if red == green == blue:
+                    monochrome.add(index)
                 output = io.BytesIO()
                 image.save(output, format="JPEG", quality=91)
             indices.add(index)
@@ -184,15 +200,15 @@ class FlashReport:
                 {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," +
                  base64.b64encode(output.getvalue()).decode()}},
             ])
-        return content, indices
+        return content, indices, monochrome
 
     def __call__(self, photos: list[tuple[str, str, bytes]]) -> dict[str, object]:
-        content, indices = self.prepare(photos)
+        content, indices, monochrome = self.prepare_with_monochrome(photos)
         if not self.lock.acquire(blocking=False):
             raise ReportUnavailable("Já há uma análise Gemini em andamento. Tente após ela terminar.")
         try:
             answer, metadata = complete_flash(self.key, content, request=self.request)
-            return {**metadata, **self.build_report(answer, indices)}
+            return {**metadata, **self.build_report(answer, indices, monochrome=monochrome)}
         except requests.RequestException:
             raise ReportUnavailable("O OpenRouter não concluiu a análise. O resultado ficou indisponível.") from None
         except (RuntimeError, ValueError, TypeError, AttributeError, KeyError):
@@ -200,7 +216,9 @@ class FlashReport:
         finally:
             self.lock.release()
 
-    def build_report(self, answer: object, indices: set[int]) -> dict[str, object]:
+    def build_report(
+        self, answer: object, indices: set[int], *, monochrome: AbstractSet[int] = frozenset(),
+    ) -> dict[str, object]:
         fields = {
             "candidates", "observations", "linkage", "hypothesis", "next_verification"
         }
@@ -270,6 +288,7 @@ class FlashReport:
         nonvisual_fields = self.nonvisual_fields | (reference_fields - visual_reference_fields)
         accepted_fields = self.visual_fields - nonvisual_fields
         parsed: list[dict[str, Any]] = []
+        color_limited: set[int] = set()
         for item in observations:
             if not isinstance(item, dict):
                 raise ValueError("evidência inválida")
@@ -312,6 +331,13 @@ class FlashReport:
                     value=shape_value if shape_detail else None,
                     visibility="visible" if shape_detail else "ambiguous",
                 )
+            elif field in _COLOR_LOCATIONS and observation["photo"] in monochrome:
+                observation.update(
+                    field=field, location=_COLOR_LOCATIONS[field],
+                    detail="Cor indeterminada nesta foto monocromática.",
+                    value=None, visibility="ambiguous",
+                )
+                color_limited.add(observation["photo"])
             parsed.append(observation)
         primary_checks = _technical_checks(reference_id, claims, parsed)
         divergent_fields = {check["field"] for check in primary_checks if check["status"] == "conflicting"}
@@ -430,6 +456,7 @@ class FlashReport:
             "report_version": VERSION, "conclusion": hypothesis, "conclusion_label": CONCLUSIONS[hypothesis],
             "candidates": parsed_candidates, "linkage": linkage, "observations": parsed,
             "examined_photos": sorted({item["photo"] for item in parsed}),
+            "color_limited_photos": sorted(color_limited),
             "technical_checks": checks, "limits": limits,
             "decision_reason": reason, "decision_reason_text": reason_text,
             "model_hypothesis": model_hypothesis, "next_verification": next_verification,

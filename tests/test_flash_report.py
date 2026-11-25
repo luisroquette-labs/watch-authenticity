@@ -12,7 +12,7 @@ from PIL import Image
 
 from evaluation.pilot_pairing import replay_with_review
 from pilot.flash_report import FlashReport
-from pilot.flash_research import complete_flash
+from pilot.flash_research import MODEL, complete_flash
 from pilot.server import PilotHTTPServer, handler
 
 
@@ -332,6 +332,47 @@ class StubOpenRouter:
                           "message": {"content": json.dumps(self.answer)}}]})
 
 
+@pytest.mark.parametrize("color_view", ["white", "blue"])
+def test_crown_color_requires_chromatic_evidence_in_its_own_photo(color_view: str) -> None:
+    answer = _answer()
+    answer["candidates"] = [{"brand": "Cartier", "family": "Santos", "reference": "WSSA0061",
+                             "reference_id": "cartier-santos-wssa0061", "photo": 1}]
+    answer["observations"] = [
+        {"photo": 1, "angle": "crown", "location": "coroa", "detail": "Coroa com sete lados.",
+         "visibility": "visible", "field": "crown_shape", "value": "7 sided"},
+        {"photo": 3, "angle": "crown", "location": "pedra azul", "detail": "Pedra azul.",
+         "visibility": "visible", "field": "crown_stone_color", "value": "blue"},
+    ]
+    reporter = FlashReport("fixture", request=StubOpenRouter(answer))
+    first = base64.b64decode(_photo("red"))
+    third = base64.b64decode(_photo(color_view))
+    photos = [("crown", "image/png", data) for data in (first, first, third)]
+    report = reporter(photos)
+    checks = cast(list[dict[str, Any]], report["technical_checks"])
+    color = cast(list[dict[str, Any]], report["observations"])[1]
+    assert color["photo"] == 3
+    if color_view == "blue":
+        assert [check["field"] for check in checks] == ["crown_shape", "crown_stone_color"]
+        assert report["conclusion"] == "visually_compatible"
+    else:
+        assert [check["field"] for check in checks] == ["crown_shape"]
+        assert color["visibility"] == "ambiguous" and color["value"] is None
+        assert "azul" not in color["detail"] and "azul" not in color["location"]
+        assert report["conclusion"] == "inconclusive"
+
+        def agree(request: dict[str, Any]) -> dict[str, Any]:
+            fields = request["review_fields"]
+            assert [field["field"] for field in fields.values()] == ["crown_shape"]
+            return {"case_token": request["case_token"], "findings": [
+                {"claim_id": key, "photo_id": field["photo_id"], "source_fact_id": field["source_fact_id"],
+                 "status": "supported", "reading": "Sete lados visíveis."} for key, field in fields.items()
+            ]}
+
+        review = replay_with_review(reporter, "gray-color", photos,
+                                    lambda _: (answer, {"model": MODEL, "model_response_id": "fixture"}), agree)
+        assert review["with_review"] == "inconclusive"
+
+
 @pytest.mark.parametrize(("bezel", "hypothesis", "comparison", "conclusion"), [
     ("blue and red", "probable_original", "matched", "visually_compatible"),
     ("blue", "probable_fake", "conflicting", "inconclusive"),
@@ -356,7 +397,7 @@ def test_gmt_pepsi_compares_exterior_without_authenticating(
     ])
     provider = StubOpenRouter(answer)
     report = FlashReport("fixture", request=provider)(
-        [("dial", "image/png", base64.b64decode(_photo("black")))],
+        [("dial", "image/png", base64.b64decode(_photo("#100912")))],
     )
     assert len(provider.posts) == 1
     assert reference_id in provider.posts[0]["messages"][0]["content"][0]["text"]
@@ -478,9 +519,9 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
     thread.start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
     auth = ("watch", password)
-    black = _photo("black")
+    dial = _photo("#100912")
     body = {"images": [{"angle": angle, "content_type": "image/png", "data": image}
-                      for angle, image in [("dial", black), ("rehaut", black), ("cyclops", _photo("white"))]]}
+                      for angle, image in [("dial", dial), ("rehaut", dial), ("cyclops", _photo("white"))]]}
     try:
         assert requests.post(base + "/predict/batch", json=body, timeout=3).status_code == 401
         assert "OpenRouter" in requests.get(base, auth=auth, timeout=3).text
@@ -619,8 +660,8 @@ def test_local_replay_shares_gemini_capture_and_blinds_reviewer(
         answer["observations"][0].update(value="blue", detail="Mostrador azul")
     provider = StubOpenRouter(answer)
     builder = FlashReport("fixture", request=provider)
-    black, white = (base64.b64decode(_photo(color)) for color in ("black", "white"))
-    photos = [("dial", "image/png", black), ("rehaut", "image/png", black),
+    dial, white = (base64.b64decode(_photo(color)) for color in ("#100912", "white"))
+    photos = [("dial", "image/png", dial), ("rehaut", "image/png", dial),
               ("cyclops", "image/png", white)]
     calls = []
 
