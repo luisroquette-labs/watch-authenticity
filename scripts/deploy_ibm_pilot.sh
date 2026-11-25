@@ -31,7 +31,7 @@ ibmcloud ce project select --name "${WATCH_AUTH_CE_PROJECT}" >/dev/null
 app=watch-auth-pilot
 secret=watch-auth-pilot-basic
 provider_secret=watch-auth-pilot-gemini
-mode_args=(--env "WATCH_AUTH_PILOT_MODE=${mode}")
+provider_key=WATCH_AUTH_OPENROUTER_PILOT_KEY
 if [[ "${mode}" == gemini ]]; then
   ibmcloud ce secret get --name "${provider_secret}" --output json | python3 -c '
 import json, sys
@@ -49,7 +49,6 @@ except (ValueError, AttributeError, TypeError):
 if not valid:
     raise SystemExit("Gemini pilot requires the dedicated Code Engine provider secret")
 '
-  mode_args+=(--env-from-secret "${provider_secret}")
 fi
 
 read_pilot_app() {
@@ -65,27 +64,39 @@ containers = pod.get("containers", [])
 container = containers[0] if len(containers) == 1 else {}
 resources = container.get("resources", {}).get("requests", {})
 environment = container.get("env", [])
-env = {item.get("name"): item.get("value") for item in environment}
+env = {item.get("name"): item for item in environment}
 env_from = container.get("envFrom", [])
 generic_secrets = [
     item.get("secretRef", {}).get("name") for item in env_from
     if not item.get("prefix") and not item.get("configMapRef")
     and not item.get("secretRef", {}).get("optional")
 ]
-key_secrets = [item.get("valueFrom", {}).get("secretKeyRef", {}).get("name") for item in environment]
 basic_secret = "watch-auth-pilot-basic"
 password_key = "WATCH_AUTH_PILOT_PASSWORD"
-password_refs = [item.get("valueFrom", {}).get("secretKeyRef", {}) for item in environment
-                 if item.get("name") == password_key]
-password_bound = (
-    env.get(password_key) is None and (
-        not password_refs and basic_secret in generic_secrets
-        or len(password_refs) == 1 and password_refs[0].get("name") == basic_secret
-        and password_refs[0].get("key") == password_key and not password_refs[0].get("optional")
-    )
-)
-current_mode = env.get("WATCH_AUTH_PILOT_MODE", "local-vision")
 provider_secret = "watch-auth-pilot-gemini"
+provider_key = "WATCH_AUTH_OPENROUTER_PILOT_KEY"
+
+def secret_key_ref(item):
+    return item.get("valueFrom", {}).get("secretKeyRef", {})
+
+def secret_key_bound(key, name):
+    item = env.get(key, {})
+    ref = secret_key_ref(item)
+    return (item.get("value") is None and ref.get("name") == name
+            and ref.get("key") == key and not ref.get("optional"))
+
+password_bound = secret_key_bound(password_key, basic_secret) or (
+    password_key not in env and basic_secret in generic_secrets
+)
+mode_entry = env.get("WATCH_AUTH_PILOT_MODE", {"value": "local-vision"})
+current_mode = mode_entry.get("value")
+provider_refs = [
+    item.get("name") for item in environment if secret_key_ref(item).get("name") == provider_secret
+]
+provider_bound = (
+    provider_refs == [provider_key] and secret_key_bound(provider_key, provider_secret)
+    if current_mode == "gemini" else not provider_refs and provider_key not in env
+)
 expected_env = {
     "WATCH_AUTH_COS_BUCKET": os.environ["WATCH_AUTH_COS_BUCKET"],
     "WATCH_AUTH_COS_ENDPOINT": os.environ["WATCH_AUTH_COS_ENDPOINT"],
@@ -96,7 +107,7 @@ if current_mode == "gemini" and desired_mode == "local-vision":
     raise SystemExit("refusing to switch an active Gemini pilot to local-vision")
 if (
     len(environment) != len(env)
-    or not set(expected_env.items()) <= set(env.items())
+    or any(env.get(key, {}).get("value") != value for key, value in expected_env.items())
     or not password_bound
     or pod.get("imagePullSecrets") != [{"name": os.environ["WATCH_AUTH_REGISTRY_SECRET"]}]
     or pod.get("serviceAccountName") != app.get("metadata", {}).get("namespace", "") + "-none"
@@ -107,36 +118,44 @@ if (
     or annotations.get("autoscaling.knative.dev/maxScale") != "1"
     or annotations.get("autoscaling.knative.dev/scale-down-delay") != "120s"
     or current_mode not in ("gemini", "local-vision")
-    or "WATCH_AUTH_OPENROUTER_PILOT_KEY" in env
-    or provider_secret in key_secrets
-    or generic_secrets.count(provider_secret) != (1 if current_mode == "gemini" else 0)
+    or not provider_bound
+    or any(item.get("secretRef", {}).get("name") == provider_secret for item in env_from)
     or desired_mode == "gemini" and (
         len(generic_secrets) != len(env_from)
-        or any(name not in (basic_secret, provider_secret) for name in generic_secrets)
+        or any(name != basic_secret for name in generic_secrets)
     )
 ):
     raise SystemExit("pilot app readback differs from protected bounded configuration")
 
 status = app.get("status", {})
+generation = app.get("metadata", {}).get("generation")
+observed_generation = type(generation) is int and generation > 0 and generation == status.get("observedGeneration")
 created = status.get("latestCreatedRevisionName")
-ready = any(item.get("type") == "Ready" and item.get("status") == "True"
-            for item in status.get("conditions", []))
+latest_ready = status.get("latestReadyRevisionName")
+ready_status = next((item.get("status") for item in status.get("conditions", [])
+                     if item.get("type") == "Ready"), None)
 traffic = status.get("traffic", [])
 active_traffic = [item for item in traffic if item.get("percent", 0) != 0]
-traffic_ready = (
-    bool(created) and created == status.get("latestReadyRevisionName") and len(active_traffic) == 1
+revision_settled = (
+    observed_generation and bool(created) and created == latest_ready and len(active_traffic) == 1
     and active_traffic[0].get("revisionName") == created and active_traffic[0].get("percent") == 100
 )
+ready = ready_status == "True"
 image_matches = container.get("image") == os.environ["WATCH_AUTH_PILOT_IMAGE_DIGEST"]
 if expected_revision:
     if not image_matches:
         raise SystemExit("pilot app image differs from pinned digest")
     if current_mode != desired_mode:
         raise SystemExit("pilot app mode differs from requested mode")
-    if not ready or not traffic_ready or (expected_revision != "-" and created != expected_revision):
+    if not ready or not revision_settled or (expected_revision != "-" and created != expected_revision):
         raise SystemExit("requested pilot revision is not ready and serving all traffic")
 else:
-    print("current" if image_matches and current_mode == desired_mode and ready and traffic_ready else "update")
+    retry_failed_revision = observed_generation and bool(created) and ready_status == "False" and (
+        desired_mode == "gemini" or not latest_ready and not active_traffic
+    )
+    if not revision_settled and not retry_failed_revision:
+        raise SystemExit("existing pilot revision is unsettled; wait for its serving mode to be verified")
+    print("current" if image_matches and current_mode == desired_mode and ready else "update")
 ' "${mode}" "${1:-}"
 }
 
@@ -189,6 +208,10 @@ if not isinstance(items, list) or not any(
 revision=-
 if [[ "${action}" != current ]]; then
   revision="${app}-$(date -u +%Y%m%d%H%M%S)-$$"
+  revision_args=(--revision-name "${revision}" --wait --wait-timeout 600)
+  if [[ "${mode}" == gemini ]]; then
+    revision_args+=(--env WATCH_AUTH_PILOT_MODE=gemini --env-from-secret "${provider_secret}:${provider_key}")
+  fi
 fi
 if [[ "${action}" == create ]]; then
   ibmcloud ce app create \
@@ -202,11 +225,10 @@ if [[ "${action}" == create ]]; then
     --env "WATCH_AUTH_COS_ENDPOINT=${WATCH_AUTH_COS_ENDPOINT}" \
     --env "WATCH_AUTH_COS_SERVICE_INSTANCE_ID=${WATCH_AUTH_COS_SERVICE_INSTANCE_ID}" \
     --env "WATCH_AUTH_TRUSTED_PROFILE_ID=${WATCH_AUTH_TRUSTED_PROFILE_ID}" \
-    --env-from-secret "${secret}" "${mode_args[@]}" \
-    --revision-name "${revision}" --wait --wait-timeout 600
+    --env-from-secret "${secret}" "${revision_args[@]}"
 elif [[ "${action}" == update ]]; then
   ibmcloud ce app update --name "${app}" --image "${WATCH_AUTH_PILOT_IMAGE_DIGEST}" \
-    "${mode_args[@]}" --revision-name "${revision}" --wait --wait-timeout 600
+    "${revision_args[@]}"
 fi
 
 ibmcloud ce app get --name "${app}" --output json | read_pilot_app "${revision}"

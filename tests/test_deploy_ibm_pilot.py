@@ -67,22 +67,38 @@ case "$*" in
     if [[ "$*" == *"--output url"* ]]; then printf 'https://pilot.example\\n';
     else
       revision=$(cat "$REVISION_STATE")
+      ready_status=True
+      ready_revision=${DRIFT_READY_REVISION:-$revision}
+      traffic_revision=${DRIFT_TRAFFIC:-$revision}
+      if [[ -f "$UNREADY_STATE" ]]; then
+        ready_status=Unknown
+        if [[ -n "${SIMULATE_FAILED_REVISION:-}" ]]; then
+          ready_status=False
+          ready_revision=watch-auth-pilot-earlier
+          traffic_revision=$ready_revision
+        fi
+      fi
       extra_env=''
       extra_secret=''
       if [[ -f "$MODE_STATE" ]]; then
         extra_env=',{"name":"WATCH_AUTH_PILOT_MODE","value":"gemini"}'
       fi
       if [[ -f "$PROVIDER_STATE" ]]; then
-        extra_secret=',{"secretRef":{"name":"watch-auth-pilot-gemini"}}'
+        if [[ -n "${DRIFT_FULL_PROVIDER_SECRET:-}" ]]; then
+          extra_secret=',{"secretRef":{"name":"watch-auth-pilot-gemini"}}'
+        else
+          extra_env+=',{"name":"WATCH_AUTH_OPENROUTER_PILOT_KEY","valueFrom":{"secretKeyRef":{"name":"watch-auth-pilot-gemini","key":"WATCH_AUTH_OPENROUTER_PILOT_KEY"}}}'
+        fi
       fi
       cat <<JSON
 {
-  "metadata": {"namespace": "test"},
+  "metadata": {"namespace": "test", "generation": 2},
   "status": {
-    "conditions": [{"type": "Ready", "status": "$(if [[ -f "$UNREADY_STATE" ]]; then printf Unknown; else printf True; fi)"}],
+    "conditions": [{"type": "Ready", "status": "$ready_status"}],
     "latestCreatedRevisionName": "$revision",
-    "latestReadyRevisionName": "${DRIFT_READY_REVISION:-$revision}",
-    "traffic": [{"revisionName": "${DRIFT_TRAFFIC:-$revision}", "percent": 100}]
+    "latestReadyRevisionName": "$ready_revision",
+    "observedGeneration": ${DRIFT_OBSERVED_GENERATION:-2},
+    "traffic": [{"revisionName": "$traffic_revision", "percent": 100}]
   },
   "spec": {"template": {
     "metadata": {"annotations": {
@@ -121,7 +137,7 @@ JSON
       case "$1" in
         --revision-name) revision=$2; shift ;;
         WATCH_AUTH_PILOT_MODE=gemini) touch "$MODE_STATE" ;;
-        watch-auth-pilot-gemini) touch "$PROVIDER_STATE" ;;
+        watch-auth-pilot-gemini:WATCH_AUTH_OPENROUTER_PILOT_KEY) touch "$PROVIDER_STATE" ;;
       esac
       shift
     done
@@ -196,6 +212,7 @@ def test_deploy_creates_protected_bounded_app_and_reuses_it(
     assert recovered.returncode == 0, recovered.stderr
     calls = (tmp_path / "calls").read_text()
     assert calls.count("ce app update") == 1
+    assert "WATCH_AUTH_PILOT_MODE=" not in calls
     assert "--image " + env["WATCH_AUTH_PILOT_IMAGE_DIGEST"] in calls
     assert not (tmp_path / "unready").exists()
 
@@ -252,7 +269,7 @@ def test_deploy_activates_gemini_on_existing_pinned_image(
     updates = [call for call in calls if call.startswith("ce app update ")]
     assert len(updates) == 1
     assert "--env WATCH_AUTH_PILOT_MODE=gemini" in updates[0]
-    assert "--env-from-secret watch-auth-pilot-gemini" in updates[0]
+    assert "--env-from-secret watch-auth-pilot-gemini:WATCH_AUTH_OPENROUTER_PILOT_KEY" in updates[0]
     assert "--image " + gemini_env["WATCH_AUTH_PILOT_IMAGE_DIGEST"] in updates[0]
     assert "fixture-openrouter-key" not in activated.stdout + activated.stderr + "\n".join(calls)
 
@@ -260,6 +277,14 @@ def test_deploy_activates_gemini_on_existing_pinned_image(
         ["bash", str(script)], env=gemini_env, capture_output=True, text=True, timeout=10,
     )
     assert repeated.returncode == 0, repeated.stderr
+    assert (tmp_path / "calls").read_text().count("ce app update") == 1
+
+    full_secret = subprocess.run(
+        ["bash", str(script)], env={**gemini_env, "DRIFT_FULL_PROVIDER_SECRET": "1"},
+        capture_output=True, text=True, timeout=10,
+    )
+    assert full_secret.returncode != 0
+    assert "app readback differs" in full_secret.stderr
     assert (tmp_path / "calls").read_text().count("ce app update") == 1
 
     rollback = subprocess.run(
@@ -296,12 +321,19 @@ def test_invalid_provider_secret_fails_before_writes(
     assert "fixture-openrouter-key" not in result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("drift", ["DRIFT_TRAFFIC", "DRIFT_READY_REVISION"])
+@pytest.mark.parametrize(
+    ("drift", "value"),
+    [
+        ("DRIFT_TRAFFIC", "watch-auth-pilot-older"),
+        ("DRIFT_READY_REVISION", "watch-auth-pilot-older"),
+        ("DRIFT_OBSERVED_GENERATION", "1"),
+    ],
+)
 def test_gemini_requires_the_created_revision_to_serve(
-    tmp_path: Path, deployment_env: dict[str, str], drift: str,
+    tmp_path: Path, deployment_env: dict[str, str], drift: str, value: str,
 ) -> None:
     script = Path(__file__).resolve().parents[1] / "scripts/deploy_ibm_pilot.sh"
-    env = {**deployment_env, "WATCH_AUTH_PILOT_MODE": "gemini", drift: "watch-auth-pilot-older"}
+    env = {**deployment_env, "WATCH_AUTH_PILOT_MODE": "gemini", drift: value}
     result = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=10)
     assert result.returncode != 0
     assert "requested pilot revision is not ready and serving all traffic" in result.stderr
@@ -309,6 +341,16 @@ def test_gemini_requires_the_created_revision_to_serve(
     assert sum(call.startswith("ce app create ") for call in calls) == 1
     assert not any(call.endswith("--output url") for call in calls)
     assert "fixture-openrouter-key" not in result.stdout + result.stderr + "\n".join(calls)
+
+    (tmp_path / "mode").unlink()
+    (tmp_path / "provider").unlink()
+    legacy_env = {**deployment_env, drift: value}
+    legacy = subprocess.run(
+        ["bash", str(script)], env=legacy_env, capture_output=True, text=True, timeout=10,
+    )
+    assert legacy.returncode != 0
+    assert "existing pilot revision is unsettled" in legacy.stderr
+    assert "ce app update" not in (tmp_path / "calls").read_text()
 
 
 def test_gemini_creates_and_verifies_the_first_revision(
@@ -322,8 +364,25 @@ def test_gemini_creates_and_verifies_the_first_revision(
     calls = (tmp_path / "calls").read_text().splitlines()
     create = next(call for call in calls if call.startswith("ce app create "))
     assert "--env-from-secret watch-auth-pilot-basic" in create
-    assert "--env-from-secret watch-auth-pilot-gemini" in create
+    assert "--env-from-secret watch-auth-pilot-gemini:WATCH_AUTH_OPENROUTER_PILOT_KEY" in create
     assert "--env WATCH_AUTH_PILOT_MODE=gemini" in create
     assert "--min-scale 0 --max-scale 1 --concurrency 1" in create
     assert calls[-1].endswith("--output url")
     assert "fixture-openrouter-key" not in result.stdout + result.stderr + "\n".join(calls)
+
+
+def test_gemini_can_recover_a_reconciled_failed_revision(
+    tmp_path: Path, deployment_env: dict[str, str],
+) -> None:
+    script = Path(__file__).resolve().parents[1] / "scripts/deploy_ibm_pilot.sh"
+    env = {**deployment_env, "WATCH_AUTH_PILOT_MODE": "gemini", "SIMULATE_FAILED_REVISION": "1"}
+    first = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=10)
+    assert first.returncode == 0, first.stderr
+
+    (tmp_path / "unready").touch()
+    recovered = subprocess.run(
+        ["bash", str(script)], env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert recovered.returncode == 0, recovered.stderr
+    assert recovered.stdout.strip() == "https://pilot.example"
+    assert (tmp_path / "calls").read_text().count("ce app update") == 1
