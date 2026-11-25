@@ -6,6 +6,7 @@ import base64
 import hashlib
 import io
 import json
+import re
 from datetime import date
 from pathlib import Path
 from threading import Lock
@@ -21,7 +22,7 @@ from reference_intelligence.compare import assess_reference
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
-VERSION = "flash-photo-report-v3"
+VERSION = "flash-photo-report-v4"
 CONCLUSIONS = {
     "probable_fake": "Divergências que justificam investigar falsificação",
     "visually_compatible": "Compatível nos detalhes examinados · autenticidade inconclusiva",
@@ -48,6 +49,10 @@ _VALUE_ALIASES = {
     "date_magnifier": {"cyclops": "magnified", "absent": "no magnifier"},
 }
 _IDENTITY_ALIASES = {"patekphilippe": "patek", "santosdecartier": "santos"}
+_REFERENCE_CODE = re.compile(r"(?=.*[0-9])[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*")
+_UNRESOLVED_IDENTITY = {
+    "", "desconhecida", "desconhecido", "na", "nãoidentificada", "nãoidentificado", "none", "null", "unknown",
+}
 _PHOTO_FOR_FIELD = {
     "crown_shape": "Fotografe a coroa de perfil e em foco, com luz lateral, para distinguir seu contorno e suas faces.",
     "date_magnifier": "Fotografe a janela de data perpendicular ao vidro, em foco e sem reflexo, para ver se há lente sobre ela.",
@@ -157,12 +162,17 @@ class FlashReport:
             or (linkage == "single_photo") != (len(indices) == 1)):
             raise ValueError("resultado de análise inválido")
         parsed_candidates: list[dict[str, str | None]] = []
+        outside_catalog = False
         for item in candidates:
             if not isinstance(item, dict) or set(item) != {"brand", "family", "reference", "reference_id"}:
                 raise ValueError("referência candidata inválida")
             candidate = {key: None if value is None else _text(value, 100)
                          for key, value in item.items()}
             identity = tuple(_identity(candidate[key]) for key in ("brand", "family", "reference"))
+            if (len(candidates) == 1 and candidate["reference_id"] is None
+                and _REFERENCE_CODE.fullmatch(candidate["reference"] or "")
+                and _UNRESOLVED_IDENTITY.isdisjoint(identity[:2])):
+                outside_catalog = all(reference != identity[2] for _, _, reference in self.reference_identity.values())
             if self.reference_identity.get(candidate["reference_id"] or "") != identity:
                 candidate["reference_id"] = None
             parsed_candidates.append(candidate)
@@ -222,7 +232,7 @@ class FlashReport:
                 reason = "unlinked_photos"
                 next_verification = "Fotografe um relógio por vez, com a frente e o verso na mesma sequência de captura."
             elif reference_id is None:
-                reason = "reference_unresolved"
+                reason = "catalog_gap" if outside_catalog else "reference_unresolved"
             elif len(structural_fields) < 2:
                 reason = "catalog_gap"
                 if remaining:
@@ -232,8 +242,13 @@ class FlashReport:
                 next_verification = _PHOTO_FOR_FIELD[remaining[0]]
             else:
                 reason = "compatible_or_insufficient"
-        limits = ["As observações nas fotos são do Gemini. A comparação usa a ficha da referência candidata.",
+        reason_text = _LIMIT_REASONS.get(reason or "")
+        if reason == "catalog_gap" and outside_catalog:
+            reason_text = "A referência sugerida pelo Gemini ainda não tem ficha técnica no catálogo deste piloto."
+        limits = ["As observações nas fotos são do Gemini.",
                   "Divergências também podem indicar outra variante ou peças trocadas. A cobertura de autenticidade está em avaliação. A análise visual não verifica procedência ou componentes internos."]
+        if checks:
+            limits[0] += " A comparação usa a ficha da referência candidata."
         if linkage == "mixed":
             limits.append("Há indícios de que o lote contém mais de um relógio.")
         elif linkage == "uncertain":
@@ -243,7 +258,7 @@ class FlashReport:
             "candidates": parsed_candidates, "linkage": linkage, "observations": parsed,
             "examined_photos": sorted({item["photo"] for item in parsed}),
             "technical_checks": checks, "limits": limits,
-            "decision_reason": reason, "decision_reason_text": _LIMIT_REASONS.get(reason or ""),
+            "decision_reason": reason, "decision_reason_text": reason_text,
             "model_hypothesis": model_hypothesis, "next_verification": next_verification,
             "quality_score_0_1000": None,
         }
