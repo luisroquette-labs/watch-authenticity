@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -55,11 +56,17 @@ case "$*" in
   "ce secret get --name watch-auth-pilot-gemini"*)
     if [[ -n "${MISSING_PROVIDER:-}" ]]; then exit 1; fi
     if [[ -n "${PROVIDER_SECRET:-}" ]]; then printf '%s' "$PROVIDER_SECRET"
-    else printf '%s' '{"format":"generic","data":{"WATCH_AUTH_OPENROUTER_PILOT_KEY":"fixture-openrouter-key-secret-123456"}}'; fi
+    else
+      token=fixture-openrouter-key-secret-123456
+      if [[ "$*" != *"--decode"* ]]; then token=$(printf '%s' "$token" | base64 | tr -d '\\n'); fi
+      printf '{"format":"generic","data":{"WATCH_AUTH_OPENROUTER_PILOT_KEY":"%s"}}' "$token"
+    fi
     ;;
   "ce secret get"*)
     [[ -f "$SECRET_STATE" ]] || exit 1
-    printf '{"format":"generic","data":{"WATCH_AUTH_PILOT_PASSWORD":"%s"}}' "$(cat "$SECRET_STATE")"
+    data=$(cat "$SECRET_STATE")
+    if [[ "$*" != *"--decode"* ]]; then data=$(printf '%s' "$data" | base64 | tr -d '\\n'); fi
+    printf '{"format":"generic","data":{"WATCH_AUTH_PILOT_PASSWORD":"%s"}}' "$data"
     ;;
   "ce secret create"*) cp "$WATCH_AUTH_PILOT_PASSWORD_FILE" "$SECRET_STATE" ;;
   "ce app get"*)
@@ -152,6 +159,44 @@ JSON
 esac
 """)
     fake.chmod(0o755)
+    python = tmp_path / "python3"
+    python.write_text(f"""#!{sys.executable}
+import os
+import runpy
+import sys
+from unittest.mock import patch
+if sys.argv[1:] != ['-m', 'pilot.flash_research', '--check-code-engine-secret']:
+    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+import requests
+class Response:
+    def __init__(self, payload):
+        self.payload = payload
+    def raise_for_status(self):
+        pass
+    def json(self):
+        return self.payload
+def get(session, url, *, timeout, headers=None):
+    assert session.trust_env is False and session.max_redirects == 0
+    assert timeout == 10
+    if url == 'https://openrouter.ai/api/v1/auth/key':
+        assert headers['Authorization'] == 'Bearer fixture-openrouter-key-secret-123456'
+        if os.environ.get('PROVIDER_PREFLIGHT_REJECT') == '401':
+            raise requests.HTTPError('unavailable')
+        return Response({{'data': {{
+            'limit_remaining': 20,
+            'usage': 5.0 if os.environ.get('PROVIDER_PREFLIGHT_REJECT') == 'budget' else 1.0,
+        }}}})
+    assert url == 'https://openrouter.ai/api/v1/models' and headers is None
+    return Response({{'data': [{{
+        'id': 'google/gemini-3.8-flash', 'context_length': 1_048_576,
+        'pricing': dict.fromkeys(('prompt', 'image', 'completion', 'internal_reasoning'), 0.0000005),
+    }}]}})
+sys.argv = ['pilot.flash_research', '--check-code-engine-secret']
+sys.path.insert(0, os.getcwd())
+with patch.object(requests.Session, 'get', get):
+    runpy.run_module('pilot.flash_research', run_name='__main__')
+""")
+    python.chmod(0o755)
     password = tmp_path / "password"
     password.write_text("p" * 32)
     password.chmod(0o600)
@@ -316,9 +361,34 @@ def test_invalid_provider_secret_fails_before_writes(
     calls = (tmp_path / "calls").read_text().splitlines()
     assert calls == [
         "ce project select --name watch-authenticity",
-        "ce secret get --name watch-auth-pilot-gemini --output json",
+        "ce secret get --name watch-auth-pilot-gemini --output json --decode",
     ]
     assert "fixture-openrouter-key" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("reject", ["401", "budget"])
+def test_rejected_gemini_credential_leaves_the_serving_revision_alone(
+    tmp_path: Path, deployment_env: dict[str, str], reject: str,
+) -> None:
+    script = Path(__file__).resolve().parents[1] / "scripts/deploy_ibm_pilot.sh"
+    legacy = subprocess.run(
+        ["bash", str(script)], env=deployment_env, capture_output=True, text=True, timeout=10,
+    )
+    assert legacy.returncode == 0, legacy.stderr
+    before = (tmp_path / "revision").read_bytes()
+    calls = tmp_path / "calls"
+    calls.write_text("")
+    result = subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True, timeout=10,
+        env={**deployment_env, "WATCH_AUTH_PILOT_MODE": "gemini", "PROVIDER_PREFLIGHT_REJECT": reject},
+    )
+    assert result.returncode != 0
+    assert "provider or spending envelope unavailable" in result.stderr
+    assert "fixture-openrouter-key" not in result.stdout + result.stderr + calls.read_text()
+    assert (tmp_path / "revision").read_bytes() == before
+    assert not (tmp_path / "mode").exists()
+    assert all(call.startswith(("ce project select ", "ce secret get "))
+               for call in calls.read_text().splitlines())
 
 
 @pytest.mark.parametrize(

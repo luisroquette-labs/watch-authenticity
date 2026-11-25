@@ -33,22 +33,10 @@ secret=watch-auth-pilot-basic
 provider_secret=watch-auth-pilot-gemini
 provider_key=WATCH_AUTH_OPENROUTER_PILOT_KEY
 if [[ "${mode}" == gemini ]]; then
-  ibmcloud ce secret get --name "${provider_secret}" --output json | python3 -c '
-import json, sys
-try:
-    secret = json.load(sys.stdin)
-    data = secret.get("data", {})
-    key = data.get("WATCH_AUTH_OPENROUTER_PILOT_KEY")
-    valid = (
-        secret.get("format") == "generic" and set(data) == {"WATCH_AUTH_OPENROUTER_PILOT_KEY"}
-        and isinstance(key, str) and key and key.isascii() and key.isprintable()
-        and not any(char.isspace() for char in key)
-    )
-except (ValueError, AttributeError, TypeError):
-    valid = False
-if not valid:
-    raise SystemExit("Gemini pilot requires the dedicated Code Engine provider secret")
-'
+  ibmcloud ce secret get --name "${provider_secret}" --output json --decode | (
+    cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+    python3 -m pilot.flash_research --check-code-engine-secret
+  )
 fi
 
 read_pilot_app() {
@@ -164,7 +152,7 @@ if current=$(ibmcloud ce app get --name "${app}" --output json 2>/dev/null); the
   action=$(printf '%s' "${current}" | read_pilot_app)
 fi
 if ibmcloud ce secret get --name "${secret}" --output json >/dev/null 2>&1; then
-  ibmcloud ce secret get --name "${secret}" --output json | python3 -c '
+  ibmcloud ce secret get --name "${secret}" --output json --decode | python3 -c '
 import hmac, json, sys
 secret = json.load(sys.stdin)
 with open(sys.argv[1], "rb") as source:
