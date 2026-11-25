@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 from threading import Thread
@@ -168,10 +169,23 @@ def test_scoring_preserves_denominator_and_evidence_tier() -> None:
               ("c", "fake", "independent"), ("d", "original", "declared"),
               ("e", "fake", "independent")]
     cases = [{"specimen_id": name, "label": label, "evidence": evidence,
-              "label_source": "test fixture", "physical_identity_confirmed": evidence == "independent"}
+              "label_source": "test fixture", "reference": "126610LN",
+              "photos": [{"sha256": hashlib.sha256(name.encode()).hexdigest(), "angle": "dial"}]}
              for name, label, evidence in labels]
     reports = {"a": "probable_original", "b": "visually_compatible", "c": "probable_fake", "d": "probable_original"}
-    report = score(cases, reports)
+    confirmations = json.dumps({
+        case["specimen_id"]: {
+            "reference": case["reference"], "label": case["label"],
+            "photo_sha256s": [photo["sha256"] for photo in case["photos"]],
+            "verification_method": "physical_examination", "evidence_sha256": "a" * 64,
+        }
+        for case in cases if case["evidence"] == "independent"
+    }).encode()
+    trusted = {
+        "confirmation_bytes": confirmations,
+        "confirmation_sha256": hashlib.sha256(confirmations).hexdigest(),
+    }
+    report = score(cases, reports, **trusted)
     independent = report["independent"]
     assert (independent["correct"], independent["incorrect"], independent["inconclusive"],
             independent["unavailable"], independent["fake_called_original"],
@@ -179,4 +193,4 @@ def test_scoring_preserves_denominator_and_evidence_tier() -> None:
     assert report["declared"]["agrees_with_claim"] == 1
     assert independent["compatible_but_inconclusive"] == 1
     with pytest.raises(ValueError, match="unique specimen"):
-        score([*cases, cases[0]], reports)
+        score([*cases, cases[0]], reports, **trusted)
