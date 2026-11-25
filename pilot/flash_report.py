@@ -33,7 +33,7 @@ Responda JSON com candidates [{brand,family,reference,reference_id}], linkage (s
 Para transcrever um código legível no movimento visível, use field movement_marking, angle caseback, location rotor, bridge, plate ou module, visibility visible e o código literal em value. Preserve os caracteres que vê e omita números de série. Uma inscrição copiada pode parecer correta. Identificar o calibre depende da arquitetura do mecanismo; autenticidade e precisão exigem evidência própria."""
 _MOVEMENT_MARKING = "movement_marking"
 _MOVEMENT_REGIONS = {"rotor": "rotor", "bridge": "ponte", "plate": "platina", "module": "módulo"}
-_MOVEMENT_CODE = re.compile(r"(?=.{2,16}\Z)(?!.*\d{6})[A-Za-z]{0,6} ?\d[A-Za-z0-9]*(?:[-.‐‑–][A-Za-z0-9]+)*(?: [A-Za-z]{1,4}){0,2}")
+_MOVEMENT_CODE = re.compile(r"(?=.{2,16}\Z)[A-Za-z]{0,6} ?\d[A-Za-z0-9]*(?:[-./‐‑–][A-Za-z0-9]+)*(?: [A-Za-z]{1,4}){0,2}")
 _STRUCTURAL_FIELDS = frozenset({
     "caseback_type", "clasp", "clasp_type", "crown_shape", "date_magnifier", "date_position",
     "display_type", "hand_shape", "helium_escape_valve_shape",
@@ -87,6 +87,19 @@ def _comparison_value(field: str, value: str) -> str:
 def _identity(value: str | None) -> str:
     token = "".join(char for char in (value or "").casefold() if char.isalnum())
     return _IDENTITY_ALIASES.get(token, token)
+
+
+def _read_movement_marking(item: dict[str, Any], indices: set[int]) -> dict[str, Any] | None:
+    photo, location, value = item.get("photo"), item.get("location"), item.get("value")
+    if (type(photo) is not int or photo not in indices or item.get("angle") != "caseback"
+        or item.get("visibility") != "visible" or not isinstance(location, str) or not isinstance(value, str)):
+        return None
+    region = _MOVEMENT_REGIONS.get(location.strip().casefold())
+    code = value.strip()
+    if not region or not _MOVEMENT_CODE.fullmatch(code) or sum(char.isdigit() for char in code) > 5:
+        return None
+    return {"photo": photo, "angle": "caseback", "location": region, "visibility": "visible",
+            "field": _MOVEMENT_MARKING, "value": code, "detail": f"Inscrição legível no movimento · {code}"}
 
 
 class FlashReport:
@@ -217,7 +230,15 @@ class FlashReport:
         accepted_fields = self.visual_fields - nonvisual_fields
         parsed: list[dict[str, Any]] = []
         for item in observations:
-            if not isinstance(item, dict) or set(item) != {
+            if not isinstance(item, dict):
+                raise ValueError("evidência inválida")
+            reported_field = item.get("field")
+            if isinstance(reported_field, str) and reported_field.strip().casefold() == _MOVEMENT_MARKING:
+                marking = _read_movement_marking(item, indices)
+                if marking is not None:
+                    parsed.append(marking)
+                continue
+            if set(item) != {
                 "photo", "angle", "location", "detail", "visibility", "field", "value"
             }:
                 raise ValueError("evidência inválida")
@@ -233,15 +254,8 @@ class FlashReport:
                 "field": None if item["field"] is None else _text(item["field"], 80),
                 "value": None if item["value"] is None else _text(item["value"], 120),
             }
-            field = (observation["field"] or "").casefold()
-            if field == _MOVEMENT_MARKING:
-                value = observation["value"]
-                region = _MOVEMENT_REGIONS.get(observation["location"].casefold())
-                if (observation["angle"] != "caseback" or observation["visibility"] != "visible"
-                    or not region or not value or not _MOVEMENT_CODE.fullmatch(value)):
-                    continue
-                observation.update(field=field, location=region, detail=f"Inscrição legível no movimento · {value}")
-            elif observation["field"] is not None and field not in accepted_fields:
+            field = observation["field"]
+            if field is not None and field.casefold() not in accepted_fields:
                 continue
             parsed.append(observation)
         checks = _technical_checks(reference_id, claims, parsed)
