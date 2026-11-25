@@ -22,7 +22,7 @@ from reference_intelligence.compare import assess_reference
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
-VERSION = "flash-photo-report-v7"
+VERSION = "flash-photo-report-v8"
 CONCLUSIONS = {
     "probable_fake": "Divergências que justificam investigar falsificação",
     "visually_compatible": "Compatível nos detalhes examinados · autenticidade inconclusiva",
@@ -312,7 +312,22 @@ class FlashReport:
                 next_verification = "Envie uma foto nítida do relógio inteiro, com o mostrador de frente e sem reflexo."
             elif linkage in ("mixed", "uncertain"):
                 reason = "unlinked_photos"
-                next_verification = "Fotografe um relógio por vez, com a frente e o verso na mesma sequência de captura."
+                if linkage == "mixed":
+                    next_verification = (
+                        "Separe as fotos em lotes por peça e envie as vistas de um relógio por vez. "
+                        "Se houver vários relógios na mesma foto, fotografe cada peça separadamente."
+                    )
+                elif len(watch_indices) == 1:
+                    next_verification = (
+                        "Envie uma segunda foto em ângulo oblíquo do mesmo relógio, com uma parte que já aparece na primeira. "
+                        "Se houver uma marca na caixa ou no elo, mantenha-a em foco."
+                    )
+                else:
+                    next_verification = (
+                        "Envie uma foto em ângulo oblíquo da região entre as vistas, como a lateral com a coroa "
+                        "e a borda da caixa. Mantenha em foco a mesma marca que já aparece em uma das fotos anteriores, "
+                        "se houver, como um risco na caixa ou no elo."
+                    )
             elif reference_id is None:
                 reason = "catalog_gap" if outside_catalog else "reference_unresolved"
             elif len(structural_fields) < 2:
