@@ -38,6 +38,69 @@ def _answer() -> dict[str, Any]:
     }
 
 
+def test_watchless_view_does_not_block_comparing_the_remaining_watch() -> None:
+    answer = _answer()
+    answer.update(linkage="single_photo", non_watch_photos=[3])
+    answer["candidates"][0]["photo"] = 1
+    report = FlashReport("fixture").build_report(answer, {1, 3})
+    assert report["linkage"] == "single_photo"
+    assert report["examined_photos"] == [1]
+    assert report["conclusion"] == "inconclusive"
+    candidates = cast(list[dict[str, Any]], report["candidates"])
+    assert candidates[0]["reference_id"] == "rolex-submariner-126610ln"
+    checks = cast(list[dict[str, Any]], report["technical_checks"])
+    assert [row["photo"] for row in checks] == [1]
+    assert "Sem relógio ou componente visível nas fotos de número 3." in cast(list[str], report["limits"])
+
+
+@pytest.mark.parametrize("candidate_provenance", [{"photo": 3}, {}])
+def test_watchless_view_cannot_supply_reference_for_conflicting_checks(candidate_provenance: dict[str, int]) -> None:
+    answer = _answer()
+    answer.update(
+        linkage="single_photo", non_watch_photos=[3], hypothesis="probable_fake",
+        candidates=[{"brand": "Cartier", "family": "Santos", "reference": "WSSA0061",
+                     "reference_id": "cartier-santos-wssa0061", **candidate_provenance}],
+        observations=[
+            {"photo": 1, "angle": "dial", "location": "ponteiros", "detail": "Ponteiros em bastão",
+             "visibility": "visible", "field": "hand_shape", "value": "baton"},
+            {"photo": 1, "angle": "crown", "location": "coroa", "detail": "Coroa redonda",
+             "visibility": "visible", "field": "crown_shape", "value": "round"},
+        ],
+    )
+    report = FlashReport("fixture").build_report(answer, {1, 3})
+    assert report["examined_photos"] == [1]
+    assert report["conclusion"] == "inconclusive"
+    assert report["candidates"] == report["technical_checks"] == []
+
+
+def test_watchless_batch_discards_candidates_and_asks_for_a_watch_photo() -> None:
+    answer = _answer()
+    answer.update(non_watch_photos=[1, 3], hypothesis="probable_fake")
+    report = FlashReport("fixture").build_report(answer, {1, 3})
+    assert report["decision_reason"] == "no_watch_visible"
+    assert report["conclusion"] == report["model_hypothesis"] == "inconclusive"
+    assert report["candidates"] == report["examined_photos"] == report["technical_checks"] == []
+    assert "foto nítida do relógio inteiro" in str(report["next_verification"])
+
+
+def test_one_photo_with_multiple_watches_is_still_inconclusive() -> None:
+    answer = _answer()
+    answer.update(linkage="mixed", non_watch_photos=[])
+    answer["observations"] = answer["observations"][:1]
+    report = FlashReport("fixture").build_report(answer, {1})
+    assert report["linkage"] == "mixed"
+    assert report["conclusion"] == "inconclusive"
+    assert report["decision_reason"] == "unlinked_photos"
+    assert report["technical_checks"] == []
+
+
+@pytest.mark.parametrize("non_watch", [None, "3", [2], [True], [1, 1]])
+def test_watchless_photo_indices_must_be_distinct_prepared_inputs(non_watch: object) -> None:
+    answer = {**_answer(), "non_watch_photos": non_watch}
+    with pytest.raises(ValueError, match="foto sem relógio"):
+        FlashReport("fixture").build_report(answer, {1, 3})
+
+
 @pytest.mark.parametrize(("family", "reference", "reference_id", "expected_id", "reason"), [
     ("Collection", "F-91W-1", None, "casio-f91w-1", "catalog_gap"),
     ("F-91W", "F-91W-1", "casio-f91w-1", "casio-f91w-1", "catalog_gap"),
