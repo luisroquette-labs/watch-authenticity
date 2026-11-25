@@ -21,7 +21,7 @@ from reference_intelligence.compare import assess_reference
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
-VERSION = "flash-photo-report-v2"
+VERSION = "flash-photo-report-v3"
 CONCLUSIONS = {
     "probable_fake": "Divergências que justificam investigar falsificação",
     "visually_compatible": "Compatível nos detalhes examinados · autenticidade inconclusiva",
@@ -34,7 +34,7 @@ _STRUCTURAL_FIELDS = frozenset({
     "display_type", "hand_shape", "helium_escape_valve_shape",
 })
 _COMPARABLE_VALUES = {
-    "bezel_color": {"black", "blue", "green", "red", "white"},
+    "bezel_color": {"black", "blue", "green", "red", "red and blue", "white"},
     "dial_color": {"black", "blue", "green", "red", "white", "silver"},
     "crown_shape": {"7 sided", "round"},
     "date_magnifier": {"magnified", "no magnifier"},
@@ -43,6 +43,7 @@ _COMPARABLE_VALUES = {
     "hand_shape": {"sword shaped", "dauphine", "baton"},
 }
 _VALUE_ALIASES = {
+    "bezel_color": {"blue and red": "red and blue", "red/blue": "red and blue", "blue/red": "red and blue"},
     "crown_shape": {"seven sided": "7 sided"},
     "date_magnifier": {"cyclops": "magnified", "absent": "no magnifier"},
 }
@@ -97,13 +98,17 @@ class FlashReport:
             for row in catalog["references"]
             if (config / "references" / f"{row['reference_id']}.json").is_file()
         }
+        official_claims = [
+            claim for claims in self.claims.values() for claim in claims
+            if claim.source_class.authoritative
+        ]
+        self.visual_fields = {claim.field for claim in official_claims if claim.applicable_angles}
+        self.nonvisual_fields = {claim.field for claim in official_claims} - self.visual_fields
 
     def prepare(self, photos: list[tuple[str, str, bytes]]) -> tuple[list[dict[str, object]], set[int]]:
-        fields = sorted({claim.field for claims in self.claims.values() for claim in claims
-                         if claim.applicable_angles and claim.source_class.authoritative})
         content: list[dict[str, object]] = [{"type": "text", "text": (
             f"{PROMPT}\nReferências catalogadas (não presuma cobertura): {', '.join(self.claims)}."
-            f"\nCampos comparáveis: {', '.join(fields)}."
+            f"\nCampos comparáveis: {', '.join(sorted(self.visual_fields))}."
         )}]
         indices: set[int] = set()
         seen: set[bytes] = set()
@@ -161,6 +166,13 @@ class FlashReport:
             if self.reference_identity.get(candidate["reference_id"] or "") != identity:
                 candidate["reference_id"] = None
             parsed_candidates.append(candidate)
+        reference_id = parsed_candidates[0]["reference_id"] if len(parsed_candidates) == 1 else None
+        claims = self.claims.get(reference_id or "", ())
+        reference_fields = {claim.field for claim in claims if claim.source_class.authoritative}
+        visual_reference_fields = {
+            claim.field for claim in claims if claim.source_class.authoritative and claim.applicable_angles
+        }
+        nonvisual_fields = self.nonvisual_fields | (reference_fields - visual_reference_fields)
         parsed: list[dict[str, Any]] = []
         for item in observations:
             if not isinstance(item, dict) or set(item) != {
@@ -172,15 +184,17 @@ class FlashReport:
                 raise ValueError("evidência aponta para foto não enviada")
             if item["visibility"] not in ("visible", "ambiguous"):
                 raise ValueError("visibilidade inválida")
-            parsed.append({
+            observation = {
                 "photo": item["photo"], "angle": Angle(item["angle"]).value,
                 "location": _text(item["location"], 100), "detail": _text(item["detail"], 360),
                 "visibility": item["visibility"],
                 "field": None if item["field"] is None else _text(item["field"], 80),
                 "value": None if item["value"] is None else _text(item["value"], 120),
-            })
-        reference_id = parsed_candidates[0]["reference_id"] if len(parsed_candidates) == 1 else None
-        claims = self.claims.get(reference_id or "", ())
+            }
+            field = observation["field"]
+            if field is not None and field.casefold() in nonvisual_fields:
+                continue
+            parsed.append(observation)
         checks = _technical_checks(reference_id, claims, parsed)
         divergent_fields = {check["field"] for check in checks if check["status"] == "conflicting"}
         matching_fields = {check["field"] for check in checks if check["status"] == "matched"}
