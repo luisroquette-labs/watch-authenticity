@@ -92,6 +92,18 @@ def test_one_photo_with_multiple_watches_is_still_inconclusive() -> None:
     assert report["conclusion"] == "inconclusive"
     assert report["decision_reason"] == "unlinked_photos"
     assert report["technical_checks"] == []
+    assert "fotografe cada peça separadamente" in str(report["next_verification"])
+
+
+def test_uncertain_single_watch_view_requests_an_overlapping_second_view() -> None:
+    answer = _answer()
+    answer.update(linkage="uncertain", non_watch_photos=[3])
+    answer["candidates"][0]["photo"] = 1
+    report = FlashReport("fixture").build_report(answer, {1, 3})
+    assert report["decision_reason"] == "unlinked_photos"
+    assert report["conclusion"] == "inconclusive"
+    assert report["examined_photos"] == [1]
+    assert "uma parte que já aparece na primeira" in str(report["next_verification"])
 
 
 @pytest.mark.parametrize("non_watch", [None, "3", [2], [True], [1, 1]])
@@ -288,6 +300,7 @@ def test_movement_marking_is_literal_photo_evidence(
 @pytest.mark.parametrize("scenario, status, conclusion", [
     ("compatible", 200, "visually_compatible"),
     ("mixed", 200, "inconclusive"),
+    ("uncertain", 200, "inconclusive"),
     ("color-only", 200, "inconclusive"),
     ("weak-compatibility", 200, "inconclusive"),
     ("calibre-unseen", 200, "inconclusive"),
@@ -302,8 +315,8 @@ def test_movement_marking_is_literal_photo_evidence(
 ])
 def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | None) -> None:
     answer = _answer()
-    if scenario == "mixed":
-        answer["linkage"] = "mixed"
+    if scenario in {"mixed", "uncertain"}:
+        answer["linkage"] = scenario
     elif scenario == "color-only":
         answer["hypothesis"] = "probable_fake"
         answer["observations"][0]["value"] = "blue"
@@ -361,7 +374,7 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
         assert data["examined_photos"] == ([3] if scenario == "calibre-unseen" else [1, 3])
         checks = cast(list[dict[str, Any]], data["technical_checks"])
         expected_photos = {
-            "compatible": [1, 3], "mixed": [], "color-only": [1, 3],
+            "compatible": [1, 3], "mixed": [], "uncertain": [], "color-only": [1, 3],
             "weak-compatibility": [1], "calibre-unseen": [3], "invalid-movement-marking": [1, 3],
             "wrong-reference-code": [], "wrong-reference-brand": [],
             "outside-catalog": [],
@@ -376,7 +389,7 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
             assert {check["status"] for check in checks} == {"matched"}
         assert data["model_hypothesis"] == answer["hypothesis"]
         expected_reason = {
-            "mixed": "unlinked_photos", "wrong-reference-code": "reference_unresolved",
+            "mixed": "unlinked_photos", "uncertain": "unlinked_photos", "wrong-reference-code": "reference_unresolved",
             "wrong-reference-brand": "reference_unresolved", "structural-divergence": None,
             "equivalent-spec-words": "compatible_or_insufficient", "cartier-crown-ambiguous": "detail_not_verified",
         }.get(scenario, "catalog_gap")
@@ -391,6 +404,11 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
             assert "autenticidade segue em aberto" in data["next_verification"]
         if scenario == "mixed":
             assert "um relógio por vez" in data["next_verification"]
+            assert "lotes" in data["next_verification"]
+        if scenario == "uncertain":
+            assert "ângulo oblíquo" in data["next_verification"]
+            assert "a mesma marca" in data["next_verification"]
+            assert "uma das fotos anteriores" in data["next_verification"]
 
 
 @pytest.mark.parametrize("scenario, reason", [
