@@ -47,6 +47,19 @@
       "head": null
     },
     {
+      "reference_id": "rolex-gmtmasterii-126710blro",
+      "brand": "rolex",
+      "family": "gmtmasterii",
+      "reference": "126710blro",
+      "aliases": [],
+      "identity_evidence_sha256": null,
+      "required_angles": ["dial", "cyclops", "rehaut", "crown", "clasp", "caseback"],
+      "gold_freeze_sha256": null,
+      "holdout_freeze_sha256": null,
+      "status": "pending",
+      "head": null
+    },
+    {
       "reference_id": "cartier-santos-wssa0061",
       "brand": "cartier",
       "family": "santos",

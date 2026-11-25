@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "reference_id": "rolex-gmtmasterii-126710blro",
+  "claims": [
+    {
+      "field": "dial_color",
+      "value": "black",
+      "source_class": "official_brand",
+      "source_url": "https://assets.rolex.com/api/brochure/en-us/gmt-master-ii/m126710blro-0001.pdf",
+      "citation": "GMT-Master II technical details > Dial > Details",
+      "observed_at": "2026-11-25",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "bezel_color",
+      "value": "red and blue",
+      "source_class": "official_brand",
+      "source_url": "https://assets.rolex.com/api/brochure/en-us/gmt-master-ii/m126710blro-0001.pdf",
+      "citation": "GMT-Master II technical details > Model Case > Bezel",
+      "observed_at": "2026-11-25",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "date_magnifier",
+      "value": "Cyclops",
+      "source_class": "official_brand",
+      "source_url": "https://assets.rolex.com/api/brochure/en-us/gmt-master-ii/m126710blro-0001.pdf",
+      "citation": "GMT-Master II technical details > Model Case > Crystal",
+      "observed_at": "2026-11-25",
+      "applicable_angles": [
+        "cyclops"
+      ]
+    },
+    {
+      "field": "diameter_mm",
+      "value": "40",
+      "source_class": "official_brand",
+      "source_url": "https://assets.rolex.com/api/brochure/en-us/gmt-master-ii/m126710blro-0001.pdf",
+      "citation": "GMT-Master II technical details > Model Case > Diameter",
+      "observed_at": "2026-11-25",
+      "applicable_angles": []
+    },
+    {
+      "field": "case_material",
+      "value": "Oystersteel",
+      "source_class": "official_brand",
+      "source_url": "https://assets.rolex.com/api/brochure/en-us/gmt-master-ii/m126710blro-0001.pdf",
+      "citation": "GMT-Master II technical details > Model Case > Material",
+      "observed_at": "2026-11-25",
+      "applicable_angles": []
+    },
+    {
+      "field": "calibre",
+      "value": "3285",
+      "source_class": "official_brand",
+      "source_url": "https://assets.rolex.com/api/brochure/en-us/gmt-master-ii/m126710blro-0001.pdf",
+      "citation": "GMT-Master II technical details > Movement > Calibre",
+      "observed_at": "2026-11-25",
+      "applicable_angles": []
+    },
+    {
+      "field": "water_resistance_m",
+      "value": "100",
+      "source_class": "official_brand",
+      "source_url": "https://assets.rolex.com/api/brochure/en-us/gmt-master-ii/m126710blro-0001.pdf",
+      "citation": "GMT-Master II technical details > Model Case > Water Resistance",
+      "observed_at": "2026-11-25",
+      "applicable_angles": []
+    }
+  ]
+}

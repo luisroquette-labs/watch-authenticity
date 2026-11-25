@@ -34,7 +34,7 @@ _STRUCTURAL_FIELDS = frozenset({
     "display_type", "hand_shape", "helium_escape_valve_shape",
 })
 _COMPARABLE_VALUES = {
-    "bezel_color": {"black", "blue", "green", "red", "white"},
+    "bezel_color": {"black", "blue", "green", "red", "red and blue", "white"},
     "dial_color": {"black", "blue", "green", "red", "white", "silver"},
     "crown_shape": {"7 sided", "round"},
     "date_magnifier": {"magnified", "no magnifier"},
@@ -43,6 +43,7 @@ _COMPARABLE_VALUES = {
     "hand_shape": {"sword shaped", "dauphine", "baton"},
 }
 _VALUE_ALIASES = {
+    "bezel_color": {"blue and red": "red and blue", "red/blue": "red and blue", "blue/red": "red and blue"},
     "crown_shape": {"seven sided": "7 sided"},
     "date_magnifier": {"cyclops": "magnified", "absent": "no magnifier"},
 }

@@ -69,6 +69,42 @@ class StubOpenRouter:
                           "message": {"content": json.dumps(self.answer)}}]})
 
 
+@pytest.mark.parametrize(("bezel", "hypothesis", "comparison", "conclusion"), [
+    ("blue and red", "probable_original", "matched", "visually_compatible"),
+    ("blue", "probable_fake", "conflicting", "inconclusive"),
+])
+def test_gmt_pepsi_compares_exterior_without_authenticating(
+    bezel: str, hypothesis: str, comparison: str, conclusion: str,
+) -> None:
+    reference_id = "rolex-gmtmasterii-126710blro"
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Rolex", "family": "GMT-Master II",
+                     "reference": "126710BLRO", "reference_id": reference_id}],
+        linkage="single_photo",
+        hypothesis=hypothesis,
+    )
+    answer["observations"][1]["photo"] = 1
+    answer["observations"].extend([
+        {"photo": 1, "angle": "dial", "location": "aro", "detail": bezel,
+         "visibility": "visible", "field": "bezel_color", "value": bezel},
+        {"photo": 1, "angle": "dial", "location": "caixa", "detail": "3285",
+         "visibility": "visible", "field": "calibre", "value": "3285"},
+    ])
+    provider = StubOpenRouter(answer)
+    report = FlashReport("fixture", request=provider)(
+        [("dial", "image/png", base64.b64decode(_photo("black")))],
+    )
+    assert len(provider.posts) == 1
+    assert reference_id in provider.posts[0]["messages"][0]["content"][0]["text"]
+    assert report["conclusion"] == conclusion
+    checks = cast(list[dict[str, Any]], report["technical_checks"])
+    assert {item["field"]: item["status"] for item in checks} == {
+        "dial_color": "matched", "date_magnifier": "matched", "bezel_color": comparison,
+    }
+    assert all(item["photo"] == 1 and "rolex.com" in item["url"] for item in checks)
+
+
 @pytest.mark.parametrize("scenario, status, conclusion", [
     ("compatible", 200, "visually_compatible"),
     ("mixed", 200, "inconclusive"),
