@@ -27,7 +27,9 @@
       "source_url": "https://www.watchesofswitzerland.com/en-int/products/cartier-santos-wssa0018-17310953",
       "citation": "Product Details > silvered opaline dial",
       "observed_at": "2026-11-22",
-      "applicable_angles": ["dial"]
+      "applicable_angles": [
+        "dial"
+      ]
     },
     {
       "field": "date_position",
@@ -36,7 +38,9 @@
       "source_url": "https://www.watchesofswitzerland.com/en-int/products/cartier-santos-wssa0018-17310953",
       "citation": "Product Details > date display at 6 o'clock",
       "observed_at": "2026-11-22",
-      "applicable_angles": ["dial"]
+      "applicable_angles": [
+        "dial"
+      ]
     },
     {
       "field": "crown_stone_color",
@@ -45,7 +49,9 @@
       "source_url": "https://www.watchesofswitzerland.com/en-int/products/cartier-santos-wssa0018-17310953",
       "citation": "Product Details > faceted blue spinel",
       "observed_at": "2026-11-22",
-      "applicable_angles": ["crown"]
+      "applicable_angles": [
+        "crown"
+      ]
     },
     {
       "field": "calibre",
@@ -54,6 +60,26 @@
       "source_url": "https://www.watchesofswitzerland.com/en-int/products/cartier-santos-wssa0018-17310953",
       "citation": "Product Details > caliber 1847 MC",
       "observed_at": "2026-11-22",
+      "applicable_angles": []
+    },
+    {
+      "field": "date_position",
+      "value": "6 o'clock",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0018.html",
+      "citation": "Cartier WSSA0018 · foto oficial de frente, janela de data às 6",
+      "observed_at": "2026-11-25",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "case_width_mm",
+      "value": "39.8",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/santos-de-cartier/santos-de-cartier-watch-CRWSSA0018.html",
+      "citation": "Cartier WSSA0018 · Product Description > Case width",
+      "observed_at": "2026-11-25",
       "applicable_angles": []
     }
   ]

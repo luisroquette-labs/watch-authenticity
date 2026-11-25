@@ -268,16 +268,21 @@ def test_cartier_wssa0061_knowledge_separates_visible_facts_from_physical_specs(
     assert not result.authenticates_watch
 
 
-def test_cartier_wssa0018_retailer_identity_stays_inconclusive() -> None:
-    reference = "cartier-santos-wssa0018"
+@pytest.mark.parametrize(("code", "date_layout", "width"), [
+    ("wssa0018", "6 o'clock", "39.8"),
+    ("wssa0029", "no date", "35.1"),
+])
+def test_cartier_santos_date_layout_is_visible_in_the_official_product_photo(
+    code: str, date_layout: str, width: str,
+) -> None:
+    reference = f"cartier-santos-{code}"
     claims = load_knowledge(Path(f"config/references/{reference}.json"), reference)
-
-    assert {claim.field for claim in claims if claim.applicable_angles} == {
-        "dial_color", "date_position", "crown_stone_color",
-    }
-    assert all(claim.source_class is not SourceClass.OFFICIAL_BRAND for claim in claims)
-    assert not next(claim for claim in claims if claim.field == "calibre").applicable_angles
-    assert not next(claim for claim in claims if claim.field == "model_code").applicable_angles
+    brand = {claim.field: claim for claim in claims if claim.source_class is SourceClass.OFFICIAL_BRAND}
+    assert brand["date_position"].value == date_layout
+    assert brand["date_position"].applicable_angles == (Angle.DIAL,)
+    assert brand["case_width_mm"].value == width
+    assert not brand["case_width_mm"].applicable_angles
+    assert all(claim.source_url.startswith("https://www.cartier.com/") for claim in brand.values())
     result = assess_reference(reference, claims, (), minimum_source_date=FRESH_AFTER)
     assert result.status is AssessmentStatus.INCONCLUSIVE
     assert not result.authenticates_watch

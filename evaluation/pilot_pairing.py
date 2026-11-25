@@ -87,10 +87,8 @@ def replay_with_review(
     checks = cast(list[dict[str, Any]], report["technical_checks"])
     fields: dict[str, dict[str, Any]] = {}
     expected_statuses: dict[str, set[str]] = {}
-    candidates = cast(list[dict[str, Any]], report["candidates"])
     for check in checks:
-        fact = {"reference_id": candidates[0]["reference_id"],
-                **{name: check[name] for name in ("angle", "field", "expected", "url", "citation")}}
+        fact = {name: check[name] for name in ("reference_id", "angle", "field", "expected", "url", "citation")}
         fact_id = _digest(fact)
         if fact_id not in facts:
             raise ValueError("technical check lacks a supplied catalog fact")
@@ -135,7 +133,12 @@ def replay_with_review(
     }
     if not linked:
         return {**result, "with_review": "inconclusive", "review_status": "unlinked_photos"}
+    reference_unsettled = report["decision_reason"] in (
+        "reference_conflict", "date_readings_disagree", "reference_unresolved",
+    )
     if not fields:
+        if report["decision_reason"] == "date_readings_disagree":
+            return {**result, "with_review": "inconclusive", "review_status": "needs_verification"}
         return result
     token = _digest(asdict(capture))
     request = {
@@ -178,10 +181,11 @@ def replay_with_review(
         findings_by_claim[claim_id] = {**target, "status": status, "reading": reading.strip()}
         if expected_statuses[claim_id] != {status}:
             disputed_claim_ids.append(claim_id)
+    needs_verification = bool(disputed_claim_ids) or reference_unsettled
     return {
         **result,
-        "with_review": "inconclusive" if disputed_claim_ids else hypothesis,
-        "review_status": "needs_verification" if disputed_claim_ids else "supported",
+        "with_review": "inconclusive" if needs_verification else hypothesis,
+        "review_status": "needs_verification" if needs_verification else "supported",
         "review_findings": findings_by_claim,
         "disputed_claim_ids": disputed_claim_ids,
     }
