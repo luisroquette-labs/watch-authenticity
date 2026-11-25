@@ -41,6 +41,7 @@ def _answer() -> dict[str, Any]:
 @pytest.mark.parametrize(("family", "reference", "reference_id", "expected_id", "reason"), [
     ("Collection", "F-91W-1", None, "casio-f91w-1", "catalog_gap"),
     ("F-91W", "F-91W-1", "casio-f91w-1", "casio-f91w-1", "catalog_gap"),
+    ("F-91W", "1", "casio-f91w-1", None, "reference_unresolved"),
     ("G-Shock", "F-91W-1", None, None, "reference_unresolved"),
     ("Collection", "F-91W", None, None, "reference_unresolved"),
     ("Collection", "F-91W-3", None, None, "catalog_gap"),
@@ -78,7 +79,7 @@ def test_flash_resolves_only_exact_official_commercial_designation(
     assert report["decision_reason"] == reason
 
 
-@pytest.mark.parametrize("case", ["wrong_brand", "mixed", "multiple_candidates", "catalogue_collision"])
+@pytest.mark.parametrize("case", ["wrong_brand", "mixed", "uncertain", "multiple_candidates", "catalogue_collision"])
 def test_commercial_designation_cannot_override_uncertain_identity(case: str) -> None:
     answer = _answer()
     candidate = {"brand": "Casio", "family": "Collection", "reference": "F-91W-1", "reference_id": None}
@@ -86,8 +87,9 @@ def test_commercial_designation_cannot_override_uncertain_identity(case: str) ->
     reporter = FlashReport("fixture")
     if case == "wrong_brand":
         candidate["brand"] = "Seiko"
-    elif case == "mixed":
-        answer["linkage"] = "mixed"
+    elif case in ("mixed", "uncertain"):
+        answer["linkage"] = case
+        candidate["reference_id"] = "casio-f91w-1"
     elif case == "multiple_candidates":
         answer["candidates"].append({**candidate, "reference": "F-91W-3"})
     else:
@@ -95,7 +97,7 @@ def test_commercial_designation_cannot_override_uncertain_identity(case: str) ->
     report = reporter.build_report(answer, {1, 3})
     assert not report["technical_checks"]
     assert report["conclusion"] == "inconclusive"
-    assert report["decision_reason"] == ("unlinked_photos" if case == "mixed" else "reference_unresolved")
+    assert report["decision_reason"] == ("unlinked_photos" if case in ("mixed", "uncertain") else "reference_unresolved")
     assert all(item["reference_id"] is None for item in cast(list[dict[str, Any]], report["candidates"]))
 
 
@@ -241,7 +243,7 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
         assert data["examined_photos"] == ([3] if scenario == "calibre-unseen" else [1, 3])
         checks = cast(list[dict[str, Any]], data["technical_checks"])
         expected_photos = {
-            "compatible": [1, 3], "mixed": [1, 3], "color-only": [1, 3],
+            "compatible": [1, 3], "mixed": [], "color-only": [1, 3],
             "weak-compatibility": [1], "calibre-unseen": [3], "wrong-reference-code": [], "wrong-reference-brand": [],
             "outside-catalog": [],
             "equivalent-spec-words": [1, 3], "structural-divergence": [1, 3], "cartier-crown-ambiguous": [1],

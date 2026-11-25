@@ -178,6 +178,7 @@ class FlashReport:
             raise ValueError("resultado de análise inválido")
         parsed_candidates: list[dict[str, str | None]] = []
         outside_catalog = False
+        linked = linkage in ("single_photo", "consistent")
         for item in candidates:
             if not isinstance(item, dict) or set(item) != {"brand", "family", "reference", "reference_id"}:
                 raise ValueError("referência candidata inválida")
@@ -185,13 +186,15 @@ class FlashReport:
                          for key, value in item.items()}
             identity = tuple(_identity(candidate[key]) for key in ("brand", "family", "reference"))
             proposed_id = candidate["reference_id"]
-            if self.reference_identity.get(proposed_id or "") != identity:
+            canonical_match = (proposed_id is not None and proposed_id not in self.commercial_identities
+                               and self.reference_identity.get(proposed_id) == identity)
+            if not (linked and canonical_match):
                 candidate["reference_id"] = None
                 if len(candidates) == 1 and _REFERENCE_CODE.fullmatch(candidate["reference"] or ""):
                     brand, family, code = identity
                     matches = [key for key, identities in self.commercial_identities.items()
                                if (brand, family, code) in identities]
-                    if (linkage in ("single_photo", "consistent") and len(matches) == 1
+                    if (linked and len(matches) == 1
                         and self.reference_code_owners.get((brand, code)) == {matches[0]}
                         and proposed_id in (None, matches[0])):
                         candidate["reference_id"] = matches[0]
