@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -76,6 +77,7 @@ def test_default_bootstrap_still_checks_models_before_serving(
     monkeypatch.setenv("WATCH_AUTH_COS_ENDPOINT", "https://cos.example")
     monkeypatch.setenv("WATCH_AUTH_COS_SERVICE_INSTANCE_ID", "instance")
     monkeypatch.setenv("WATCH_AUTH_TRUSTED_PROFILE_ID", "profile")
+    monkeypatch.setenv("WATCH_AUTH_DETECTOR_CHECKPOINT", "previous-detector")
     monkeypatch.setattr(authenticators, "ContainerAuthenticator", lambda **_: object())
     monkeypatch.setattr(ibm_cos, "create_oauth_cos_client", lambda *args, **kwargs: object())
     monkeypatch.setattr(model_asset_bootstrap, "MODEL_DIR", tmp_path)
@@ -85,6 +87,7 @@ def test_default_bootstrap_still_checks_models_before_serving(
     model_asset_bootstrap.main()
     assert calls == [("protected-models", tmp_path), ["--checkpoint", str(tmp_path / "smolvlm"),
                                                      "--host", "0.0.0.0", "--port", "8080"]]
+    assert os.environ["WATCH_AUTH_DETECTOR_CHECKPOINT"] == str(tmp_path / "owlv2")
 
 
 def test_unrecognized_bootstrap_mode_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
