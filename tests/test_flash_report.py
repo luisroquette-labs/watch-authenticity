@@ -116,6 +116,7 @@ def test_gmt_pepsi_compares_exterior_without_authenticating(
     ("calibre-unseen", 200, "inconclusive"),
     ("wrong-reference-code", 200, "inconclusive"),
     ("wrong-reference-brand", 200, "inconclusive"),
+    ("outside-catalog", 200, "inconclusive"),
     ("equivalent-spec-words", 200, "inconclusive"),
     ("cartier-crown-ambiguous", 200, "inconclusive"),
     ("structural-divergence", 200, "probable_fake"),
@@ -137,6 +138,9 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
         answer["candidates"][0]["reference"] = "126610LV"
     elif scenario == "wrong-reference-brand":
         answer["candidates"][0].update(brand="Cartier", family="Santos")
+    elif scenario == "outside-catalog":
+        answer["candidates"] = [{"brand": "Rolex", "family": "Cosmograph Daytona",
+                                 "reference": "116588TBR", "reference_id": None}]
     elif scenario in {"equivalent-spec-words", "structural-divergence", "cartier-crown-ambiguous"}:
         answer["candidates"] = [{"brand": "Cartier", "family": "Santos", "reference": "WSSA0061",
                                  "reference_id": "cartier-santos-wssa0061"}]
@@ -178,6 +182,7 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
         expected_photos = {
             "compatible": [1, 3], "mixed": [1, 3], "color-only": [1, 3],
             "weak-compatibility": [1], "calibre-unseen": [3], "wrong-reference-code": [], "wrong-reference-brand": [],
+            "outside-catalog": [],
             "equivalent-spec-words": [1, 3], "structural-divergence": [1, 3], "cartier-crown-ambiguous": [1],
         }
         assert [check["photo"] for check in checks] == expected_photos[scenario]
@@ -194,6 +199,9 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
             "equivalent-spec-words": "compatible_or_insufficient", "cartier-crown-ambiguous": "detail_not_verified",
         }.get(scenario, "catalog_gap")
         assert data["decision_reason"] == expected_reason
+        if scenario == "outside-catalog":
+            assert "não tem ficha técnica" in data["decision_reason_text"]
+            assert all("A comparação usa a ficha" not in limit for limit in data["limits"])
         if scenario == "cartier-crown-ambiguous":
             assert "coroa de perfil" in data["next_verification"]
         if scenario == "weak-compatibility":
@@ -201,6 +209,51 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
             assert "autenticidade segue em aberto" in data["next_verification"]
         if scenario == "mixed":
             assert "um relógio por vez" in data["next_verification"]
+
+
+@pytest.mark.parametrize("scenario, reason", [
+    ("partial-reference", "reference_unresolved"),
+    ("multiple-candidates", "reference_unresolved"),
+    ("catalogued-reference-without-id", "reference_unresolved"),
+    ("catalogued-reference-with-alternate-family", "reference_unresolved"),
+    ("catalogued-code-with-wrong-brand", "reference_unresolved"),
+    ("unknown-reference-text", "reference_unresolved"),
+    ("alternatives-in-reference-text", "reference_unresolved"),
+    ("slash-separated-references", "reference_unresolved"),
+    ("unknown-brand-text", "reference_unresolved"),
+    ("unknown-family-text", "reference_unresolved"),
+    ("unlinked-photos", "unlinked_photos"),
+])
+def test_catalogue_feedback_preserves_uncertainty(scenario: str, reason: str) -> None:
+    answer = _answer()
+    candidate = {"brand": "Rolex", "family": "Cosmograph Daytona",
+                 "reference": "116588TBR", "reference_id": None}
+    answer["candidates"] = [candidate]
+    if scenario == "partial-reference":
+        candidate["reference"] = None
+    elif scenario == "multiple-candidates":
+        answer["candidates"].append({**candidate, "reference": "116508"})
+    elif scenario == "catalogued-reference-without-id":
+        candidate.update(family="Submariner", reference="126610LN")
+    elif scenario == "catalogued-reference-with-alternate-family":
+        candidate.update(family="Submariner Date", reference="126610LN")
+    elif scenario == "catalogued-code-with-wrong-brand":
+        candidate.update(brand="Cartier", family="Santos", reference="126610LN")
+    elif scenario == "unknown-reference-text":
+        candidate["reference"] = "desconhecida"
+    elif scenario == "alternatives-in-reference-text":
+        candidate["reference"] = "116588TBR ou 116508"
+    elif scenario == "slash-separated-references":
+        candidate["reference"] = "116588TBR/116508"
+    elif scenario == "unknown-brand-text":
+        candidate["brand"] = "desconhecida"
+    elif scenario == "unknown-family-text":
+        candidate["family"] = "não identificada"
+    else:
+        answer["linkage"] = "uncertain"
+    report = FlashReport("fixture").build_report(answer, {1, 3})
+    assert report["decision_reason"] == reason
+    assert report["conclusion"] == "inconclusive"
 
 
 @pytest.mark.parametrize(("scenario", "expected"), [
