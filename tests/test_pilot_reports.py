@@ -6,10 +6,10 @@ from typing import Any
 
 import pytest
 
-from evaluation.pilot_reports import census, score
+from evaluation.pilot_reports import census, score, score_frozen
 
 
-def _case(specimen: str, label: str = "fake", **fields: Any) -> dict[str, Any]:
+def _case(specimen: str, label: str | None = "fake", **fields: Any) -> dict[str, Any]:
     return {
         "specimen_id": specimen,
         "reference": "126610LN",
@@ -48,8 +48,10 @@ def _confirmations(*cases: dict[str, Any], **fields: Any) -> dict[str, Any]:
     data = json.dumps({
         case["specimen_id"]: {
             "reference": case["reference"],
+            "generation": case["generation"],
             "label": case["label"],
             "photo_sha256s": [photo["sha256"] for photo in case["photos"]],
+            "reviewer_id": "fixture-reviewer",
             "verification_method": "specimen_specific_document",
             "evidence_sha256": "e" * 64,
             **fields,
@@ -62,17 +64,19 @@ def _confirmations(*cases: dict[str, Any], **fields: Any) -> dict[str, Any]:
 def test_declared_scores_without_confirmation_and_cannot_promote_itself() -> None:
     case = _case("seller", evidence="declared", physical_identity_confirmed=True)
     reports = {"seller": "probable_fake"}
-    result = score([case], reports, **_confirmations(case))
+    result = score([case], reports)
     assert result["declared"]["agrees_with_claim"] == 1
     assert result["independent"]["accuracy_all_cases"] is None
-    assert score([case], reports) == result
-    with pytest.raises(ValueError, match="trusted confirmation"):
+    assert census(_manifest(case), **_confirmations(case))["cases"][0]["status"] == "research_only"
+    with pytest.raises(ValueError, match="frozen test manifest"):
         score([{**case, "evidence": "independent"}], reports)
 
 
 @pytest.mark.parametrize(("field", "value"), [
     ("reference", "another-reference"),
+    ("generation", "previous"),
     ("label", "original"),
+    ("reviewer_id", ""),
     ("evidence_sha256", "z" * 64),
     ("verification_method", "seller_claim"),
     ("verification_method", "model_analysis"),
@@ -82,8 +86,6 @@ def test_independent_confirmation_binds_case_and_requires_independent_evidence(
 ) -> None:
     case = _case("a")
     trusted = _confirmations(case, **{field: value})
-    with pytest.raises(ValueError, match="trusted confirmation"):
-        score([case], {"a": "probable_fake"}, **trusted)
     result = census(_manifest(case), **trusted)
     assert result["cases"] == [
         {"specimen_id": "a", "status": "research_only", "reasons": ["missing_or_mismatched_confirmation"]},
@@ -98,15 +100,14 @@ def test_independent_confirmation_cannot_be_reordered_reassigned_or_tampered() -
         {**case, "specimen_id": "b"},
         {**case, "photos": [{"sha256": "z" * 64, "angle": "dial"}]},
     ):
-        with pytest.raises(ValueError, match="trusted confirmation"):
-            score([changed], {}, **trusted)
+        assert census(_manifest(changed), **trusted)["cases"][0]["status"] != "eligible"
     for tampered in (
         {"confirmation_bytes": trusted["confirmation_bytes"]},
         {**trusted, "confirmation_bytes": trusted["confirmation_bytes"] + b" "},
         {**trusted, "confirmation_sha256": "x" * 64},
     ):
         with pytest.raises(ValueError, match="trusted SHA-256"):
-            score([case], {}, **tampered)
+            census(_manifest(case), **tampered)
 
 
 @pytest.mark.parametrize(("field", "reason"), [
@@ -181,7 +182,32 @@ def test_two_confirmed_ids_cannot_inflate_scoring_with_the_same_photo() -> None:
         {"specimen_id": key, "status": "blocked", "reasons": ["photo_shared_by_independent_specimens"]}
         for key in ("a", "b")
     ] + [{"specimen_id": "control", "status": "research_only", "reasons": ["control_only"]}]
-    with pytest.raises(ValueError, match="cannot share photos"):
-        score([first, second], {}, **trusted)
     result = census(_manifest(first, control), **_confirmations(first))
     assert result["cases"][0] == {"specimen_id": "a", "status": "eligible", "reasons": []}
+
+
+def test_frozen_score_includes_every_admitted_test_case_in_its_cohort() -> None:
+    cases = [
+        _case("correct"), _case("error"), _case("compatible", "original"), _case("missing"),
+        _case("denied", rights={"gemini": True, "gpt": False}),
+        _case("calibration", partition="calibration"), _case("stress", cohort="stress"),
+        _case("seller", evidence="declared"),
+    ]
+    data = json.dumps(_manifest(*cases)).encode()
+    params = {
+        "manifest_sha256": hashlib.sha256(data).hexdigest(), "cohort": "representative",
+        **_confirmations(*cases),
+    }
+    reports = {
+        "correct": "probable_fake", "error": "probable_original", "compatible": "visually_compatible",
+    }
+    independent = score_frozen(data, reports, **params)["independent"]
+    assert (independent["correct"], independent["incorrect"], independent["inconclusive"],
+            independent["unavailable"], independent["fake_called_original"],
+            independent["accuracy_all_cases"]) == (1, 1, 1, 1, 1, 0.25)
+    assert independent["compatible_but_inconclusive"] == 1
+    for specimen in ("denied", "calibration", "stress", "seller"):
+        with pytest.raises(ValueError, match="unknown specimen"):
+            score_frozen(data, {**reports, specimen: "probable_fake"}, **params)
+    with pytest.raises(ValueError, match="frozen SHA-256"):
+        score_frozen(data + b" ", reports, **params)

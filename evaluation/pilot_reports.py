@@ -73,8 +73,11 @@ def _is_confirmed(case: dict[str, Any], record: dict[str, Any]) -> bool:
         and bool(photos)
         and len(set(photos)) == len(photos)
         and record.get("reference") == reference
+        and _text(case.get("generation"))
+        and record.get("generation") == case["generation"]
         and record.get("label") == case["label"]
         and record.get("photo_sha256s") == photos
+        and _text(record.get("reviewer_id"))
         and record.get("verification_method") in _METHODS
         and _sha256(record.get("evidence_sha256"))
     )
@@ -95,8 +98,8 @@ def census(
         raise ValueError("manifest requires a freeze object")
     models = freeze.get("models")
     if (
-        not isinstance(models, dict) or len(models) != 2
-        or not all(_text(provider) and _text(model) for provider, model in models.items())
+        not isinstance(models, dict) or set(models) != {"gemini", "gpt"}
+        or not all(_text(model) for model in models.values())
         or not all(_sha256(freeze.get(key)) for key in (
             "prompt_sha256", "policy_sha256", "technical_sources_sha256", "image_treatment_sha256",
         ))
@@ -165,6 +168,8 @@ def census(
             gaps.append("unknown_angle")
         if not _text(case.get("capture_type")):
             gaps.append("missing_capture_type")
+        if not _text(case.get("label_source")):
+            gaps.append("missing_label_source")
         if not _text(case.get("split_family")) or not isinstance(clusters, list) or not clusters or not all(
             _text(value) for value in clusters
         ):
@@ -196,6 +201,7 @@ def census(
         counts[status]["classes"][label if label in _LABELS else "unknown"] += 1
         counts[status]["references"][reference if _text(reference) else "unknown"] += 1
         counts[status]["angles"].update(angles or {"unknown"})
+        counts[status]["sources"][case["label_source"] if _text(case.get("label_source")) else "unknown"] += 1
         counts[status]["gaps"].update(blocked + gaps)
         if status == "eligible" and case["partition"] == "test":
             test_labels[cohort][(reference, generation)].add(label)
@@ -217,17 +223,45 @@ def census(
 def score(
     cases: list[dict[str, Any]],
     reports: dict[str, str],
-    *,
-    confirmation_bytes: bytes | None = None,
-    confirmation_sha256: str | None = None,
 ) -> dict[str, Any]:
-    confirmations = _load_confirmations(confirmation_bytes, confirmation_sha256)
+    if any(case.get("evidence") == "independent" for case in cases):
+        raise ValueError("independent cases require a frozen test manifest")
+    return _score_cases(cases, reports)
+
+
+def score_frozen(
+    manifest_bytes: bytes,
+    reports: dict[str, str],
+    *,
+    manifest_sha256: str,
+    confirmation_bytes: bytes,
+    confirmation_sha256: str,
+    cohort: str,
+) -> dict[str, Any]:
+    if not _sha256(manifest_sha256) or hashlib.sha256(manifest_bytes).hexdigest() != manifest_sha256:
+        raise ValueError("test manifest does not match the frozen SHA-256")
+    if cohort not in _COHORTS:
+        raise ValueError("unknown test cohort")
+    manifest = _read_json(manifest_bytes)
+    admitted = census(manifest, confirmation_bytes=confirmation_bytes,
+                      confirmation_sha256=confirmation_sha256)
+    eligible = {case["specimen_id"] for case in admitted["cases"] if case["status"] == "eligible"}
+    test_cases = [
+        case for case in manifest["cases"]
+        if case["partition"] == "test" and case["cohort"] == cohort
+        and case["specimen_id"] in eligible
+    ]
+    return _score_cases(test_cases, reports)
+
+
+def _score_cases(cases: list[dict[str, Any]], reports: dict[str, str]) -> dict[str, Any]:
+    if not isinstance(reports, dict) or not all(_text(specimen) for specimen in reports):
+        raise ValueError("reports must map specimen IDs to conclusions")
     buckets = {name: {key: 0 for key in ("cases", "correct", "incorrect", "inconclusive",
                                          "compatible_but_inconclusive", "unavailable",
                                          "fake_called_original", "original_called_fake")}
                for name in ("independent", "declared")}
     seen: set[str] = set()
-    independent_photos: set[str] = set()
     details = []
     for case in cases:
         specimen = case["specimen_id"]
@@ -237,13 +271,6 @@ def score(
             or label not in ("fake", "original") or evidence not in buckets
             or not isinstance(case.get("label_source"), str) or not case["label_source"].strip()):
             raise ValueError("requires unique specimen IDs, label, evidence and provenance")
-        if evidence == "independent":
-            if not _is_confirmed(case, confirmations.get(specimen, {})):
-                raise ValueError("independent cases require specimen-specific trusted confirmation")
-            photos = _photo_hashes(case)
-            if independent_photos.intersection(photos):
-                raise ValueError("independent specimens cannot share photos")
-            independent_photos.update(photos)
         seen.add(specimen)
         actual = reports.get(specimen, "unavailable")
         bucket = buckets[evidence]
@@ -274,26 +301,36 @@ def score(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(epilog="Use census MANIFEST to check paired admission.")
+    parser = argparse.ArgumentParser(epilog="Use census MANIFEST or frozen MANIFEST REPORTS.")
     args_list = sys.argv[1:]
-    if args_list[:1] == ["census"]:
+    mode = args_list[0] if args_list and args_list[0] in {"census", "frozen"} else "declared"
+    if mode != "declared":
         args_list = args_list[1:]
         parser.add_argument("manifest", type=Path, help="Private paired evaluation manifest JSON")
     else:
         parser.add_argument("cases", type=Path, help="Frozen JSON list of specimens and label provenance")
+    if mode != "census":
         parser.add_argument("reports", type=Path, help="JSON object mapping specimen IDs to conclusions")
-    parser.add_argument("--confirmations", type=Path, help="Evaluator's separate confirmation JSON")
-    parser.add_argument("--confirmations-sha256", help="Expected SHA-256 from the trusted evaluator")
+    if mode != "declared":
+        parser.add_argument("--confirmations", type=Path, required=mode == "frozen",
+                            help="Evaluator's separate confirmation JSON")
+        parser.add_argument("--confirmations-sha256", required=mode == "frozen",
+                            help="Expected SHA-256 from the trusted evaluator")
+    if mode == "frozen":
+        parser.add_argument("--manifest-sha256", required=True)
+        parser.add_argument("--cohort", choices=_COHORTS, required=True)
     args = parser.parse_args(args_list)
-    confirmation = {
-        "confirmation_bytes": args.confirmations.read_bytes() if args.confirmations else None,
-        "confirmation_sha256": args.confirmations_sha256,
-    }
-    if hasattr(args, "manifest"):
-        result = census(_read_json(args.manifest.read_bytes()), **confirmation)
+    if mode == "census":
+        result = census(_read_json(args.manifest.read_bytes()),
+                        confirmation_bytes=args.confirmations.read_bytes() if args.confirmations else None,
+                        confirmation_sha256=args.confirmations_sha256)
+    elif mode == "frozen":
+        result = score_frozen(args.manifest.read_bytes(), _read_json(args.reports.read_bytes()),
+                              manifest_sha256=args.manifest_sha256, cohort=args.cohort,
+                              confirmation_bytes=args.confirmations.read_bytes(),
+                              confirmation_sha256=args.confirmations_sha256)
     else:
-        result = score(_read_json(args.cases.read_bytes()), _read_json(args.reports.read_bytes()),
-                       **confirmation)
+        result = score(_read_json(args.cases.read_bytes()), _read_json(args.reports.read_bytes()))
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
