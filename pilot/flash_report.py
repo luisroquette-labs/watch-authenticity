@@ -34,7 +34,7 @@ Nos candidates, photo é o número da foto em que características do relógio s
 Quando houver um código legível no rotor, ponte, platina ou módulo visível, registre-o em uma observação com field movement_marking, angle caseback, location rotor, bridge, plate ou module e visibility visible. Escreva só o código literal em value, separado de frases, nome do fabricante e contagem de joias. Omita números de série e códigos ilegíveis. Uma inscrição copiada pode parecer correta. Identificar o calibre depende da arquitetura do mecanismo; autenticidade e precisão exigem evidência própria."""
 _MOVEMENT_MARKING = "movement_marking"
 _MOVEMENT_REGIONS = {"rotor": "rotor", "bridge": "ponte", "plate": "platina", "module": "módulo"}
-_MOVEMENT_CODE = re.compile(r"(?=.{2,16}\Z)[A-Za-z]{0,6} ?\d[A-Za-z0-9]*(?:[-./‐‑–][A-Za-z0-9]+)*(?: [A-Za-z]{1,4}){0,2}")
+_MOVEMENT_CODE = re.compile(r"(?=.{2,16}\Z)(?:[Cc]\.|[A-Za-z]{0,6}) ?\d[A-Za-z0-9]*(?:[-./‐‑–][A-Za-z0-9]+)*(?: [A-Za-z]{1,4}){0,2}")
 _STRUCTURAL_FIELDS = frozenset({
     "caseback_type", "clasp", "clasp_type", "crown_shape", "date_magnifier", "date_position",
     "display_type", "hand_shape", "helium_escape_valve_shape",
