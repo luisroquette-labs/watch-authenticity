@@ -223,6 +223,7 @@ def _run_receipt(case: dict[str, Any], conclusion: str) -> dict[str, Any]:
         "gemini_media_sha256": case["prepared_media_sha256"],
         "technical_facts_sha256": "c" * 64,
         "gemini_model": "model-version-a",
+        "gemini_linkage": "consistent",
         "gemini_response_id": f"provider-response-{case['specimen_id']}",
         "gemini_response_sha256": "9" * 64,
         "conclusion": conclusion,
@@ -278,7 +279,10 @@ def test_frozen_score_refuses_unpinned_mock_or_mismatched_run() -> None:
     data, params, run = _frozen_inputs(case)
     with pytest.raises(ValueError, match="trusted SHA-256"):
         score_frozen(data, json.dumps(run).encode(), run_sha256="9" * 64, **params)
-    for change in ({"capture_mode": "simulated"}, {"freeze": {}}, {"manifest_sha256": "9" * 64}):
+    run_changes: tuple[dict[str, Any], ...] = (
+        {"capture_mode": "simulated"}, {"freeze": {}}, {"manifest_sha256": "9" * 64},
+    )
+    for change in run_changes:
         with pytest.raises(ValueError, match="does not match the live frozen test"):
             _frozen_score(data, params, {**run, **change})
     with pytest.raises(ValueError, match="does not match the specimen or Gemini capture"):
@@ -290,7 +294,7 @@ def test_frozen_score_refuses_unpinned_mock_or_mismatched_run() -> None:
             _frozen_score(data, params, {**run, "reports": {"a": {**receipt, **change}}})
     with pytest.raises(ValueError, match="lacks a matching GPT capture"):
         _frozen_score(data, params, {**run, "route": "with_review", "reports": {"a": receipt}})
-    reviewed = {
+    reviewed: dict[str, Any] = {
         **run,
         "route": "with_review",
         "reports": {"a": {
@@ -302,4 +306,21 @@ def test_frozen_score_refuses_unpinned_mock_or_mismatched_run() -> None:
     assert _frozen_score(data, params, reviewed)["independent"]["correct"] == 1
     reviewed["reports"]["a"]["gpt_media_sha256"] = "5" * 64
     with pytest.raises(ValueError, match="lacks a matching GPT capture"):
+        _frozen_score(data, params, reviewed)
+
+
+@pytest.mark.parametrize("linkage", ["mixed", "uncertain"])
+def test_with_review_preserves_inconclusive_when_photos_cannot_be_linked(linkage: str) -> None:
+    case = _case("a")
+    data, params, run = _frozen_inputs(case)
+    receipt = {**_run_receipt(case, "inconclusive"), "gemini_linkage": linkage,
+               "review_status": "unlinked_photos"}
+    reviewed = {**run, "route": "with_review", "reports": {"a": receipt}}
+    score = _frozen_score(data, params, reviewed)["independent"]
+    assert (score["cases"], score["inconclusive"], score["unavailable"]) == (1, 1, 0)
+    receipt["review_status"] = "skipped_for_cost"
+    with pytest.raises(ValueError, match="explicit no-review"):
+        _frozen_score(data, params, reviewed)
+    receipt["conclusion"] = "probable_original"
+    with pytest.raises(ValueError, match="unlinked photos require an inconclusive"):
         _frozen_score(data, params, reviewed)

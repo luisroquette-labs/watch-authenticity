@@ -327,7 +327,21 @@ def score_frozen(
             or receipt["gemini_response_id"] in gemini_ids
         ):
             raise ValueError("run receipt does not match the specimen or Gemini capture")
-        if run["route"] == "with_review":
+        linkage = receipt.get("gemini_linkage")
+        if linkage not in ("single_photo", "consistent", "mixed", "uncertain"):
+            raise ValueError("run receipt requires the Gemini photo linkage")
+        conclusion = receipt.get("conclusion")
+        if not isinstance(conclusion, str):
+            raise ValueError("run receipt requires a conclusion")
+        unlinked = linkage in ("mixed", "uncertain")
+        if unlinked and conclusion != "inconclusive":
+            raise ValueError("unlinked photos require an inconclusive result")
+        if run["route"] == "with_review" and unlinked:
+            if receipt.get("review_status") != "unlinked_photos" or any(
+                key.startswith("gpt_") for key in receipt
+            ):
+                raise ValueError("unlinked photos require an explicit no-review receipt")
+        elif run["route"] == "with_review":
             if (
                 receipt.get("gpt_model") != models["gpt"]
                 or receipt.get("gpt_media_sha256") != case["prepared_media_sha256"]
@@ -340,7 +354,7 @@ def score_frozen(
                 raise ValueError("run receipt lacks a matching GPT capture")
             gpt_ids.add(receipt["gpt_response_id"])
         gemini_ids.add(receipt["gemini_response_id"])
-        reports[specimen] = receipt.get("conclusion")
+        reports[specimen] = conclusion
     return {
         **_score_cases(test_cases, reports),
         "frozen_run": {"route": run["route"], "cohort": cohort,
