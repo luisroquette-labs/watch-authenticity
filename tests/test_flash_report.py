@@ -104,7 +104,8 @@ def test_gmt_pepsi_compares_exterior_without_authenticating(
     assert {item["field"]: item["status"] for item in checks} == {
         "dial_color": "matched", "date_magnifier": "matched", "bezel_color": comparison,
     }
-    assert all(item["photo"] == 1 and "rolex.com" in item["url"] for item in checks)
+    brochure = "https://assets.rolex.com/api/brochure/en-us/gmt-master-ii/m126710blro-0001.pdf"
+    assert all(item["photo"] == 1 and item["url"] == brochure for item in checks)
 
 
 @pytest.mark.parametrize("scenario, status, conclusion", [
