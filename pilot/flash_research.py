@@ -84,10 +84,10 @@ def research(path: Path, key: str, *, request: Any = requests) -> dict[str, obje
     return {**metadata, "research": _validate(answer), "visual_claims_status": "unverified_model_observations", "authenticity_verdict": "inconclusivo", "reference_coverage": "pending", "technical_sources": [], "quality_score_0_1000": None}
 
 
-def complete_flash(
-    key: str, content: list[dict[str, object]], *, request: Any = requests,
+def check_flash_budget(
+    key: str, *, request: Any = requests,
     max_usage_usd: float = MAX_PROJECT_USAGE_USD,
-) -> tuple[object, dict[str, object]]:
+) -> tuple[dict[str, str], float]:
     headers = {"Authorization": "Bearer " + key, "HTTP-Referer": "https://watch-authenticity.local/pilot", "X-Title": "Watch Authenticity Research Pilot"}
     auth = request.get("https://openrouter.ai/api/v1/auth/key", headers=headers, timeout=10)
     auth.raise_for_status()
@@ -115,6 +115,14 @@ def complete_flash(
     worst_case_cost = context * input_price + MAX_COMPLETION_TOKENS * output_price
     if not math.isfinite(max_usage_usd) or remaining < worst_case_cost or spent + worst_case_cost > max_usage_usd:
         raise RuntimeError("envelope local insuficiente para a chamada")
+    return headers, worst_case_cost
+
+
+def complete_flash(
+    key: str, content: list[dict[str, object]], *, request: Any = requests,
+    max_usage_usd: float = MAX_PROJECT_USAGE_USD,
+) -> tuple[object, dict[str, object]]:
+    headers, worst_case_cost = check_flash_budget(key, request=request, max_usage_usd=max_usage_usd)
     start = time.monotonic()
     response = request.post(
         "https://openrouter.ai/api/v1/chat/completions", headers=headers,
