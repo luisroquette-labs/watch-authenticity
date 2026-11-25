@@ -8,12 +8,12 @@ import io
 import json
 import math
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 import requests
-from PIL import Image, ImageOps
 
 MODEL = "google/gemini-3.8-flash"
 KEYCHAIN_SERVICE = "codex.openrouter.watch-authenticity"
@@ -30,6 +30,8 @@ class ReportUnavailable(RuntimeError):
 
 
 def _image_part(path: Path) -> dict[str, object]:
+    from PIL import Image, ImageOps
+
     from pilot.server import MAX_UPLOAD_BYTES, decode_image
 
     data = path.read_bytes()
@@ -153,7 +155,33 @@ def complete_flash(
     return answer, {"model": MODEL, "model_response_id": payload.get("id"), "latency_seconds": round(time.monotonic() - start, 2), "cost_usd": cost}
 
 
+def _check_code_engine_secret() -> None:
+    try:
+        secret = json.load(sys.stdin)
+        data = secret.get("data", {})
+        key = data.get("WATCH_AUTH_OPENROUTER_PILOT_KEY")
+        valid = (
+            secret.get("format") == "generic" and set(data) == {"WATCH_AUTH_OPENROUTER_PILOT_KEY"}
+            and isinstance(key, str) and key and key.isascii() and key.isprintable()
+            and not any(char.isspace() for char in key)
+        )
+    except (ValueError, AttributeError, TypeError):
+        valid = False
+    if not valid:
+        raise SystemExit("Gemini pilot requires the dedicated Code Engine provider secret")
+    try:
+        with requests.Session() as session:
+            session.trust_env = False
+            session.max_redirects = 0
+            check_flash_budget(key, request=session)
+    except (requests.RequestException, RuntimeError, ValueError, TypeError, AttributeError, KeyError):
+        raise SystemExit("Gemini pilot provider or spending envelope unavailable") from None
+
+
 def main() -> None:
+    if sys.argv[1:] == ["--check-code-engine-secret"]:
+        _check_code_engine_secret()
+        return
     parser = argparse.ArgumentParser(description="Pesquisa visual local, sem laudo de autenticidade")
     parser.add_argument("photo", type=Path)
     args = parser.parse_args()
