@@ -196,6 +196,41 @@ def test_santos_medium_date_layout_is_sent_and_matches_without_guessing_a_case_c
     assert "4072" not in str(report["next_verification"])
 
 
+@pytest.mark.parametrize(("field", "shape", "visibility", "expected_value", "expected_detail"), [
+    ("crown_shape", "faceted", "visible", "faceted", "Coroa de contorno facetado."),
+    (" CROWN_SHAPE ", "heptagonal", "visible", "7 sided", "Coroa com sete lados."),
+    ("crown_shape", "round", "visible", "round", "Coroa de contorno arredondado."),
+    ("crown_shape", "espinélio sintético azul", "visible", None, "Formato da coroa indeterminado nesta foto."),
+    ("crown_shape", "seven-sided", "ambiguous", None, "Formato da coroa indeterminado nesta foto."),
+])
+def test_crown_shape_observation_displays_geometry_only(
+    field: str, shape: str, visibility: str, expected_value: str | None, expected_detail: str,
+) -> None:
+    answer = _answer()
+    answer["candidates"] = [{"brand": "Cartier", "family": "Santos", "reference": "WSSA0061",
+                             "reference_id": "cartier-santos-wssa0061", "photo": 3}]
+    answer["observations"] = [
+        {"photo": 3, "angle": "crown", "location": "espinélio azul",
+         "detail": "Coroa heptagonal facetada engastada com espinélio sintético azul",
+         "visibility": visibility, "field": field, "value": shape},
+    ]
+    result = FlashReport("fixture").build_report(answer, {1, 3})
+    observation, = cast(list[dict[str, Any]], result["observations"])
+    assert observation == {
+        "photo": 3, "angle": "crown", "location": "coroa", "detail": expected_detail,
+        "visibility": "visible" if expected_value else "ambiguous",
+        "field": "crown_shape", "value": expected_value,
+    }
+    checks = cast(list[dict[str, Any]], result["technical_checks"])
+    if expected_value in ("7 sided", "round"):
+        check, = checks
+        assert check["photo"] == 3 and check["field"] == "crown_shape"
+        assert check["status"] == ("matched" if expected_value == "7 sided" else "conflicting")
+    else:
+        assert not checks
+    assert result["conclusion"] == "inconclusive"
+
+
 @pytest.mark.parametrize("non_watch", [None, "3", [2], [True], [1, 1]])
 def test_watchless_photo_indices_must_be_distinct_prepared_inputs(non_watch: object) -> None:
     answer = {**_answer(), "non_watch_photos": non_watch}

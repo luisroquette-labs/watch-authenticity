@@ -22,7 +22,7 @@ from reference_intelligence.compare import assess_reference
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
-VERSION = "flash-photo-report-v9"
+VERSION = "flash-photo-report-v10"
 CONCLUSIONS = {
     "probable_fake": "Divergências que justificam investigar falsificação",
     "visually_compatible": "Compatível nos detalhes examinados · autenticidade inconclusiva",
@@ -32,6 +32,7 @@ PROMPT = """Investigue em português as fotos numeradas de relógios. O usuário
 Responda JSON com candidates [{brand,family,reference,reference_id,photo}], non_watch_photos (lista de números de fotos), linkage (single_photo, consistent, mixed, uncertain), observations [{photo,angle,location,detail,visibility,field,value}], hypothesis (probable_fake, probable_original, inconclusive) e next_verification. Antes de avaliar o vínculo, liste em non_watch_photos as imagens que claramente mostram apenas fundo, texto, documentos ou acessórios avulsos sem relógio ou vista física de seus componentes. Exclua essas imagens dos candidatos, do vínculo e das observações. Se não houver relógio visível em nenhuma, use uncertain, listas vazias de candidatos e observações e hipótese inconclusive. Se restar uma imagem claramente de um único relógio, use single_photo. Se uma imagem mostrar mais de um relógio, use mixed, mesmo que seja a única.
 Nos candidates, photo é o número da foto em que características do relógio sustentam a hipótese. reference_id é um ID exato da lista ou null; brand, family e reference são textos ou null. Em cada observação, angle é a vista efetivamente vista (dial, cyclops, rehaut, crown, clasp ou caseback) e visibility é visible ou ambiguous. Escolha field entre movement_marking, um dos campos comparáveis listados ou null para descrição livre. Para um campo comparável, value é o valor visto, em inglês quando possível, ou null se ambíguo. Não repita o esperado como se tivesse visto. A hipótese deve ser sustentada por observações visíveis. Lotes mistos ou com vínculo incerto são inconclusivos.
 Quando o mostrador completo permitir determinar se há janela de data e em qual posição, registre essa leitura em uma observação própria com field date_position e angle dial. Use no date para ausência visível, e marque ambiguous com value null se a foto não permitir decidir. Confira se a referência proposta é compatível com essa leitura. Ao pedir nova foto, indique a área ou a inscrição a examinar sem supor códigos que não aparecem.
+Para crown_shape, descreva só o contorno da coroa. Use round, 7 sided se puder contar os sete lados, ou faceted se puder ver faces sem contá-las. Use ambiguous com value null se o contorno estiver incerto. Trate cor em observação própria apenas quando a foto permitir e não deduza a composição da pedra.
 Quando houver um código legível no rotor, ponte, platina ou módulo visível, registre-o em uma observação com field movement_marking, angle caseback, location rotor, bridge, plate ou module e visibility visible. Escreva só o código literal em value, separado de frases, nome do fabricante e contagem de joias. Omita números de série e códigos ilegíveis. Uma inscrição copiada pode parecer correta. Identificar o calibre depende da arquitetura do mecanismo; autenticidade e precisão exigem evidência própria."""
 _MOVEMENT_MARKING = "movement_marking"
 _MOVEMENT_REGIONS = {"rotor": "rotor", "bridge": "ponte", "plate": "platina", "module": "módulo"}
@@ -51,8 +52,13 @@ _COMPARABLE_VALUES = {
 }
 _VALUE_ALIASES = {
     "bezel_color": {"blue and red": "red and blue", "red/blue": "red and blue", "blue/red": "red and blue"},
-    "crown_shape": {"seven sided": "7 sided"},
+    "crown_shape": {"heptagonal": "7 sided", "seven sided": "7 sided"},
     "date_magnifier": {"cyclops": "magnified", "absent": "no magnifier"},
+}
+_CROWN_SHAPE_DETAILS = {
+    "7 sided": "Coroa com sete lados.",
+    "faceted": "Coroa de contorno facetado.",
+    "round": "Coroa de contorno arredondado.",
 }
 _IDENTITY_ALIASES = {"patekphilippe": "patek", "santosdecartier": "santos"}
 _REFERENCE_CODE = re.compile(r"(?=.*[0-9])[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*")
@@ -292,11 +298,20 @@ class FlashReport:
                 "field": None if item["field"] is None else _text(item["field"], 80),
                 "value": None if item["value"] is None else _text(item["value"], 120),
             }
-            field = observation["field"]
-            if field is not None and field.casefold() not in accepted_fields:
+            field = (observation["field"] or "").casefold()
+            if field and field not in accepted_fields:
                 continue
-            if field is not None and field.casefold() == "date_position":
-                observation["field"] = "date_position"
+            if field == "date_position":
+                observation["field"] = field
+            elif field == "crown_shape":
+                shape_value = _comparison_value(field, observation["value"] or "")
+                shape_detail = _CROWN_SHAPE_DETAILS.get(shape_value) if observation["visibility"] == "visible" else None
+                observation.update(
+                    field=field, location="coroa",
+                    detail=shape_detail or "Formato da coroa indeterminado nesta foto.",
+                    value=shape_value if shape_detail else None,
+                    visibility="visible" if shape_detail else "ambiguous",
+                )
             parsed.append(observation)
         primary_checks = _technical_checks(reference_id, claims, parsed)
         divergent_fields = {check["field"] for check in primary_checks if check["status"] == "conflicting"}
