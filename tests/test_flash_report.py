@@ -645,6 +645,7 @@ def test_movement_marking_is_literal_photo_evidence(
     ("weak-compatibility", 200, "inconclusive"),
     ("calibre-unseen", 200, "inconclusive"),
     ("invalid-movement-marking", 200, "visually_compatible"),
+    ("movement-description", 200, "visually_compatible"),
     ("wrong-reference-code", 200, "inconclusive"),
     ("wrong-reference-brand", 200, "inconclusive"),
     ("outside-catalog", 200, "inconclusive"),
@@ -668,6 +669,10 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
     elif scenario == "invalid-movement-marking":
         answer["observations"].append({"photo": 3, "angle": "movement", "location": None, "detail": "",
                                        "visibility": "unknown", "field": "movement_marking", "value": 3235})
+    elif scenario == "movement-description":
+        answer["observations"].append({"photo": 3, "angle": "movement", "location": "rotor",
+                                       "detail": "Rotor com gravação da coroa", "visibility": "visible",
+                                       "field": None, "value": None})
     elif scenario == "wrong-reference-code":
         answer["candidates"][0]["reference"] = "126610LV"
     elif scenario == "wrong-reference-brand":
@@ -716,6 +721,7 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
         expected_photos = {
             "compatible": [1, 3], "mixed": [], "uncertain": [], "color-only": [1, 3],
             "weak-compatibility": [1], "calibre-unseen": [3], "invalid-movement-marking": [1, 3],
+            "movement-description": [1, 3],
             "wrong-reference-code": [], "wrong-reference-brand": [],
             "outside-catalog": [],
             "equivalent-spec-words": [1, 3], "structural-divergence": [1, 3], "cartier-crown-ambiguous": [1],
@@ -727,6 +733,11 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
         assert all(check["url"].startswith(f"https://www.{brand}.com/") for check in checks)
         if scenario == "equivalent-spec-words":
             assert {check["status"] for check in checks} == {"matched"}
+        if scenario == "movement-description":
+            assert {
+                "photo": 3, "angle": "caseback", "location": "rotor", "detail": "Rotor com gravação da coroa",
+                "visibility": "visible", "field": None, "value": None,
+            } in data["observations"]
         assert data["model_hypothesis"] == answer["hypothesis"]
         expected_reason = {
             "mixed": "unlinked_photos", "uncertain": "unlinked_photos", "wrong-reference-code": "reference_unresolved",
@@ -860,7 +871,7 @@ def test_ballon_bleu_date_distinguishes_commercial_variants(
 
 
 @pytest.mark.parametrize("suggested", ["W69012Z4", "WSBB0049", None])
-@pytest.mark.parametrize("extra", ["none", "crown", "caseback", "1847 MC", "049"])
+@pytest.mark.parametrize("extra", ["none", "crown", "caseback", "movement-description", "1847 MC", "049"])
 def test_ballon_bleu_42_shared_details_keep_both_generations(suggested: str | None, extra: str) -> None:
     answer = _answer()
     models = [suggested] if suggested else ["W69012Z4", "WSBB0049"]
@@ -886,7 +897,9 @@ def test_ballon_bleu_42_shared_details_keep_both_generations(suggested: str | No
         answer["linkage"] = "consistent"
         observation = {"photo": 2, "angle": "caseback", "location": "fundo", "detail": "Tampa metálica visível.",
                        "visibility": "visible", "field": None, "value": None}
-        if extra != "caseback":
+        if extra == "movement-description":
+            observation.update(angle="movement", location="rotor", detail="Rotor com gravação.")
+        elif extra != "caseback":
             observation.update(angle="movement", location="rotor", detail=f"rotor: {extra}",
                                field="movement_marking", value=extra)
         answer["observations"].append(observation)
