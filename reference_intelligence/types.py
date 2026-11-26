@@ -19,6 +19,7 @@ _OFFICIAL_DOMAINS = {
     "audemarspiguet": "audemarspiguet.com",
     "richardmille": "richardmille.com",
 }
+_OFFICIAL_REGIONAL_HOSTS = {"cartier": "www.cartier.mx"}
 
 
 def _single_line(value: str, field: str) -> None:
@@ -87,10 +88,10 @@ class TechnicalClaim:
         if self.source_class is SourceClass.OFFICIAL_BRAND:
             brand = self.reference_id.split("-", 1)[0]
             official_domain = _OFFICIAL_DOMAINS.get(brand)
-            if official_domain is None or (
-                parsed.hostname != official_domain
-                and not parsed.hostname.endswith(f".{official_domain}")
-            ):
+            is_brand_domain = official_domain is not None and (
+                parsed.hostname == official_domain or parsed.hostname.endswith(f".{official_domain}")
+            )
+            if not is_brand_domain and parsed.hostname != _OFFICIAL_REGIONAL_HOSTS.get(brand):
                 raise ValueError("official_brand source_url must use the brand's approved domain")
         if not isinstance(self.observed_at, date) or self.observed_at > date.today():
             raise ValueError("observed_at must be a date not in the future")

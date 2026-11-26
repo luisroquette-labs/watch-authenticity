@@ -291,14 +291,20 @@ def test_cartier_santos_date_layout_is_visible_in_the_official_product_photo(
     assert not result.authenticates_watch
 
 
-def test_cartier_official_claim_rejects_impersonated_domain() -> None:
+@pytest.mark.parametrize(("reference_id", "hostname"), [
+    ("cartier-santos-wssa0061", "cartier.com.evil.example"),
+    ("cartier-ballonbleu-w6920046", "www.cartier.mx.evil.example"),
+    ("cartier-ballonbleu-w6920046", "research.www.cartier.mx"),
+    ("rolex-submariner-126610ln", "www.cartier.mx"),
+])
+def test_official_claim_rejects_unapproved_cartier_hostname(reference_id: str, hostname: str) -> None:
     with pytest.raises(ValueError, match="approved domain"):
         TechnicalClaim(
-            reference_id="cartier-santos-wssa0061",
+            reference_id=reference_id,
             field="dial_color",
             value="green",
             source_class=SourceClass.OFFICIAL_BRAND,
-            source_url="https://cartier.com.evil.example/watch",
+            source_url=f"https://{hostname}/watch",
             citation="False official claim",
             observed_at=date.today(),
             applicable_angles=(Angle.DIAL,),

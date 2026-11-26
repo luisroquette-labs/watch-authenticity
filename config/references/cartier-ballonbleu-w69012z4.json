@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "reference_id": "cartier-ballonbleu-w69012z4",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "W69012Z4",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/w69012z4-relojballonbleudecartier/p",
+      "citation": "Cartier México W69012Z4 > Product reference",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "family_alias",
+      "value": "Ballon Bleu de Cartier",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/w69012z4-relojballonbleudecartier/p",
+      "citation": "Cartier México W69012Z4 > Product name",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "date_position",
+      "value": "3 o'clock",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/w69012z4-relojballonbleudecartier/p",
+      "citation": "Cartier México W69012Z4 > Product description > Apertura de calendario a las 3 horas",
+      "observed_at": "2026-11-26",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "hand_shape",
+      "value": "sword shaped",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/w69012z4-relojballonbleudecartier/p",
+      "citation": "Cartier México W69012Z4 > Product description > Manecillas en forma de espada",
+      "observed_at": "2026-11-26",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "case_diameter_mm",
+      "value": "42.1",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/w69012z4-relojballonbleudecartier/p",
+      "citation": "Cartier México W69012Z4 > Product description > Dimensiones de la caja",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    }
+  ]
+}

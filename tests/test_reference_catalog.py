@@ -147,6 +147,17 @@ def test_seiko_spb453j1_is_research_only_without_admitted_head(catalog_fixture):
         catalog_fixture.catalog.head_for(entry.reference_id)
 
 
+@pytest.mark.parametrize("reference", ("w6920046", "w69012z4"))
+def test_ballon_bleu_commercial_variants_remain_pending(catalog_fixture, reference):
+    entry = catalog_fixture.catalog.entry_for(f"cartier-ballonbleu-{reference}")
+
+    assert (entry.brand, entry.family, entry.reference) == ("cartier", "ballonbleu", reference)
+    assert entry.status == "pending"
+    assert entry.gold_freeze_sha256 is None and entry.holdout_freeze_sha256 is None
+    with pytest.raises(ReferenceNotAdmitted):
+        catalog_fixture.catalog.head_for(entry.reference_id)
+
+
 def test_casio_f91w_1_is_research_only_without_admitted_head(catalog_fixture):
     entry = catalog_fixture.catalog.entry_for("casio-f91w-1")
     assert (entry.brand, entry.family, entry.reference) == ("casio", "f91w", "1")
