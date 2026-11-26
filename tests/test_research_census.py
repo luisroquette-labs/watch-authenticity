@@ -7,8 +7,13 @@ import pytest
 
 import acquisition.research_census as research_census
 from acquisition.research_census import run_research_census_once
+from acquisition.run import main
 
 NOW = datetime(2026, 11, 20, 22, 0, tzinfo=timezone.utc)
+
+
+class _NotFound(Exception):
+    response = {"Error": {"Code": "NoSuchKey"}}
 
 
 class COS:
@@ -27,12 +32,17 @@ class COS:
         }
 
     def get_object(self, **kwargs):
+        if kwargs["Key"] not in self.bodies:
+            raise _NotFound
         return {"Body": io.BytesIO(self.bodies[kwargs["Key"]])}
+
+    def put_object(self, **kwargs):
+        self.bodies[kwargs["Key"]] = kwargs["Body"]
 
     def put_object_if_absent(self, **kwargs):
         if kwargs["Key"] in self.bodies:
             return False
-        self.bodies[kwargs["Key"]] = kwargs["Body"]
+        self.put_object(**kwargs)
         return True
 
 
@@ -251,6 +261,65 @@ def test_late_manifest_creates_immutable_revision_without_rewriting_terminal():
     revisions = [key for key in cos.bodies if "/research-census/" in key and "/revisions/" in key]
     assert len(revisions) == 1
     assert json.loads(cos.bodies[revisions[0]]) == revised
+
+
+def test_census_runtime_binds_each_job_to_its_verified_snapshot(monkeypatch):
+    class FixedClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW
+
+    cos = COS()
+    monkeypatch.setattr("acquisition.run.datetime", FixedClock)
+    for name in (
+        "WATCH_AUTH_COS_BUCKET", "WATCH_AUTH_COS_ENDPOINT", "WATCH_AUTH_COS_SERVICE_INSTANCE_ID",
+        "WATCH_AUTH_TRUSTED_PROFILE_ID", "WATCH_AUTH_ACCOUNT_ID", "WATCH_AUTH_IAM_READER_POLICY_ID",
+    ):
+        monkeypatch.setenv(name, "test-value")
+    monkeypatch.setenv("WATCH_AUTH_ACQUISITION_PREFIX", "datasets")
+    monkeypatch.setattr("ibm_cloud_sdk_core.authenticators.ContainerAuthenticator", lambda **_: object())
+    monkeypatch.setattr("acquisition.run.create_oauth_cos_client", lambda *_args, **_kwargs: cos)
+    monkeypatch.setattr("acquisition.run.AtomicCOSClient", lambda client: client)
+    monkeypatch.setattr("acquisition.run.verify_no_public_access_policies", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("acquisition.run.verify_private_versioned_bucket", lambda *_args: None)
+    for name, value in {
+        "CE_SPECVERSION": "1.0", "CE_TYPE": "dev.knative.sources.ping", "CE_SUBDOMAIN": "project",
+        "CE_SOURCE": "/apis/v1/namespaces/project/pingsources/watch-auth-research-census-daily",
+        "CE_TIME": "2026-11-20T04:27:00Z", "CE_JOBRUN": "census-first", "CE_ID": "event-first",
+    }.items():
+        monkeypatch.setenv(name, value)
+    _seed(cos)
+    main("research-census")
+    terminal_key, = (key for key in cos.bodies if key.endswith("/terminal.json"))
+    terminal = cos.bodies[terminal_key]
+
+    _seed(cos, offset=2)
+    monkeypatch.setenv("CE_JOBRUN", "census-revision")
+    monkeypatch.setenv("CE_ID", "event-revision")
+    main("research-census")
+    main("research-census")
+    monkeypatch.setenv("CE_JOBRUN", "census-manual")
+    monkeypatch.delenv("CE_ID")
+    main("research-census")
+
+    receipts = {}
+    for key, body in cos.bodies.items():
+        if "/acquisition-status/" in key:
+            assert key.endswith(f"/{hashlib.sha256(body).hexdigest()}.json")
+            document = json.loads(body)
+            assert document["source"] == "research-census"
+            assert document["state"] == "complete"
+            receipts[document["code_engine_jobrun"]] = document
+    assert set(receipts) == {"census-first", "census-revision", "census-manual"}
+    assert cos.bodies[terminal_key] == terminal
+    assert receipts["census-first"]["census_sha256"] == hashlib.sha256(terminal).hexdigest()
+    assert receipts["census-first"]["code_engine_cron_event"]["id"] == "event-first"
+    revision, = (body for key, body in cos.bodies.items() if "/revisions/" in key)
+    digest = hashlib.sha256(revision).hexdigest()
+    assert receipts["census-revision"]["census_sha256"] == digest
+    assert receipts["census-revision"]["code_engine_cron_event"]["id"] == "event-revision"
+    assert receipts["census-manual"]["census_sha256"] == digest
+    assert "code_engine_cron_event" not in receipts["census-manual"]
 
 
 @pytest.mark.parametrize("schema,excluded", [
