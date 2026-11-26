@@ -417,3 +417,85 @@ def test_unanswered_case_can_connect_two_published_decisions_by_provenance() -> 
     assert original["decisions"] == 2
     assert original["shared_provenance"]
     assert original["lower_one_sided_95"] is None
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_frozen_confirmatory_metrics_preserve_independent_denominators(shared: bool) -> None:
+    answered = _case("answered", "original")
+    unanswered = _case("unanswered", provenance_clusters=["source:answered"] if shared
+                       else ["source:unanswered"])
+    data, params, run = _frozen_inputs(answered, unanswered)
+    manifest = json.loads(data)
+    manifest["freeze"]["confirmatory_alpha"] = 0.05 / 6
+    data = json.dumps(manifest).encode()
+    params["manifest_sha256"] = hashlib.sha256(data).hexdigest()
+    run.update(freeze=manifest["freeze"], manifest_sha256=params["manifest_sha256"])
+    run["reports"] = {"answered": _run_receipt(answered, "probable_original")}
+
+    score_result = _frozen_score(data, params, run)
+
+    assert score_result["independent"]["accuracy_all_cases"] == 0.5
+    assert score_result["independent"]["unavailable"] == 1
+    bounds = score_result["confirmatory"]
+    assert bounds["alpha"] == 0.05 / 6
+    if shared:
+        assert bounds["all_cases_accuracy_lower"] is None
+    else:
+        assert 0 < bounds["all_cases_accuracy_lower"] < 0.5
+    scope, = score_result["by_reference_generation"]
+    predictions = scope["precision_by_prediction"]
+    assert predictions["probable_original"]["lower_confirmatory"] == pytest.approx(0.05 / 6)
+    assert predictions["probable_fake"]["lower_confirmatory"] is None
+
+
+def test_confirmatory_bounds_require_independent_groups_and_adjusted_alpha() -> None:
+    from evaluation.evaluate import confirmatory_lower_bound, precision_lower_bound
+
+    assert confirmatory_lower_bound(2, ("auction-1", "auction-1"), alpha=0.05) is None
+    assert confirmatory_lower_bound(0, (), alpha=0.05) is None
+    independent = confirmatory_lower_bound(2, ("auction-1", "auction-2"), alpha=0.05)
+    assert independent is not None and independent > 0
+    for rate, n in [(0.95, 59), (0.99, 299)]:
+        below = precision_lower_bound(n - 1, n - 1, alpha=0.05)
+        at_minimum = precision_lower_bound(n, n, alpha=0.05)
+        assert below is not None and below < rate
+        assert at_minimum is not None and at_minimum >= rate
+    adjusted = precision_lower_bound(59, 59, alpha=0.05 / 6)
+    assert adjusted is not None and adjusted < 0.95
+
+
+@pytest.mark.parametrize("alpha", [None, True, 0, -0.05, 0.1, "0.01"])
+def test_census_rejects_unusable_confirmatory_alpha(alpha: object) -> None:
+    manifest = _manifest(_case("watch"))
+    manifest["freeze"]["confirmatory_alpha"] = alpha
+    with pytest.raises(ValueError, match="confirmatory alpha"):
+        census(manifest)
+
+
+def test_frozen_review_keeps_missing_evidence_separate_from_provider_failure() -> None:
+    held, unavailable = _case("held"), _case("unavailable")
+    data, params, run = _frozen_inputs(held, unavailable)
+    held_receipt = {
+        **_run_receipt(held, "inconclusive"), "review_status": "no_comparable_fields",
+    }
+    failed_receipt = {
+        **_run_receipt(unavailable, "unavailable"),
+        "review_status": "unavailable",
+        "gpt_model": "model-version-b",
+        "gpt_media_sha256": unavailable["prepared_media_sha256"],
+        "gpt_technical_facts_sha256": "c" * 64,
+        "gpt_request_sha256": "6" * 64,
+    }
+    run.update(route="with_review", reports={"held": held_receipt, "unavailable": failed_receipt})
+
+    score_result = _frozen_score(data, params, run)["independent"]
+
+    assert [score_result[key] for key in ("cases", "inconclusive", "unavailable")] == [2, 1, 1]
+    for changes in ({"conclusion": "probable_original"}, {"gpt_response_id": "unexpected"}):
+        run["reports"]["held"] = {**held_receipt, **changes}
+        with pytest.raises(ValueError, match="no-review receipt"):
+            _frozen_score(data, params, run)
+    run["reports"]["held"] = held_receipt
+    del failed_receipt["gpt_request_sha256"]
+    with pytest.raises(ValueError, match="lacks a matching GPT request"):
+        _frozen_score(data, params, run)

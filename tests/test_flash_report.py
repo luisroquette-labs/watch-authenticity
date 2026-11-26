@@ -10,7 +10,7 @@ import pytest
 import requests
 from PIL import Image
 
-from evaluation.pilot_pairing import replay_with_review
+from evaluation.pilot_pairing import ReplayDecision, replay_with_review
 from pilot.flash_report import FlashReport
 from pilot.flash_research import MODEL, complete_flash
 from pilot.server import PilotHTTPServer, handler
@@ -79,6 +79,7 @@ def test_watchless_batch_discards_candidates_and_asks_for_a_watch_photo() -> Non
     report = FlashReport("fixture").build_report(answer, {1, 3})
     assert report["decision_reason"] == "no_watch_visible"
     assert report["conclusion"] == report["model_hypothesis"] == "inconclusive"
+    assert report["hypothesis_origin"] == "policy_veto"
     assert report["candidates"] == report["examined_photos"] == report["technical_checks"] == []
     assert "foto nítida do relógio inteiro" in str(report["next_verification"])
 
@@ -1669,3 +1670,161 @@ def test_identification_checks_are_excluded_from_authenticity_review() -> None:
     )
     assert result["previous_policy"] == "inconclusive"
     assert result["review_status"] == "no_comparable_fields"
+
+
+def test_shadow_explains_when_linkage_blocks_an_existing_hypothesis() -> None:
+    answer = _answer()
+    answer.update(hypothesis="probable_fake", linkage="uncertain")
+
+    result = FlashReport("fixture").build_report(answer, {1, 3})
+
+    assert result["model_hypothesis"] == "probable_fake"
+    assert result["conclusion"] == "inconclusive"
+    assert result["hypothesis_origin"] == "linkage_veto"
+
+
+def test_clasp_inscription_remains_an_observation_with_component_scope() -> None:
+    answer = _answer()
+    answer["candidates"] = [{
+        "brand": "Rolex", "family": "Datejust", "reference": "126334",
+        "reference_id": "rolex-datejust-126334", "photo": 1,
+    }]
+    answer["hypothesis"] = "probable_fake"
+    answer["observations"].append({
+        "photo": 3, "angle": "clasp", "location": "interior do fecho",
+        "detail": "Inscrição aparente ORV na lâmina", "visibility": "visible",
+        "field": None, "value": None,
+    })
+
+    result = FlashReport("fixture").build_report(answer, {1, 3})
+
+    observations = cast(list[dict[str, object]], result["observations"])
+    checks = cast(list[dict[str, object]], result["technical_checks"])
+    assert any(item["angle"] == "clasp" and "ORV" in cast(str, item["detail"])
+               for item in observations)
+    assert not any(item["field"] in {"clasp_code", "replica_factory"} for item in checks)
+    assert result["conclusion"] == "inconclusive"
+    assert result["hypothesis_origin"] == "policy_veto"
+
+
+def test_shadow_hypothesis_changes_only_the_instruction() -> None:
+    photo = ("dial", "image/png", base64.b64decode(_photo("silver")))
+    report = FlashReport("fixture")
+    production, indices, mono = report.prepare_with_monochrome([photo])
+    shadow, shadow_indices, shadow_mono = report.prepare_with_monochrome(
+        [photo], shadow_hypothesis=True,
+    )
+
+    assert production[1:] == shadow[1:]
+    assert (indices, mono) == (shadow_indices, shadow_mono)
+    production_prompt = cast(str, production[0]["text"])
+    shadow_prompt = cast(str, shadow[0]["text"])
+    assert "Lotes mistos ou com vínculo incerto são inconclusivos." in production_prompt
+    assert "Lotes mistos ou com vínculo incerto são inconclusivos." not in shadow_prompt
+    assert "Qual hipótese de autenticidade é mais bem sustentada" in shadow_prompt
+    assert "Omita números de série" in shadow_prompt
+
+
+@pytest.mark.parametrize("candidate", ["probable_original", "inconclusive"])
+def test_review_uses_the_same_candidate_decision_as_gemini(candidate: str) -> None:
+    photos = [
+        ("dial", "image/png", base64.b64decode(_photo("black"))),
+        ("caseback", "image/png", base64.b64decode(_photo("silver"))),
+        ("cyclops", "image/png", base64.b64decode(_photo("gray"))),
+    ]
+    calls = []
+    material_claims: frozenset[str] = frozenset()
+
+    def gemini(content):
+        calls.append("gemini")
+        assert "Qual hipótese de autenticidade é mais bem sustentada" in content[0]["text"]
+        return _answer(), {"model": MODEL, "model_response_id": "test-provider-id"}
+
+    def decide(capture, report, fields):
+        nonlocal material_claims
+        calls.append("decide")
+        assert capture.case_id == "watch-1"
+        assert capture.gemini_response_id == "test-provider-id"
+        assert report["model_hypothesis"] == "probable_original"
+        material_claims = frozenset(list(fields)[:1])
+        return ReplayDecision(candidate, material_claims)
+
+    def review(request):
+        calls.append("review")
+        forbidden = {"gemini_hypothesis", "gemini_score_raw", "truth_label", "conclusion"}
+        assert not forbidden & request.keys()
+        assert set(request["review_fields"]) == material_claims
+        return {"case_token": request["case_token"], "findings": [
+            {"claim_id": key, "photo_id": field["photo_id"],
+             "source_fact_id": field["source_fact_id"], "status": "supported",
+             "reading": "Leitura própria compatível no fixture"}
+            for key, field in request["review_fields"].items()
+        ]}
+
+    result = replay_with_review(
+        FlashReport("fixture"), "watch-1", photos, gemini, review,
+        candidate_decider=decide, shadow_hypothesis=True,
+    )
+
+    assert calls == ["gemini", "decide", "review"]
+    assert result["previous_policy"] == "inconclusive"
+    assert result["gemini_hypothesis"] == "probable_original"
+    assert result["gemini_only"] == result["with_review"] == candidate
+
+
+def test_candidate_replay_distinguishes_missing_evidence_from_review_failure() -> None:
+    photos = [
+        ("dial", "image/png", base64.b64decode(_photo("black"))),
+        ("caseback", "image/png", base64.b64decode(_photo("silver"))),
+        ("cyclops", "image/png", base64.b64decode(_photo("gray"))),
+    ]
+    def decision(_capture, _report, fields):
+        return ReplayDecision("probable_original", frozenset(fields))
+
+    answer = _answer()
+    metadata: dict[str, object] = {"model": MODEL, "model_response_id": "test-provider-id"}
+    service = FlashReport("fixture")
+    unavailable = replay_with_review(
+        service, "watch-1", photos, lambda _: (answer, metadata), lambda _: None,
+        candidate_decider=decision,
+    )
+    assert (unavailable["review_status"], unavailable["with_review"]) == ("unavailable", "unavailable")
+
+    answer["observations"] = []
+    inconclusive = replay_with_review(
+        service, "watch-1", photos, lambda _: (answer, metadata),
+        lambda _: pytest.fail("review must not be called without fields"),
+        candidate_decider=decision,
+    )
+    assert (inconclusive["review_status"], inconclusive["with_review"]) == (
+        "no_comparable_fields", "inconclusive",
+    )
+
+    answer["linkage"] = "uncertain"
+    unlinked = replay_with_review(
+        service, "watch-1", photos, lambda _: (answer, metadata),
+        lambda _: pytest.fail("review must not be called without linkage"),
+        candidate_decider=lambda *_: pytest.fail("candidate policy cannot publish mixed views"),
+    )
+    assert unlinked["gemini_only"] == unlinked["with_review"] == "inconclusive"
+
+
+@pytest.mark.parametrize("candidate,claim_ids,pattern", [
+    ("probable_fake", frozenset(), "preserve the Gemini hypothesis"),
+    ("probable_original", frozenset({"unknown"}), "outside the captured report"),
+])
+def test_replay_rejects_reversed_hypothesis_and_invented_claim(
+    candidate: str, claim_ids: frozenset[str], pattern: str,
+) -> None:
+    photos = [
+        ("dial", "image/png", base64.b64decode(_photo("red"))),
+        ("cyclops", "image/png", base64.b64decode(_photo("silver"))),
+        ("cyclops", "image/png", base64.b64decode(_photo("gray"))),
+    ]
+    with pytest.raises(ValueError, match=pattern):
+        replay_with_review(
+            FlashReport("fixture"), "watch-1", photos,
+            lambda _: (_answer(), {"model": MODEL, "model_response_id": "test-provider-id"}),
+            lambda _: pytest.fail("invalid claims must never reach the reviewer"),
+            candidate_decider=lambda *_: ReplayDecision(candidate, claim_ids),
+        )

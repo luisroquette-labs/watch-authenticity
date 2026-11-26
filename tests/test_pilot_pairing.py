@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Any
 
 import pytest
 
@@ -43,3 +44,30 @@ def test_previous_policy_must_use_same_photos(capture: ReplayInput) -> None:
     previous = replace(capture, photo_sha256s=("8" * 64,))
     with pytest.raises(ValueError, match="ordered photos"):
         verify_paired_inputs(previous, capture, capture)
+
+
+def test_surface_parity_rejects_reordered_media_and_changed_question() -> None:
+    from evaluation.pilot_pairing import verify_surface_inputs
+
+    photos, prompt = ("a" * 64, "b" * 64), "c" * 64
+    verify_surface_inputs((photos, prompt), (photos, prompt))
+    with pytest.raises(ValueError, match="same ordered photos and question"):
+        verify_surface_inputs((photos, prompt), (photos[::-1], prompt))
+    with pytest.raises(ValueError, match="same ordered photos and question"):
+        verify_surface_inputs((photos, prompt), (photos, "d" * 64))
+
+
+@pytest.mark.parametrize("photos", [(), ("bad-digest",)])
+def test_surface_parity_rejects_unusable_photo_digests(photos: tuple[str, ...]) -> None:
+    from evaluation.pilot_pairing import verify_surface_inputs
+
+    with pytest.raises(ValueError, match="ordered photo and prompt digests"):
+        verify_surface_inputs((photos, "a" * 64), (photos, "a" * 64))
+
+
+def test_surface_parity_rejects_unordered_photo_inputs() -> None:
+    from evaluation.pilot_pairing import verify_surface_inputs
+
+    unordered: Any = {"a" * 64, "b" * 64}
+    with pytest.raises(ValueError, match="ordered photo and prompt digests"):
+        verify_surface_inputs((unordered, "c" * 64), (unordered, "c" * 64))

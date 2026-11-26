@@ -40,6 +40,17 @@ No Cartier Tank Must automático, WSTA0040 é a configuração com correia de co
 Para crown_shape, descreva só o contorno da coroa. Use round, 7 sided se puder contar os sete lados, ou faceted se puder ver faces sem contá-las. Use ambiguous com value null se o contorno estiver incerto. Trate cor em observação própria apenas quando a foto permitir e não deduza a composição da pedra.
 Na vista traseira de um Speedmaster Moonwatch, registre caseback_type com transparent só se houver uma janela instalada na tampa, solid se houver uma tampa opaca instalada ou open quando a tampa tiver sido removida. Se só aparecer o movimento e não der para ver se há uma tampa instalada, marque ambiguous com value null. Observe a borda, a junção ou a tampa removida. A foto não determina o material da janela nem se a tampa foi trocada.
 Quando houver um código legível gravado diretamente no rotor, ponte, platina ou módulo visível, registre-o em uma observação com field movement_marking, angle movement, location rotor, bridge, plate ou module e visibility visible. Use angle movement apenas nesse campo e quando o componente interno estiver visível pela abertura ou por um fundo transparente. Nesse caso, escreva em detail exatamente a localização e a inscrição no formato "rotor: 26-330", trocando rotor e 26-330 pelos valores lidos. Para códigos gravados na tampa externa, use angle caseback, field null e descreva a inscrição na tampa. Um número de módulo na tampa não mostra o módulo instalado. Escreva só o código literal em value, separado de frases, nome do fabricante e contagem de joias. Omita números de série e códigos ilegíveis. Uma inscrição copiada pode parecer correta. Identificar o calibre depende da arquitetura do mecanismo; autenticidade e precisão exigem evidência própria."""
+_SHADOW_HYPOTHESIS_PROMPT = PROMPT.replace(
+    "Lotes mistos ou com vínculo incerto são inconclusivos.",
+    (
+        "Qual hipótese de autenticidade é mais bem sustentada pelo que se vê neste exemplar? "
+        "Se houver um sinal material, escolha probable_fake ou probable_original. Cite foto, região, "
+        "detalhe visível, o que a ficha permite comparar e a alternativa plausível mais forte. "
+        "Quando os sinais visíveis não distinguirem as hipóteses, use inconclusive e a menor "
+        "verificação útil. Registre o vínculo separadamente. Uma vista sem vínculo não sustenta "
+        "a hipótese sobre outra peça. Etiqueta, plástico, caixa e cartão não decidem a classe."
+    ),
+)
 _DIAL_DEPTH_MARKING = "dial_depth_marking"
 _DIAL_DEPTH_VALUES = {"200m", "300m"}
 _BEZEL_EDGE_COLOR = "bezel_edge_color"
@@ -237,7 +248,7 @@ class FlashReport:
         return content, indices
 
     def prepare_with_monochrome(
-        self, photos: list[tuple[str, str, bytes]],
+        self, photos: list[tuple[str, str, bytes]], *, shadow_hypothesis: bool = False,
     ) -> tuple[list[dict[str, object]], set[int], set[int]]:
         date_layouts = "; ".join(
             f"{claim.reference_id}: {claim.value}"
@@ -249,8 +260,9 @@ class FlashReport:
             f"{reference_id}: {depth}, borda {edge}"
             for reference_id, (depth, edge) in self.diver_variants.items()
         )
+        prompt = _SHADOW_HYPOTHESIS_PROMPT if shadow_hypothesis else PROMPT
         content: list[dict[str, object]] = [{"type": "text", "text": (
-            f"{PROMPT}\nReferências catalogadas (não presuma cobertura): {', '.join(self.claims)}."
+            f"{prompt}\nReferências catalogadas (não presuma cobertura): {', '.join(self.claims)}."
             f"\nCampos comparáveis: {', '.join(sorted(self.visual_fields))}."
             f"\nData segundo as fichas oficiais, para comparação com a foto: {date_layouts}."
             f"\nInscrição no mostrador e cor da borda do bisel nas variantes catalogadas: {diver_variants}."
@@ -317,6 +329,7 @@ class FlashReport:
             or linkage == "single_photo" and len(watch_indices) > 1
             or linkage == "consistent" and len(watch_indices) == 1):
             raise ValueError("resultado de análise inválido")
+        raw_hypothesis = hypothesis
         if not watch_indices:
             linkage, hypothesis = "uncertain", "inconclusive"
             candidates, observations = [], []
@@ -806,6 +819,16 @@ class FlashReport:
             limits.append("Há indícios de que o lote contém mais de um relógio.")
         elif linkage == "uncertain" and watch_indices:
             limits.append("O modelo não conseguiu vincular as fotos a uma só peça.")
+        if raw_hypothesis == "inconclusive":
+            hypothesis_origin = "model_abstained"
+        elif not watch_indices:
+            hypothesis_origin = "policy_veto"
+        elif not linked:
+            hypothesis_origin = "linkage_veto"
+        elif hypothesis in {"inconclusive", "visually_compatible"}:
+            hypothesis_origin = "policy_veto"
+        else:
+            hypothesis_origin = "passed"
         return {
             "report_version": VERSION, "conclusion": hypothesis, "conclusion_label": CONCLUSIONS[hypothesis],
             "candidates": parsed_candidates, "linkage": linkage,
@@ -816,7 +839,8 @@ class FlashReport:
             "color_limited_photos": sorted(color_limited),
             "technical_checks": checks, "limits": limits,
             "decision_reason": reason, "decision_reason_text": reason_text,
-            "model_hypothesis": model_hypothesis, "next_verification": next_verification,
+            "model_hypothesis": model_hypothesis, "hypothesis_origin": hypothesis_origin,
+            "next_verification": next_verification,
             "quality_score_0_1000": None,
         }
 

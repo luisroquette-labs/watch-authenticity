@@ -59,15 +59,41 @@ def verify_paired_inputs(
     }
 
 
+def verify_surface_inputs(
+    native: tuple[tuple[str, ...], str], api: tuple[tuple[str, ...], str],
+) -> None:
+    for photos, prompt in (native, api):
+        if not isinstance(photos, tuple) or not photos or any(
+            not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None
+            for value in (*photos, prompt)
+        ):
+            raise ValueError("surface inputs require ordered photo and prompt digests")
+    if native != api:
+        raise ValueError("surface inputs require the same ordered photos and question")
+
+
+@dataclass(frozen=True)
+class ReplayDecision:
+    conclusion: str
+    review_claim_ids: frozenset[str]
+
+
 def replay_with_review(
     report_builder: FlashReport,
     case_id: str,
     photos: list[tuple[str, str, bytes]],
     gemini: Callable[[list[dict[str, object]]], tuple[object, dict[str, object]]],
     review: Callable[[dict[str, Any]], object],
+    *,
+    candidate_decider: Callable[
+        [ReplayInput, dict[str, Any], dict[str, dict[str, Any]]], ReplayDecision,
+    ] | None = None,
+    shadow_hypothesis: bool = False,
 ) -> dict[str, Any]:
     """Rehearse the three arms with injected responses and one Gemini capture."""
-    content, indices, monochrome = report_builder.prepare_with_monochrome(photos)
+    content, indices, monochrome = report_builder.prepare_with_monochrome(
+        photos, shadow_hypothesis=shadow_hypothesis,
+    )
     facts: dict[str, dict[str, Any]] = {}
     for claims in report_builder.claims.values():
         for claim in claims:
@@ -122,6 +148,16 @@ def replay_with_review(
     linked = report["linkage"] in ("single_photo", "consistent")
     hypothesis = report["model_hypothesis"] if linked else "inconclusive"
     previous_policy = report["conclusion"]
+    review_target = previous_policy
+    if candidate_decider is not None and linked:
+        decision = candidate_decider(capture, deepcopy(report), deepcopy(fields))
+        if decision.conclusion not in {hypothesis, "inconclusive"}:
+            raise ValueError("candidate decision must preserve the Gemini hypothesis or abstain")
+        if not decision.review_claim_ids <= fields.keys():
+            raise ValueError("candidate decision cites claims outside the captured report")
+        fields = {claim_id: field for claim_id, field in fields.items()
+                  if claim_id in decision.review_claim_ids}
+        hypothesis = review_target = decision.conclusion
     result = {
         "capture": capture,
         "prepared_photos": prepared_photos,
@@ -138,6 +174,8 @@ def replay_with_review(
         return {**result, "with_review": "inconclusive", "review_status": "unlinked_photos"}
     color_limited = previous_policy == "inconclusive" and bool(report["color_limited_photos"])
     if not fields:
+        if candidate_decider is not None:
+            return {**result, "with_review": "inconclusive"}
         if report["decision_reason"] == "date_readings_disagree" or color_limited:
             return {**result, "with_review": "inconclusive", "review_status": "needs_verification"}
         return result
@@ -182,10 +220,10 @@ def replay_with_review(
         findings_by_claim[claim_id] = {**target, "status": status, "reading": reading.strip()}
         if expected_statuses[claim_id] != {status}:
             disputed_claim_ids.append(claim_id)
-    needs_verification = bool(disputed_claim_ids) or previous_policy == "inconclusive"
+    needs_verification = bool(disputed_claim_ids) or review_target == "inconclusive"
     return {
         **result,
-        "with_review": "inconclusive" if needs_verification else previous_policy,
+        "with_review": "inconclusive" if needs_verification else review_target,
         "review_status": "needs_verification" if needs_verification else "supported",
         "review_findings": findings_by_claim,
         "disputed_claim_ids": disputed_claim_ids,
