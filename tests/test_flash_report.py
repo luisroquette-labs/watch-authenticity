@@ -1700,7 +1700,7 @@ def test_clasp_inscription_remains_an_observation_with_component_scope() -> None
 
     observations = cast(list[dict[str, object]], result["observations"])
     checks = cast(list[dict[str, object]], result["technical_checks"])
-    assert any(item["angle"] == "clasp" and "ORV" in str(item["detail"])
+    assert any(item["angle"] == "clasp" and "ORV" in cast(str, item["detail"])
                for item in observations)
     assert not any(item["field"] in {"clasp_code", "replica_factory"} for item in checks)
     assert result["conclusion"] == "inconclusive"
@@ -1717,8 +1717,8 @@ def test_shadow_hypothesis_changes_only_the_instruction() -> None:
 
     assert production[1:] == shadow[1:]
     assert (indices, mono) == (shadow_indices, shadow_mono)
-    production_prompt = str(production[0]["text"])
-    shadow_prompt = str(shadow[0]["text"])
+    production_prompt = cast(str, production[0]["text"])
+    shadow_prompt = cast(str, shadow[0]["text"])
     assert "Lotes mistos ou com vínculo incerto são inconclusivos." in production_prompt
     assert "Lotes mistos ou com vínculo incerto são inconclusivos." not in shadow_prompt
     assert "Qual hipótese de autenticidade é mais bem sustentada" in shadow_prompt
