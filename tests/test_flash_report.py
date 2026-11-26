@@ -1332,3 +1332,174 @@ def test_moonwatch_caseback_comparison_preserves_reference_scope(
         assert "310.30.42.50.01.001" in cast(str, report["decision_reason_text"])
     else:
         assert not checks
+
+
+@pytest.mark.parametrize(("code", "family"), [
+    ("SPB383", "Prospex"), ("SPB383J1", "1968 Diver’s Modern Re-interpretation GMT"),
+])
+@pytest.mark.parametrize(("visibility", "observed", "rejected"), [
+    ("visible", "300 m", True),
+    ("visible", "200m", False),
+    ("ambiguous", "300m", False),
+    ("visible", "300ft", False),
+    ("visible", "3 00m", False),
+])
+def test_seiko_dial_depth_marking_checks_identity_only(
+    code: str, family: str, visibility: str, observed: str, rejected: bool,
+) -> None:
+    answer = _answer()
+    answer.update(
+        linkage="single_photo", hypothesis="probable_fake",
+        candidates=[{"brand": "Seiko", "family": family, "reference": code,
+                     "reference_id": "seiko-prospex-spb383j1", "photo": 1}],
+        observations=[{"photo": 1, "angle": "dial", "location": "text near 6",
+                       "detail": "Watch certified for diving at 300 metres.",
+                       "visibility": visibility, "field": "dial_depth_marking", "value": observed}],
+    )
+    report = FlashReport("fixture").build_report(answer, {1})
+    candidate, = cast(list[dict[str, Any]], report["candidates"])
+    assert (candidate["reference"] is None) is rejected
+    assert report["conclusion"] == "inconclusive"
+    checks = cast(list[dict[str, Any]], report["technical_checks"])
+    if visibility == "visible" and observed in {"200m", "300 m"}:
+        check, = checks
+        assert (check["field"], check["photo"]) == ("dial_depth_marking", 1)
+        assert check["status"] == ("conflicting" if rejected else "matched")
+        assert check["url"].startswith("https://www.seikowatches.com/")
+        observation, = cast(list[dict[str, Any]], report["observations"])
+        assert observation["detail"] == f"Inscrição no mostrador · {observed.replace(' ', '')}."
+    else:
+        assert not checks
+    if rejected:
+        assert code in str(report["decision_reason_text"])
+        assert "cartão de garantia" in str(report["next_verification"])
+
+
+def test_seiko_300m_marking_does_not_choose_between_two_compatible_variants() -> None:
+    answer = _answer()
+    answer.update(
+        linkage="single_photo", hypothesis="probable_original",
+        candidates=[{"brand": "Seiko", "family": "Prospex", "reference": code, "reference_id": None, "photo": 1}
+                    for code in ("HBC002J1", "SPB534J1")],
+        observations=[{"photo": 1, "angle": "dial", "location": "mostrador",
+                       "detail": "DIVER'S 300m", "visibility": "visible",
+                       "field": "dial_depth_marking", "value": "300m"}],
+    )
+    report = FlashReport("fixture").build_report(answer, {1})
+    assert [item["reference"] for item in cast(list[dict[str, Any]], report["candidates"])] == ["HBC002J1", "SPB534J1"]
+    checks = cast(list[dict[str, Any]], report["technical_checks"])
+    assert {(item["reference_id"], item["status"]) for item in checks} == {
+        ("seiko-prospex-hbc002j1", "matched"), ("seiko-prospex-spb534j1", "matched"),
+    }
+    assert report["conclusion"] == "inconclusive"
+
+
+def test_prompt_supplies_official_seiko_variant_comparators() -> None:
+    content, _ = FlashReport("fixture").prepare([("dial", "image/png", base64.b64decode(_photo("red")))])
+    prompt = str(content[0]["text"])
+    assert "seiko-prospex-hbc002j1: 300m, borda silver-tone" in prompt
+    assert "seiko-prospex-spb383j1: 200m, borda silver-tone" in prompt
+    assert "seiko-prospex-spb534j1: 300m, borda gold-tone" in prompt
+
+
+def test_disagreeing_depth_readings_do_not_reject_the_candidate() -> None:
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Seiko", "family": "Prospex", "reference": "HBC002",
+                     "reference_id": None, "photo": 1}],
+        observations=[{"photo": photo, "angle": "dial", "location": "mostrador", "detail": value,
+                       "visibility": "visible", "field": "dial_depth_marking", "value": value}
+                      for photo, value in ((1, "300m"), (3, "200m"))],
+    )
+    report = FlashReport("fixture").build_report(answer, {1, 3})
+    candidate, = cast(list[dict[str, Any]], report["candidates"])
+    assert candidate["reference"] == "HBC002" and candidate["reference_id"] is None
+    assert report["conclusion"] == "inconclusive"
+    assert report["decision_reason"] == "dial_marking_readings_disagree"
+    assert report["technical_checks"] == []
+
+
+@pytest.mark.parametrize(("angle", "tone", "monochrome", "resolved"), [
+    ("dial", "silver-tone", frozenset(), True),
+    ("dial", "gold-tone", frozenset(), False),
+    ("dial", "silver-tone", frozenset({1}), False),
+    ("dial", "unverified solid gold", frozenset(), False),
+    ("caseback", "silver-tone", frozenset(), False),
+    (None, None, frozenset(), False),
+])
+def test_same_marking_needs_visible_bezel_tone_to_resolve_diver_variant(
+    angle: str | None, tone: str | None, monochrome: frozenset[int], resolved: bool,
+) -> None:
+    answer = _answer()
+    answer.update(
+        linkage="single_photo",
+        candidates=[{"brand": "Seiko", "family": "1968 Heritage Diver's GMT Watch",
+                     "reference": "HBC002J1", "reference_id": None, "photo": 1}],
+        observations=[{"photo": 1, "angle": "dial", "location": "mostrador",
+                       "detail": "DIVER'S 300m", "visibility": "visible",
+                       "field": "dial_depth_marking", "value": "300m"}],
+    )
+    if angle:
+        answer["observations"].append(
+            {"photo": 1, "angle": angle, "location": "bisel",
+             "detail": "Solid gold proves genuine.", "visibility": "visible", "field": "bezel_edge_color", "value": tone},
+        )
+    report = FlashReport("fixture").build_report(answer, {1}, monochrome=monochrome)
+    candidate, = cast(list[dict[str, Any]], report["candidates"])
+    assert report["conclusion"] == "inconclusive"
+    assert (candidate["reference_id"] == "seiko-prospex-hbc002j1") is resolved
+    assert "proves genuine" not in str(report["observations"])
+    if resolved:
+        checks = cast(list[dict[str, Any]], report["technical_checks"])
+        assert {(check["field"], check["status"]) for check in checks} == {
+            ("dial_depth_marking", "matched"), ("bezel_edge_color", "matched"),
+        }
+    else:
+        assert candidate["reference_id"] is None
+        assert report["decision_reason"] == "dial_marking_variant_unresolved"
+        assert all(code in str(report["decision_reason_text"]) for code in ("HBC002J1", "SPB534J1"))
+        assert "em cores" in str(report["next_verification"])
+
+
+def test_depth_readings_do_not_change_unrelated_structural_discrepancies() -> None:
+    answer = _answer()
+    answer.update(
+        hypothesis="probable_fake",
+        candidates=[{"brand": "Cartier", "family": "Santos", "reference": "WSSA0061",
+                     "reference_id": "cartier-santos-wssa0061", "photo": 1}],
+        observations=[
+            {"photo": 1, "angle": "dial", "location": "ponteiros", "detail": "Ponteiros em bastão.",
+             "visibility": "visible", "field": "hand_shape", "value": "baton"},
+            {"photo": 3, "angle": "crown", "location": "coroa", "detail": "Coroa arredondada.",
+             "visibility": "visible", "field": "crown_shape", "value": "round"},
+            *({"photo": photo, "angle": "dial", "location": "mostrador", "detail": value,
+               "visibility": "visible", "field": "dial_depth_marking", "value": value}
+              for photo, value in ((1, "300m"), (3, "200m"))),
+        ],
+    )
+    report = FlashReport("fixture").build_report(answer, {1, 3})
+    assert report["conclusion"] == "probable_fake"
+    checks = cast(list[dict[str, Any]], report["technical_checks"])
+    assert {check["field"] for check in checks} == {"crown_shape", "hand_shape"}
+
+
+def test_identification_checks_are_excluded_from_authenticity_review() -> None:
+    answer = _answer()
+    answer.update(
+        linkage="single_photo", hypothesis="probable_original",
+        candidates=[{"brand": "Seiko", "family": "Prospex", "reference": "HBC002J1", "reference_id": None, "photo": 1}],
+        observations=[{"photo": 1, "angle": "dial", "location": "mostrador", "detail": "DIVER'S 300m",
+                       "visibility": "visible", "field": "dial_depth_marking", "value": "300m"}],
+    )
+
+    def review(body: object) -> Any:
+        pytest.fail("Variant evidence must not request an authenticity review.")
+
+    result = replay_with_review(
+        FlashReport("fixture"), "seiko-identification",
+        [("dial", "image/png", base64.b64decode(_photo("red")))],
+        gemini=lambda _: (answer, {"model": MODEL, "model_response_id": "fixture-review-scope"}),
+        review=review,
+    )
+    assert result["previous_policy"] == "inconclusive"
+    assert result["review_status"] == "no_comparable_fields"

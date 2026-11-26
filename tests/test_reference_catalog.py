@@ -136,8 +136,9 @@ def test_speedmaster_moonwatch_is_pending_without_authenticity_head(catalog_fixt
         catalog_fixture.catalog.head_for(entry.reference_id)
 
 
-def test_seiko_spb453j1_is_research_only_without_admitted_head(catalog_fixture):
-    entry = catalog_fixture.catalog.entry_for("seiko-prospex-spb453j1")
+@pytest.mark.parametrize("reference", ("spb453j1", "hbc002j1", "spb383j1", "spb534j1"))
+def test_seiko_prospex_references_are_pending_without_admitted_heads(catalog_fixture, reference):
+    entry = catalog_fixture.catalog.entry_for(f"seiko-prospex-{reference}")
 
     assert entry.brand == "seiko"
     assert entry.status == "pending"

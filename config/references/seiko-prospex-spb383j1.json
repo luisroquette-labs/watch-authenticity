@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "reference_id": "seiko-prospex-spb383j1",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "SPB383J1",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/us-en/products/prospex/spb383j1",
+      "citation": "Product page model title and product image designation",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "reference_code_alias",
+      "value": "SPB383",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/us-en/products/prospex/spb383j1",
+      "citation": "Product page > displayed model heading",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "family_alias",
+      "value": "1968 Diver’s Modern Re-interpretation GMT",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/us-en/products/prospex/spb383j1",
+      "citation": "Product page family heading",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "family",
+      "value": "1968 Diver’s Modern Re-interpretation GMT",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/us-en/products/prospex/spb383j1",
+      "citation": "Product page family heading",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "calibre",
+      "value": "6R54",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/us-en/products/prospex/spb383j1",
+      "citation": "Specifications > Movement > Caliber Number",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "water_resistance",
+      "value": "200m diver’s",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/us-en/products/prospex/spb383j1",
+      "citation": "Specifications > Other Details > Water Resistance",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "dial_depth_marking",
+      "value": "200m",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/us-en/-/media/Images/Product--Image/All/Seiko/2023/02/02/11/42/SPB383J1/SPB383J1.png?mh=1200&mw=1200",
+      "citation": "Product gallery > DIVER’S inscription on the dial",
+      "observed_at": "2026-11-26",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "bezel_edge_color",
+      "value": "silver-tone",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/us-en/-/media/Images/Product--Image/All/Seiko/2023/02/02/11/42/SPB383J1/SPB383J1.png?mh=1200&mw=1200",
+      "citation": "Product gallery > front image > outer bezel edge tone",
+      "observed_at": "2026-11-26",
+      "applicable_angles": [
+        "dial"
+      ]
+    }
+  ]
+}

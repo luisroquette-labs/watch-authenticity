@@ -22,7 +22,7 @@ from reference_intelligence.compare import assess_reference
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
-VERSION = "flash-photo-report-v16"
+VERSION = "flash-photo-report-v17"
 CONCLUSIONS = {
     "probable_fake": "Divergências que justificam investigar falsificação",
     "visually_compatible": "Compatível nos detalhes examinados · autenticidade inconclusiva",
@@ -32,10 +32,16 @@ PROMPT = """Investigue em português as fotos numeradas de relógios. O usuário
 Responda JSON com candidates [{brand,family,reference,reference_id,photo}], non_watch_photos (lista de números de fotos), linkage (single_photo, consistent, mixed, uncertain), observations [{photo,angle,location,detail,visibility,field,value}], hypothesis (probable_fake, probable_original, inconclusive) e next_verification. Antes de avaliar o vínculo, liste em non_watch_photos as imagens que claramente mostram apenas fundo, texto, documentos ou acessórios avulsos sem relógio ou vista física de seus componentes. Exclua essas imagens dos candidatos, do vínculo e das observações. Se não houver relógio visível em nenhuma, use uncertain, listas vazias de candidatos e observações e hipótese inconclusive. Se restar uma imagem claramente de um único relógio, use single_photo. Se uma imagem mostrar mais de um relógio, use mixed, mesmo que seja a única.
 Nos candidates, photo é o número da foto em que características do relógio sustentam a hipótese. reference_id é um ID exato da lista ou null; brand, family e reference são textos ou null. Em cada observação, angle é a vista efetivamente vista (dial, cyclops, rehaut, crown, clasp ou caseback) e visibility é visible ou ambiguous. Escolha field entre movement_marking, um dos campos comparáveis listados ou null para descrição livre. Para um campo comparável, value é o valor visto, em inglês quando possível, ou null se ambíguo. Não repita o esperado como se tivesse visto. A hipótese deve ser sustentada por observações visíveis. Lotes mistos ou com vínculo incerto são inconclusivos.
 Quando o mostrador completo permitir determinar se há janela de data e em qual posição, registre essa leitura em uma observação própria com field date_position e angle dial. Use no date para ausência visível, e marque ambiguous com value null se a foto não permitir decidir. Confira se a referência proposta é compatível com essa leitura. Ao pedir nova foto, indique a área ou a inscrição a examinar sem supor códigos que não aparecem.
+Em um mostrador de mergulho, se a inscrição DIVER’S trouxer claramente 200m ou 300m, use field dial_depth_marking, angle dial e apenas 200m ou 300m em value. Se ilegível, use ambiguous e value null. A inscrição ajuda a identificar a variante. Ela não verifica a resistência à água do exemplar. Para distinguir variantes de 300m, use field bezel_edge_color e angle dial se puder ler a cor da borda externa do bisel. Use silver-tone ou gold-tone, sem deduzir o material. Use o código completo da variante quando houver evidência suficiente e preserve alternativas compatíveis.
 No Cartier Tank Must automático, WSTA0040 é a configuração com correia de couro e WSTA0053 com pulseira de metal. A gravação externa 4324 pode aparecer nas duas, e a correia ou pulseira pode ter sido trocada. Preserve as alternativas quando a foto mostrar apenas essa marcação ou características compartilhadas. Para uma gravação de modelo legível no fundo, use uma observação caseback com field null e informe o código inteiro efetivamente lido em value. Use value null se a inscrição estiver ausente ou ilegível.
 Para crown_shape, descreva só o contorno da coroa. Use round, 7 sided se puder contar os sete lados, ou faceted se puder ver faces sem contá-las. Use ambiguous com value null se o contorno estiver incerto. Trate cor em observação própria apenas quando a foto permitir e não deduza a composição da pedra.
 Na vista traseira de um Speedmaster Moonwatch, registre caseback_type com transparent só se houver uma janela instalada na tampa, solid se houver uma tampa opaca instalada ou open quando a tampa tiver sido removida. Se só aparecer o movimento e não der para ver se há uma tampa instalada, marque ambiguous com value null. Observe a borda, a junção ou a tampa removida. A foto não determina o material da janela nem se a tampa foi trocada.
 Quando houver um código legível gravado diretamente no rotor, ponte, platina ou módulo visível, registre-o em uma observação com field movement_marking, angle movement, location rotor, bridge, plate ou module e visibility visible. Use angle movement apenas nesse campo e quando o componente interno estiver visível pela abertura ou por um fundo transparente. Nesse caso, escreva em detail exatamente a localização e a inscrição no formato "rotor: 26-330", trocando rotor e 26-330 pelos valores lidos. Para códigos gravados na tampa externa, use angle caseback, field null e descreva a inscrição na tampa. Um número de módulo na tampa não mostra o módulo instalado. Escreva só o código literal em value, separado de frases, nome do fabricante e contagem de joias. Omita números de série e códigos ilegíveis. Uma inscrição copiada pode parecer correta. Identificar o calibre depende da arquitetura do mecanismo; autenticidade e precisão exigem evidência própria."""
+_DIAL_DEPTH_MARKING = "dial_depth_marking"
+_DIAL_DEPTH_VALUES = {"200m", "300m"}
+_BEZEL_EDGE_COLOR = "bezel_edge_color"
+_BEZEL_EDGE_TONES = {"silver tone": "prateado", "gold tone": "dourado"}
+IDENTIFICATION_ONLY_FIELDS = frozenset({_DIAL_DEPTH_MARKING, _BEZEL_EDGE_COLOR})
 _MOVEMENT_MARKING = "movement_marking"
 _MOVEMENT_REGIONS = {"rotor": "rotor", "bridge": "ponte", "plate": "platina", "module": "módulo"}
 _MOVEMENT_CODE = re.compile(r"(?=.{2,16}\Z)(?:[Cc]\.|[A-Za-z]{0,6}) ?\d[A-Za-z0-9]*(?:[-./‐‑–][A-Za-z0-9]+)*(?: [A-Za-z]{1,4}){0,2}")
@@ -50,9 +56,12 @@ _COMPARABLE_VALUES = {
     "date_magnifier": {"magnified", "no magnifier"},
     "date_position": {"3 o'clock", "6 o'clock", "between 4 and 5 o'clock", "no date"},
     "display_type": {"analog", "digital"},
+    _DIAL_DEPTH_MARKING: _DIAL_DEPTH_VALUES,
+    _BEZEL_EDGE_COLOR: set(_BEZEL_EDGE_TONES),
     "hand_shape": {"sword shaped", "dauphine", "baton"},
 }
 _VALUE_ALIASES = {
+    _DIAL_DEPTH_MARKING: {"200 m": "200m", "300 m": "300m"},
     "bezel_color": {"blue and red": "red and blue", "red/blue": "red and blue", "blue/red": "red and blue"},
     "crown_shape": {"heptagonal": "7 sided", "seven sided": "7 sided"},
     "date_magnifier": {"cyclops": "magnified", "cyclops lens": "magnified", "present": "magnified", "absent": "no magnifier"},
@@ -65,6 +74,7 @@ _CROWN_SHAPE_DETAILS = {
 }
 _COLOR_LOCATIONS = {
     "bezel_color": "aro",
+    _BEZEL_EDGE_COLOR: "borda externa do bisel",
     "bezel_scale_color": "escala do aro",
     "crown_stone_color": "pedra da coroa",
     "dial_color": "mostrador",
@@ -166,14 +176,26 @@ class FlashReport:
             official = [claim for claim in self.claims.get(reference_id, ()) if claim.source_class.authoritative]
             designations = {_identity(claim.value) for claim in official
                             if claim.field == "reference_designation" and _REFERENCE_CODE.fullmatch(claim.value)}
-            for reference_code in designations | {code}:
+            code_aliases = {_identity(claim.value) for claim in official
+                            if claim.field == "reference_code_alias" and _REFERENCE_CODE.fullmatch(claim.value)}
+            for reference_code in designations | code_aliases | {code}:
                 self.reference_code_owners.setdefault((brand, reference_code), set()).add(reference_id)
             families = {family} | {_identity(claim.value) for claim in official if claim.field == "family_alias"}
-            if len(designations) == 1 and (code not in designations or len(families) > 1):
-                designation, = designations
-                self.commercial_identities[reference_id] = {(brand, alias, designation) for alias in families}
-                if code != designation:
+            if len(designations) == 1 and (code not in designations or len(families) > 1 or code_aliases):
+                self.commercial_identities[reference_id] = {
+                    (brand, alias, designation)
+                    for alias in families for designation in designations | code_aliases
+                }
+                if code not in designations:
                     self.family_codes.add((brand, family))
+        self.diver_variants: dict[str, tuple[str, str]] = {}
+        for reference_id, claims in self.claims.items():
+            depth = {claim.value for claim in claims if claim.source_class.authoritative
+                     and claim.field == _DIAL_DEPTH_MARKING and Angle.DIAL in claim.applicable_angles}
+            edge = {claim.value for claim in claims if claim.source_class.authoritative
+                    and claim.field == _BEZEL_EDGE_COLOR and Angle.DIAL in claim.applicable_angles}
+            if len(depth) == len(edge) == 1:
+                self.diver_variants[reference_id] = (next(iter(depth)), next(iter(edge)))
         self.known_reference_codes = {code for _, code in self.reference_code_owners}
         official_claims = [
             claim for claims in self.claims.values() for claim in claims
@@ -195,10 +217,15 @@ class FlashReport:
             if claim.source_class.authoritative and claim.field == "date_position"
             and Angle.DIAL in claim.applicable_angles
         )
+        diver_variants = "; ".join(
+            f"{reference_id}: {depth}, borda {edge}"
+            for reference_id, (depth, edge) in self.diver_variants.items()
+        )
         content: list[dict[str, object]] = [{"type": "text", "text": (
             f"{PROMPT}\nReferências catalogadas (não presuma cobertura): {', '.join(self.claims)}."
             f"\nCampos comparáveis: {', '.join(sorted(self.visual_fields))}."
             f"\nData segundo as fichas oficiais, para comparação com a foto: {date_layouts}."
+            f"\nInscrição no mostrador e cor da borda do bisel nas variantes catalogadas: {diver_variants}."
         )}]
         indices: set[int] = set()
         monochrome: set[int] = set()
@@ -346,10 +373,19 @@ class FlashReport:
                 "value": None if item["value"] is None else _text(item["value"], 120),
             }
             field = (observation["field"] or "").casefold()
-            if field and field not in accepted_fields:
+            if (field and field not in accepted_fields
+                or field in IDENTIFICATION_ONLY_FIELDS and angle != Angle.DIAL.value):
                 continue
             if field in {"date_position", "caseback_type"}:
                 observation["field"] = field
+            elif field == _DIAL_DEPTH_MARKING:
+                value = _comparison_value(field, observation["value"] or "")
+                readable = observation["visibility"] == "visible" and value in _DIAL_DEPTH_VALUES
+                observation.update(
+                    field=field, location="mostrador",
+                    detail=f"Inscrição no mostrador · {value}." if readable else "Inscrição de profundidade ilegível.",
+                    value=value if readable else None, visibility="visible" if readable else "ambiguous",
+                )
             elif field == "crown_shape":
                 shape_value = _comparison_value(field, observation["value"] or "")
                 shape_detail = _CROWN_SHAPE_DETAILS.get(shape_value) if observation["visibility"] == "visible" else None
@@ -366,6 +402,14 @@ class FlashReport:
                     value=None, visibility="ambiguous",
                 )
                 color_limited.add(observation["photo"])
+            elif field == _BEZEL_EDGE_COLOR:
+                value = _comparison_value(field, observation["value"] or "")
+                tone = _BEZEL_EDGE_TONES.get(value) if observation["visibility"] == "visible" else None
+                observation.update(
+                    field=field, location="borda externa do bisel",
+                    detail=f"Borda do bisel em tom {tone}." if tone else "Cor da borda do bisel indeterminada.",
+                    value=value if tone else None, visibility="visible" if tone else "ambiguous",
+                )
             parsed.append(observation)
         date_observations = [
             item for item in parsed
@@ -434,15 +478,18 @@ class FlashReport:
                     candidate["reference_id"] = None
                 remaining_candidates.append(candidate)
             parsed_candidates = remaining_candidates or [family_candidate]
-        auth_observations = (
-            [item for item in parsed if item["field"] != "caseback_type"]
-            if reference_id in _MOONWATCH_CASEBACK_REFERENCES else parsed
+        depth_checks, rejected_by_depth, inconclusive_variants, depth_disagreement = (
+            self._compare_diver_variants(parsed_candidates, parsed) if linked else ([], set(), set(), False)
         )
+        identity_fields = set(IDENTIFICATION_ONLY_FIELDS)
+        if reference_id in _MOONWATCH_CASEBACK_REFERENCES:
+            identity_fields.add("caseback_type")
+        auth_observations = [item for item in parsed if item["field"] not in identity_fields]
         primary_checks = _technical_checks(reference_id, claims, auth_observations)
         divergent_fields = {check["field"] for check in primary_checks if check["status"] == "conflicting"}
         matching_fields = {check["field"] for check in primary_checks if check["status"] == "matched"}
         date_disagreement = len(date_readings) > 1
-        checks = [*primary_checks, *factory_caseback_checks]
+        checks = [*primary_checks, *factory_caseback_checks, *depth_checks]
         rejected_references: set[str] = set()
         if linked and len(date_readings) == 1:
             date_statuses: dict[str, set[object]] = {}
@@ -468,7 +515,8 @@ class FlashReport:
             not divergent_fields and len(matching_fields) >= 2 and bool(matching_fields & _STRUCTURAL_FIELDS)
         )
         model_hypothesis = hypothesis
-        if (rejected_references or date_disagreement or caseback_disagreement or reference_id in factory_conflicts
+        if (rejected_references or rejected_by_depth or date_disagreement or caseback_disagreement
+            or depth_disagreement or inconclusive_variants or reference_id in factory_conflicts
             or not linked or not primary_checks
             or hypothesis == "probable_original" and not compatibility_supported
             or hypothesis == "probable_fake" and len(divergent_fields & _STRUCTURAL_FIELDS) < 2):
@@ -509,6 +557,21 @@ class FlashReport:
             elif date_disagreement:
                 reason = "date_readings_disagree"
                 next_verification = _PHOTO_FOR_FIELD["date_position"]
+            elif depth_disagreement:
+                reason = "dial_marking_readings_disagree"
+                next_verification = "Fotografe o mostrador de frente, em foco e sem reflexo, com a inscrição inteira legível."
+            elif rejected_by_depth:
+                reason = "dial_marking_reference_conflict"
+                next_verification = (
+                    "Confira a referência comercial na etiqueta, no cartão de garantia ou no registro de serviço. "
+                    "Cubra o número de série antes de fotografar."
+                )
+            elif inconclusive_variants:
+                reason = "dial_marking_variant_unresolved"
+                next_verification = (
+                    "Fotografe o mostrador e a borda externa do bisel em cores e sem reflexo. "
+                    "Confira a referência comercial na etiqueta ou no cartão de garantia."
+                )
             elif rejected_references:
                 reason = "reference_conflict"
                 next_verification = _REFERENCE_MARKING_PHOTO
@@ -593,7 +656,18 @@ class FlashReport:
             else:
                 reason = "compatible_or_insufficient"
         reason_text = _LIMIT_REASONS.get(reason or "")
-        if reason == "reference_conflict":
+        if reason == "dial_marking_reference_conflict":
+            references = ", ".join(sorted(rejected_by_depth))
+            reason_text = (
+                f"A inscrição do mostrador diverge da ficha para {references}. "
+                "A comparação ajuda a identificar a variante."
+            )
+        elif reason == "dial_marking_readings_disagree":
+            reason_text = "As fotos levaram a leituras diferentes da inscrição. A referência exata segue em aberto."
+        elif reason == "dial_marking_variant_unresolved":
+            variants = ", ".join(sorted(inconclusive_variants))
+            reason_text = f"As fichas de {variants} compartilham a indicação de profundidade. A variante segue em aberto."
+        elif reason == "reference_conflict":
             references = ", ".join(sorted(rejected_references))
             reason_text = (
                 f"A posição ou a ausência de data observada diverge da ficha para {references}. "
@@ -617,6 +691,8 @@ class FlashReport:
             limits[0] += " Cada comparação cita a ficha usada."
         if any(item["field"] == _MOVEMENT_MARKING for item in parsed):
             limits.append("A inscrição é uma transcrição do que aparece na foto. A identificação do calibre depende da arquitetura do movimento.")
+        if any(item["field"] == _DIAL_DEPTH_MARKING and item["visibility"] == "visible" for item in parsed):
+            limits.append("A inscrição no mostrador não comprova a resistência à água do exemplar.")
         if factory_caseback_checks:
             limits.append("A comparação descreve a tampa instalada. Uma troca pode alterar a configuração de fábrica.")
         if tank_shared_case:
@@ -655,6 +731,50 @@ class FlashReport:
         reference_id, = owners
         identities = self.commercial_identities.get(reference_id, {self.reference_identity[reference_id]})
         return reference_id if identity in identities else None
+
+    def _compare_diver_variants(
+        self, candidates: list[dict[str, str | None]], observations: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, object]], set[str], set[str], bool]:
+        marks = [item for item in observations
+                 if item["field"] == _DIAL_DEPTH_MARKING and item["visibility"] == "visible"]
+        readings = {item["value"] for item in marks}
+        depth_candidates = [
+            (candidate, reference_id) for candidate in candidates
+            if (reference_id := self._exact_catalog_candidate(candidate)) is not None
+            and reference_id in self.diver_variants
+        ]
+        if len(readings) > 1:
+            for candidate, _ in depth_candidates:
+                candidate["reference_id"] = None
+            return [], set(), set(), bool(depth_candidates)
+        edges = [item for item in observations if item["field"] == _BEZEL_EDGE_COLOR]
+        checks: list[dict[str, object]] = []
+        rejected: set[str] = set()
+        alternatives: set[str] = set()
+        for candidate, reference_id in depth_candidates:
+            claims = self.claims[reference_id]
+            mark_checks = _technical_checks(reference_id, claims, marks)
+            checks.extend(mark_checks)
+            mark_statuses = {check["status"] for check in mark_checks}
+            if mark_statuses == {CheckStatus.CONFLICTING.value}:
+                rejected.add(candidate["reference"] or reference_id)
+                candidate.update(reference=None, reference_id=None)
+                continue
+            if len(candidates) != 1:
+                continue
+            edge_checks = _technical_checks(reference_id, claims, edges)
+            checks.extend(edge_checks)
+            edge_statuses = {check["status"] for check in edge_checks}
+            depth, edge = self.diver_variants[reference_id]
+            family = self.reference_identity[reference_id][:2]
+            peers = {
+                key for key, (mark, tone) in self.diver_variants.items()
+                if self.reference_identity[key][:2] == family and mark == depth and tone != edge
+            }
+            if peers and (mark_statuses != {CheckStatus.MATCHED.value} or edge_statuses != {CheckStatus.MATCHED.value}):
+                candidate["reference_id"] = None
+                alternatives.update(self.reference_identity[key][2].upper() for key in peers | {reference_id})
+        return checks, rejected, alternatives, False
 
     def _moonwatch_factory_candidate(self, candidate: dict[str, str | None]) -> bool:
         proposed = candidate["reference_id"]
