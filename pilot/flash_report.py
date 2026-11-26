@@ -549,6 +549,12 @@ class FlashReport:
                             "A gravação da caixa e o mecanismo do encaixe podem ajudar a distinguir as gerações. "
                             "Cubra o número de série."
                         )
+                elif outside_catalog:
+                    next_verification = (
+                        "Peça a um relojoeiro que confirme a referência da caixa e compare a configuração "
+                        "com a de um exemplar documentado. Se tiver a garantia ou um registro de serviço, "
+                        "leve o documento para conferência."
+                    )
             elif len(structural_fields) < 2:
                 reason = "catalog_gap"
                 if remaining:

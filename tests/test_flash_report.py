@@ -973,6 +973,30 @@ def test_ballon_bleu_case_code_does_not_select_one_commercial_variant(case_code:
     assert report["conclusion"] == "inconclusive"
 
 
+def test_exact_reference_missing_from_catalogue_requests_an_independent_examination() -> None:
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Rolex", "family": "Datejust", "reference": "16233",
+                     "reference_id": None, "photo": 1}],
+        observations=[
+            {"photo": 1, "angle": "dial", "location": "janela da data",
+             "detail": "Janela de data às 3h.", "visibility": "visible",
+             "field": "date_position", "value": "3 o'clock"},
+            {"photo": 2, "angle": "movement", "location": "bridge",
+             "detail": "bridge: 3135", "visibility": "visible",
+             "field": "movement_marking", "value": "3135"},
+        ],
+        next_verification="Fotografe novamente o mostrador de frente.",
+    )
+    report = FlashReport("fixture").build_report(answer, {1, 2})
+    assert report["conclusion"] == "inconclusive"
+    assert report["decision_reason"] == "catalog_gap"
+    assert not report["technical_checks"]
+    assert report["next_verification"] != answer["next_verification"]
+    guidance = cast(str, report["next_verification"])
+    assert "relojoeiro" in guidance and "exemplar documentado" in guidance
+
+
 @pytest.mark.parametrize("scenario, reason", [
     ("partial-reference", "reference_unresolved"),
     ("multiple-candidates", "reference_unresolved"),
