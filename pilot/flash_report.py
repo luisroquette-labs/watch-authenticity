@@ -417,8 +417,10 @@ class FlashReport:
             if len(readings) == 1 and not open_caseback:
                 for candidate_id in _MOONWATCH_CASEBACK_REFERENCES:
                     factory_caseback_checks.extend(_technical_checks(candidate_id, self.claims[candidate_id], backs))
-        factory_conflicts = {check["reference_id"] for check in factory_caseback_checks
-                             if check["status"] == "conflicting"}
+        factory_conflicts = {
+            check_reference for check in factory_caseback_checks
+            if check["status"] == "conflicting" and isinstance(check_reference := check["reference_id"], str)
+        }
         if factory_conflicts or open_caseback or caseback_disagreement:
             family_candidate = {**parsed_candidates[0], "reference": None, "reference_id": None}
             remaining_candidates = []
