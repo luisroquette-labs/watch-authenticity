@@ -1108,3 +1108,54 @@ def test_local_replay_shares_gemini_capture_and_blinds_reviewer(
             assert result["review_status"] == "supported"
     assert len(calls) == (0 if scenario == "mixed" else 1)
     assert len(provider.posts) == 1
+
+
+@pytest.mark.parametrize(("linkage", "marking", "date_value", "shared"), [
+    ("single_photo", "4324", None, True),
+    ("uncertain", "4324", "6 o'clock", True),
+    ("consistent", "4324", "6 o'clock", True),
+    ("consistent", "4324", "no date", False),
+    ("consistent", "432455", "6 o'clock", False),
+    ("mixed", "4324", "6 o'clock", False),
+])
+def test_tank_shared_case_marking_preserves_both_commercial_hypotheses(
+    linkage: str, marking: str, date_value: str | None, shared: bool,
+) -> None:
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Cartier", "family": "Tank Must", "reference": "WSTA0053",
+                     "reference_id": "cartier-tankmust-wsta0053", "photo": 1}],
+        linkage=linkage,
+        hypothesis="inconclusive",
+        observations=[
+            {"photo": 1, "angle": "caseback", "location": "tampa", "detail": f"Código legível {marking} na tampa.",
+             "visibility": "visible", "field": None, "value": None},
+        ],
+    )
+    indices = {1}
+    if date_value is not None:
+        answer["candidates"][0]["photo"] = 2
+        answer["observations"].append(
+            {"photo": 2, "angle": "dial", "location": "data", "detail": "Leitura da janela de data.",
+             "visibility": "visible", "field": "date_position", "value": date_value},
+        )
+        indices.add(2)
+    report = FlashReport("fixture").build_report(answer, indices)
+    candidates = cast(list[dict[str, Any]], report["candidates"])
+    assert report["conclusion"] == "inconclusive"
+    assert report["linkage"] == linkage
+    if not shared:
+        assert all(candidate["reference"] != "WSTA0040" for candidate in candidates)
+        if date_value == "no date":
+            assert report["decision_reason"] == "reference_conflict"
+        return
+    assert {candidate["reference"] for candidate in candidates} == {"WSTA0040", "WSTA0053"}
+    assert all(candidate["reference_id"] is None for candidate in candidates)
+    assert any("4324" in limit and "WSTA0040" in limit for limit in cast(list[str], report["limits"]))
+    guidance = cast(str, report["next_verification"])
+    if linkage == "uncertain":
+        assert report["decision_reason"] == "unlinked_photos"
+        assert "oblíquo" in guidance
+    else:
+        assert report["decision_reason"] == "reference_unresolved"
+        assert "garantia" in guidance and "sem compartilhá-lo" in guidance
