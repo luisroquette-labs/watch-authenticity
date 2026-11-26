@@ -1669,3 +1669,53 @@ def test_identification_checks_are_excluded_from_authenticity_review() -> None:
     )
     assert result["previous_policy"] == "inconclusive"
     assert result["review_status"] == "no_comparable_fields"
+
+
+def test_shadow_explains_when_linkage_blocks_an_existing_hypothesis() -> None:
+    answer = _answer()
+    answer.update(hypothesis="probable_fake", linkage="uncertain")
+
+    result = FlashReport("fixture").build_report(answer, {1, 3})
+
+    assert result["model_hypothesis"] == "probable_fake"
+    assert result["conclusion"] == "inconclusive"
+    assert result["hypothesis_origin"] == "linkage_veto"
+
+
+def test_clasp_inscription_remains_an_observation_with_component_scope() -> None:
+    answer = _answer()
+    answer["candidates"] = [{
+        "brand": "Rolex", "family": "Datejust", "reference": "126334",
+        "reference_id": "rolex-datejust-126334", "photo": 1,
+    }]
+    answer["hypothesis"] = "probable_fake"
+    answer["observations"].append({
+        "photo": 3, "angle": "clasp", "location": "interior do fecho",
+        "detail": "Inscrição aparente ORV na lâmina", "visibility": "visible",
+        "field": None, "value": None,
+    })
+
+    result = FlashReport("fixture").build_report(answer, {1, 3})
+
+    assert any(item["angle"] == "clasp" and "ORV" in item["detail"]
+               for item in result["observations"])
+    assert not any(item["field"] in {"clasp_code", "replica_factory"}
+                   for item in result["technical_checks"])
+    assert result["conclusion"] == "inconclusive"
+    assert result["hypothesis_origin"] == "policy_veto"
+
+
+def test_shadow_hypothesis_changes_only_the_instruction() -> None:
+    photo = ("dial", "image/png", base64.b64decode(_photo("silver")))
+    report = FlashReport("fixture")
+    production, indices, mono = report.prepare_with_monochrome([photo])
+    shadow, shadow_indices, shadow_mono = report.prepare_with_monochrome(
+        [photo], shadow_hypothesis=True,
+    )
+
+    assert production[1:] == shadow[1:]
+    assert (indices, mono) == (shadow_indices, shadow_mono)
+    assert "Lotes mistos ou com vínculo incerto são inconclusivos." in production[0]["text"]
+    assert "Lotes mistos ou com vínculo incerto são inconclusivos." not in shadow[0]["text"]
+    assert "Qual hipótese de autenticidade é mais bem sustentada" in shadow[0]["text"]
+    assert "Omita números de série" in shadow[0]["text"]
