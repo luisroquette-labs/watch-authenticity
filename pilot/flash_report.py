@@ -32,7 +32,7 @@ PROMPT = """Investigue em português as fotos numeradas de relógios. O usuário
 Responda JSON com candidates [{brand,family,reference,reference_id,photo}], non_watch_photos (lista de números de fotos), linkage (single_photo, consistent, mixed, uncertain), observations [{photo,angle,location,detail,visibility,field,value}], hypothesis (probable_fake, probable_original, inconclusive) e next_verification. Antes de avaliar o vínculo, liste em non_watch_photos as imagens que claramente mostram apenas fundo, texto, documentos ou acessórios avulsos sem relógio ou vista física de seus componentes. Exclua essas imagens dos candidatos, do vínculo e das observações. Se não houver relógio visível em nenhuma, use uncertain, listas vazias de candidatos e observações e hipótese inconclusive. Se restar uma imagem claramente de um único relógio, use single_photo. Se uma imagem mostrar mais de um relógio, use mixed, mesmo que seja a única.
 Nos candidates, photo é o número da foto em que características do relógio sustentam a hipótese. reference_id é um ID exato da lista ou null; brand, family e reference são textos ou null. Em cada observação, angle é a vista efetivamente vista (dial, cyclops, rehaut, crown, clasp ou caseback) e visibility é visible ou ambiguous. Escolha field entre movement_marking, um dos campos comparáveis listados ou null para descrição livre. Para um campo comparável, value é o valor visto, em inglês quando possível, ou null se ambíguo. Não repita o esperado como se tivesse visto. A hipótese deve ser sustentada por observações visíveis. Lotes mistos ou com vínculo incerto são inconclusivos.
 Quando o mostrador completo permitir determinar se há janela de data e em qual posição, registre essa leitura em uma observação própria com field date_position e angle dial. Use no date para ausência visível, e marque ambiguous com value null se a foto não permitir decidir. Confira se a referência proposta é compatível com essa leitura. Ao pedir nova foto, indique a área ou a inscrição a examinar sem supor códigos que não aparecem.
-No Cartier Tank Must automático, WSTA0040 é a configuração com correia de couro e WSTA0053 com pulseira de metal. A gravação externa 4324 pode aparecer nas duas, e a correia ou pulseira pode ter sido trocada. Preserve as alternativas quando a foto mostrar apenas essa marcação ou características compartilhadas.
+No Cartier Tank Must automático, WSTA0040 é a configuração com correia de couro e WSTA0053 com pulseira de metal. A gravação externa 4324 pode aparecer nas duas, e a correia ou pulseira pode ter sido trocada. Preserve as alternativas quando a foto mostrar apenas essa marcação ou características compartilhadas. Para uma gravação de modelo legível no fundo, use uma observação caseback com field null e informe o código inteiro efetivamente lido em value. Use value null se a inscrição estiver ausente ou ilegível.
 Para crown_shape, descreva só o contorno da coroa. Use round, 7 sided se puder contar os sete lados, ou faceted se puder ver faces sem contá-las. Use ambiguous com value null se o contorno estiver incerto. Trate cor em observação própria apenas quando a foto permitir e não deduza a composição da pedra.
 Quando houver um código legível gravado diretamente no rotor, ponte, platina ou módulo visível, registre-o em uma observação com field movement_marking, angle movement, location rotor, bridge, plate ou module e visibility visible. Use angle movement apenas nesse campo e quando o componente interno estiver visível pela abertura ou por um fundo transparente. Nesse caso, escreva em detail exatamente a localização e a inscrição no formato "rotor: 26-330", trocando rotor e 26-330 pelos valores lidos. Para códigos gravados na tampa externa, use angle caseback, field null e descreva a inscrição na tampa. Um número de módulo na tampa não mostra o módulo instalado. Escreva só o código literal em value, separado de frases, nome do fabricante e contagem de joias. Omita números de série e códigos ilegíveis. Uma inscrição copiada pode parecer correta. Identificar o calibre depende da arquitetura do mecanismo; autenticidade e precisão exigem evidência própria."""
 _MOVEMENT_MARKING = "movement_marking"
@@ -384,7 +384,7 @@ class FlashReport:
                 for candidate in parsed_candidates
             ) and any(
                 item["angle"] == Angle.CASEBACK.value and item["visibility"] == "visible"
-                and item["field"] is None and re.search(r"\b4324\b", item["detail"])
+                and item["field"] is None and item["value"] == "4324"
                 for item in parsed
             )
         )
@@ -549,7 +549,8 @@ class FlashReport:
         if any(item["field"] == _MOVEMENT_MARKING for item in parsed):
             limits.append("A inscrição é uma transcrição do que aparece na foto. A identificação do calibre depende da arquitetura do movimento.")
         if tank_shared_case:
-            limits.append("A gravação 4324 é compartilhada por exemplares associados a WSTA0040 e WSTA0053. "
+            scope = "A comparação vale se a gravação estiver no mesmo relógio. " if not linked else ""
+            limits.append(f"{scope}O código 4324 aparece em exemplares associados a WSTA0040 e WSTA0053. "
                           "A correia ou pulseira pode ter sido trocada.")
         if non_watch and watch_indices:
             photo_numbers = ", ".join(str(photo) for photo in sorted(non_watch))

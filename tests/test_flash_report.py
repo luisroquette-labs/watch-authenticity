@@ -1110,16 +1110,18 @@ def test_local_replay_shares_gemini_capture_and_blinds_reviewer(
     assert len(provider.posts) == 1
 
 
-@pytest.mark.parametrize(("linkage", "marking", "date_value", "shared"), [
-    ("single_photo", "4324", None, True),
-    ("uncertain", "4324", "6 o'clock", True),
-    ("consistent", "4324", "6 o'clock", True),
-    ("consistent", "4324", "no date", False),
-    ("consistent", "432455", "6 o'clock", False),
-    ("mixed", "4324", "6 o'clock", False),
+@pytest.mark.parametrize(("linkage", "marking", "detail", "date_value", "shared"), [
+    ("single_photo", "4324", "Código legível 4324 na tampa.", None, True),
+    ("uncertain", "4324", "Código legível 4324 na tampa.", "6 o'clock", True),
+    ("consistent", "4324", "Código legível 4324 na tampa.", "6 o'clock", True),
+    ("consistent", "4324", "Código legível 4324 na tampa.", "no date", False),
+    ("single_photo", "4390", "Marcação legível 4390. Não há inscrição 4324.", None, False),
+    ("single_photo", "4324-1", "Gravação externa 4324-1 na tampa traseira.", None, False),
+    ("single_photo", None, "Leitura incerta entre 4324 e 4390.", None, False),
+    ("mixed", "4324", "Código legível 4324 na tampa.", "6 o'clock", False),
 ])
 def test_tank_shared_case_marking_preserves_both_commercial_hypotheses(
-    linkage: str, marking: str, date_value: str | None, shared: bool,
+    linkage: str, marking: str | None, detail: str, date_value: str | None, shared: bool,
 ) -> None:
     answer = _answer()
     answer.update(
@@ -1128,8 +1130,8 @@ def test_tank_shared_case_marking_preserves_both_commercial_hypotheses(
         linkage=linkage,
         hypothesis="inconclusive",
         observations=[
-            {"photo": 1, "angle": "caseback", "location": "tampa", "detail": f"Código legível {marking} na tampa.",
-             "visibility": "visible", "field": None, "value": None},
+            {"photo": 1, "angle": "caseback", "location": "tampa", "detail": detail,
+             "visibility": "visible", "field": None, "value": marking},
         ],
     )
     indices = {1}
@@ -1156,6 +1158,7 @@ def test_tank_shared_case_marking_preserves_both_commercial_hypotheses(
     if linkage == "uncertain":
         assert report["decision_reason"] == "unlinked_photos"
         assert "oblíquo" in guidance
+        assert any("se a gravação estiver no mesmo relógio" in limit for limit in cast(list[str], report["limits"]))
     else:
         assert report["decision_reason"] == "reference_unresolved"
         assert "garantia" in guidance and "sem compartilhá-lo" in guidance
