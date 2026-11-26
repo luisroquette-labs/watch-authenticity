@@ -89,7 +89,10 @@ _BALLON_BLEU_42_GENERATIONS = {
     "cartier-ballonbleu-wsbb0049": "WSBB0049",
 }
 _TANK_MUST_4324_REFERENCES = ("WSTA0040", "WSTA0053")
-_MOONWATCH_CASEBACK_REFERENCES = {"omega-speedmaster-31030425001001", "omega-speedmaster-31030425001002"}
+_MOONWATCH_CASEBACK_REFERENCES = {
+    "omega-speedmaster-31030425001001": "310.30.42.50.01.001",
+    "omega-speedmaster-31030425001002": "310.30.42.50.01.002",
+}
 _INSTALLED_CASEBACK_TYPES = {"solid", "transparent"}
 _CASEBACK_ALIASES = {"exhibition": "transparent", "embossed seahorse medallion": "solid"}
 _LIMIT_REASONS = {
@@ -277,6 +280,8 @@ class FlashReport:
                          for key in ("brand", "family", "reference", "reference_id")}
             if not linked or candidate not in watch_candidates:
                 watch_candidates.append(candidate)
+        moonwatch_candidates = {index for index, candidate in enumerate(watch_candidates)
+                                if self._moonwatch_factory_candidate(candidate)}
         parsed_candidates: list[dict[str, str | None]] = []
         outside_catalog = False
         for candidate in watch_candidates:
@@ -399,11 +404,6 @@ class FlashReport:
                 for code in _TANK_MUST_4324_REFERENCES
             ]
             reference_id, claims, outside_catalog = None, (), False
-        moonwatch_candidates = {
-            exact_id: candidate["reference"] for candidate in parsed_candidates
-            if (exact_id := self._exact_catalog_candidate(candidate)) is not None
-            and exact_id in _MOONWATCH_CASEBACK_REFERENCES
-        }
         factory_caseback_checks = []
         open_caseback = False
         caseback_disagreement = False
@@ -415,18 +415,20 @@ class FlashReport:
             open_caseback = readings == {"open"}
             caseback_disagreement = len(readings) > 1
             if len(readings) == 1 and not open_caseback:
-                for candidate_id in moonwatch_candidates:
+                for candidate_id in _MOONWATCH_CASEBACK_REFERENCES:
                     factory_caseback_checks.extend(_technical_checks(candidate_id, self.claims[candidate_id], backs))
         factory_conflicts = {check["reference_id"] for check in factory_caseback_checks
                              if check["status"] == "conflicting"}
-        if factory_conflicts:
-            family_candidate = {**parsed_candidates[0], "reference": None, "reference_id": None}
-            parsed_candidates = [candidate for candidate in parsed_candidates
-                                 if self._exact_catalog_candidate(candidate) not in factory_conflicts] or [family_candidate]
         if factory_conflicts or open_caseback or caseback_disagreement:
-            for candidate in parsed_candidates:
-                if self._exact_catalog_candidate(candidate) in moonwatch_candidates:
+            family_candidate = {**parsed_candidates[0], "reference": None, "reference_id": None}
+            remaining_candidates = []
+            for index, candidate in enumerate(parsed_candidates):
+                if index in moonwatch_candidates:
+                    if self._exact_catalog_candidate(candidate) in factory_conflicts:
+                        continue
                     candidate["reference_id"] = None
+                remaining_candidates.append(candidate)
+            parsed_candidates = remaining_candidates or [family_candidate]
         auth_observations = (
             [item for item in parsed if item["field"] != "caseback_type"]
             if reference_id in _MOONWATCH_CASEBACK_REFERENCES else parsed
@@ -461,7 +463,7 @@ class FlashReport:
             not divergent_fields and len(matching_fields) >= 2 and bool(matching_fields & _STRUCTURAL_FIELDS)
         )
         model_hypothesis = hypothesis
-        if (rejected_references or date_disagreement or caseback_disagreement or factory_conflicts
+        if (rejected_references or date_disagreement or caseback_disagreement or reference_id in factory_conflicts
             or not linked or not primary_checks
             or hypothesis == "probable_original" and not compatibility_supported
             or hypothesis == "probable_fake" and len(divergent_fields & _STRUCTURAL_FIELDS) < 2):
@@ -588,8 +590,7 @@ class FlashReport:
                 "A referência exata segue em aberto."
             )
         elif reason == "factory_caseback_difference":
-            references = ", ".join(sorted(code for candidate_id, code in moonwatch_candidates.items()
-                                         if candidate_id in factory_conflicts and code is not None))
+            references = ", ".join(sorted(_MOONWATCH_CASEBACK_REFERENCES[candidate_id] for candidate_id in factory_conflicts))
             reason_text = (f"O fundo instalado diverge da configuração de fábrica de {references}. "
                            "Essa referência continua possível se a tampa tiver sido substituída.")
         elif reason == "caseback_removed":
@@ -641,6 +642,18 @@ class FlashReport:
         reference_id, = owners
         identities = self.commercial_identities.get(reference_id, {self.reference_identity[reference_id]})
         return reference_id if identity in identities else None
+
+    def _moonwatch_factory_candidate(self, candidate: dict[str, str | None]) -> bool:
+        proposed = candidate["reference_id"]
+        exact = self._exact_catalog_candidate(candidate)
+        if exact in _MOONWATCH_CASEBACK_REFERENCES:
+            return proposed in (None, exact)
+        description = candidate["reference"] or ""
+        return (
+            proposed in (None, *_MOONWATCH_CASEBACK_REFERENCES)
+            and _identity(candidate["brand"]) == "omega" and _identity(candidate["family"]) == "speedmaster"
+            and "moonwatch" in description.casefold() and re.search(r"\d{3}", description) is None
+        )
 
 
 def _caseback_type(value: str) -> str:

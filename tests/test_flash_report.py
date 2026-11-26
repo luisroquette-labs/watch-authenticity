@@ -1206,6 +1206,9 @@ def test_moonwatch_fitted_caseback_checks_factory_variant_only(
         assert conflict in reason and "substituída" in reason
         assert {check["status"] for check in checks} == {"matched", "conflicting"}
         assert all(check["photo"] == 1 and check["field"] == "caseback_type" for check in checks)
+        assert {check["citation"].split(" > ")[0] for check in checks} == {
+            "Omega 310.30.42.50.01.001", "Omega 310.30.42.50.01.002",
+        }
     else:
         assert not checks
     if rear_type.startswith("open"):
@@ -1229,3 +1232,33 @@ def test_moonwatch_replacement_caseback_keeps_identified_family_and_conditions_f
     assert report["conclusion"] == "inconclusive"
     assert "310.30.42.50.01.001" in cast(str, report["decision_reason_text"])
     assert "troca da tampa" in cast(str, report["next_verification"])
+
+
+@pytest.mark.parametrize(("reference", "proposed", "compares"), [
+    ("Moonwatch Professional Co-Axial Master Chronometer Chronograph 42 mm", "omega-speedmaster-31030425001002", True),
+    ("310.30.42.50.01.002", "omega-speedmaster-31030425001002", True),
+    ("310.30.42.50.01.001", "omega-speedmaster-31030425001002", False),
+    ("310.30.42.50.01.001", "rolex-daytona-126506", False),
+    ("Moonwatch 310.30.42.50.01.003", "omega-speedmaster-31030425001002", False),
+])
+def test_moonwatch_caseback_comparison_preserves_reference_scope(
+    reference: str, proposed: str, compares: bool,
+) -> None:
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Omega", "family": "Speedmaster", "reference": reference,
+                     "reference_id": proposed, "photo": 1}],
+        observations=[{"photo": 1, "angle": "caseback", "location": "fundo", "detail": "Visor na tampa.",
+                       "visibility": "visible", "field": "caseback_type", "value": "transparent"}],
+        linkage="single_photo", hypothesis="probable_original",
+    )
+    report = FlashReport("fixture").build_report(answer, {1})
+    candidate, = cast(list[dict[str, Any]], report["candidates"])
+    assert candidate["reference"] == reference and candidate["reference_id"] is None
+    assert report["conclusion"] == "inconclusive"
+    checks = cast(list[dict[str, Any]], report["technical_checks"])
+    if compares:
+        assert len(checks) == 2 and report["decision_reason"] == "factory_caseback_difference"
+        assert "310.30.42.50.01.001" in cast(str, report["decision_reason_text"])
+    else:
+        assert not checks
