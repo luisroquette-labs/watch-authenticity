@@ -365,23 +365,30 @@ def score_frozen(
         unlinked = linkage in ("mixed", "uncertain")
         if unlinked and conclusion != "inconclusive":
             raise ValueError("unlinked photos require an inconclusive result")
-        if run["route"] == "with_review" and unlinked:
-            if receipt.get("review_status") != "unlinked_photos" or any(
-                key.startswith("gpt_") for key in receipt
-            ):
-                raise ValueError("unlinked photos require an explicit no-review receipt")
-        elif run["route"] == "with_review":
-            if (
-                receipt.get("gpt_model") != models["gpt"]
-                or receipt.get("gpt_media_sha256") != case["prepared_media_sha256"]
-                or receipt.get("gpt_technical_facts_sha256") != manifest["freeze"]["technical_sources_sha256"]
-                or not _sha256(receipt.get("gpt_request_sha256"))
-                or not _sha256(receipt.get("gpt_response_sha256"))
-                or not _text(receipt.get("gpt_response_id"))
-                or receipt["gpt_response_id"] in gpt_ids
-            ):
-                raise ValueError("run receipt lacks a matching GPT capture")
-            gpt_ids.add(receipt["gpt_response_id"])
+        review_status = receipt.get("review_status")
+        if run["route"] == "with_review":
+            if unlinked or review_status == "no_comparable_fields":
+                expected_reason = "unlinked_photos" if unlinked else "no_comparable_fields"
+                if (review_status != expected_reason or conclusion != "inconclusive"
+                    or any(key.startswith("gpt_") for key in receipt)):
+                    raise ValueError("an evidence-limited case requires an explicit no-review receipt")
+            else:
+                matching_request = (
+                    receipt.get("gpt_model") == models["gpt"]
+                    and receipt.get("gpt_media_sha256") == case["prepared_media_sha256"]
+                    and receipt.get("gpt_technical_facts_sha256") == manifest["freeze"]["technical_sources_sha256"]
+                    and _sha256(receipt.get("gpt_request_sha256"))
+                )
+                if review_status == "unavailable":
+                    if (not matching_request or conclusion != "unavailable"
+                        or "gpt_response_sha256" in receipt or "gpt_response_id" in receipt):
+                        raise ValueError("unavailable review lacks a matching GPT request or has a response")
+                elif (not matching_request or not _sha256(receipt.get("gpt_response_sha256"))
+                      or not _text(receipt.get("gpt_response_id"))
+                      or receipt["gpt_response_id"] in gpt_ids):
+                    raise ValueError("run receipt lacks a matching GPT capture")
+                else:
+                    gpt_ids.add(receipt["gpt_response_id"])
         gemini_ids.add(receipt["gemini_response_id"])
         reports[specimen] = conclusion
     alpha = _confirmatory_alpha(manifest["freeze"])

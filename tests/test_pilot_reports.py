@@ -466,3 +466,32 @@ def test_census_rejects_unusable_confirmatory_alpha(alpha: object) -> None:
     manifest["freeze"]["confirmatory_alpha"] = alpha
     with pytest.raises(ValueError, match="confirmatory alpha"):
         census(manifest)
+
+
+def test_frozen_review_keeps_missing_evidence_separate_from_provider_failure() -> None:
+    held, unavailable = _case("held"), _case("unavailable")
+    data, params, run = _frozen_inputs(held, unavailable)
+    held_receipt = {
+        **_run_receipt(held, "inconclusive"), "review_status": "no_comparable_fields",
+    }
+    failed_receipt = {
+        **_run_receipt(unavailable, "unavailable"),
+        "review_status": "unavailable",
+        "gpt_model": "model-version-b",
+        "gpt_media_sha256": unavailable["prepared_media_sha256"],
+        "gpt_technical_facts_sha256": "c" * 64,
+        "gpt_request_sha256": "6" * 64,
+    }
+    run.update(route="with_review", reports={"held": held_receipt, "unavailable": failed_receipt})
+
+    score_result = _frozen_score(data, params, run)["independent"]
+
+    assert [score_result[key] for key in ("cases", "inconclusive", "unavailable")] == [2, 1, 1]
+    for changes in ({"conclusion": "probable_original"}, {"gpt_response_id": "unexpected"}):
+        run["reports"]["held"] = {**held_receipt, **changes}
+        with pytest.raises(ValueError, match="no-review receipt"):
+            _frozen_score(data, params, run)
+    run["reports"]["held"] = held_receipt
+    del failed_receipt["gpt_request_sha256"]
+    with pytest.raises(ValueError, match="lacks a matching GPT request"):
+        _frozen_score(data, params, run)

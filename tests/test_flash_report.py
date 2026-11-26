@@ -10,7 +10,7 @@ import pytest
 import requests
 from PIL import Image
 
-from evaluation.pilot_pairing import replay_with_review
+from evaluation.pilot_pairing import ReplayDecision, replay_with_review
 from pilot.flash_report import FlashReport
 from pilot.flash_research import MODEL, complete_flash
 from pilot.server import PilotHTTPServer, handler
@@ -1730,23 +1730,27 @@ def test_review_uses_the_same_candidate_decision_as_gemini(candidate: str) -> No
         ("cyclops", "image/png", base64.b64decode(_photo("gray"))),
     ]
     calls = []
+    material_claims = frozenset()
 
     def gemini(content):
         calls.append("gemini")
         assert "Qual hipótese de autenticidade é mais bem sustentada" in content[0]["text"]
         return _answer(), {"model": MODEL, "model_response_id": "test-provider-id"}
 
-    def decide(capture, report):
+    def decide(capture, report, fields):
+        nonlocal material_claims
         calls.append("decide")
         assert capture.case_id == "watch-1"
         assert capture.gemini_response_id == "test-provider-id"
         assert report["model_hypothesis"] == "probable_original"
-        return candidate
+        material_claims = frozenset(list(fields)[:1])
+        return ReplayDecision(candidate, material_claims)
 
     def review(request):
         calls.append("review")
         forbidden = {"gemini_hypothesis", "gemini_score_raw", "truth_label", "conclusion"}
         assert not forbidden & request.keys()
+        assert set(request["review_fields"]) == material_claims
         return {"case_token": request["case_token"], "findings": [
             {"claim_id": key, "photo_id": field["photo_id"],
              "source_fact_id": field["source_fact_id"], "status": "supported",
@@ -1771,8 +1775,8 @@ def test_candidate_replay_distinguishes_missing_evidence_from_review_failure() -
         ("caseback", "image/png", base64.b64decode(_photo("silver"))),
         ("cyclops", "image/png", base64.b64decode(_photo("gray"))),
     ]
-    def decision(_capture, _report):
-        return "probable_original"
+    def decision(_capture, _report, fields):
+        return ReplayDecision("probable_original", frozenset(fields))
 
     answer = _answer()
     metadata = {"model": MODEL, "model_response_id": "test-provider-id"}
@@ -1800,3 +1804,24 @@ def test_candidate_replay_distinguishes_missing_evidence_from_review_failure() -
         candidate_decider=lambda *_: pytest.fail("candidate policy cannot publish mixed views"),
     )
     assert unlinked["gemini_only"] == unlinked["with_review"] == "inconclusive"
+
+
+@pytest.mark.parametrize("candidate,claim_ids,pattern", [
+    ("probable_fake", frozenset(), "preserve the Gemini hypothesis"),
+    ("probable_original", frozenset({"unknown"}), "outside the captured report"),
+])
+def test_replay_rejects_reversed_hypothesis_and_invented_claim(
+    candidate: str, claim_ids: frozenset[str], pattern: str,
+) -> None:
+    photos = [
+        ("dial", "image/png", base64.b64decode(_photo("red"))),
+        ("cyclops", "image/png", base64.b64decode(_photo("silver"))),
+        ("cyclops", "image/png", base64.b64decode(_photo("gray"))),
+    ]
+    with pytest.raises(ValueError, match=pattern):
+        replay_with_review(
+            FlashReport("fixture"), "watch-1", photos,
+            lambda _: (_answer(), {"model": MODEL, "model_response_id": "test-provider-id"}),
+            lambda _: pytest.fail("invalid claims must never reach the reviewer"),
+            candidate_decider=lambda *_: ReplayDecision(candidate, claim_ids),
+        )

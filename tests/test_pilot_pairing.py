@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Any
 
 import pytest
 
@@ -62,3 +63,11 @@ def test_surface_parity_rejects_unusable_photo_digests(photos: tuple[str, ...]) 
 
     with pytest.raises(ValueError, match="ordered photo and prompt digests"):
         verify_surface_inputs((photos, "a" * 64), (photos, "a" * 64))
+
+
+def test_surface_parity_rejects_unordered_photo_inputs() -> None:
+    from evaluation.pilot_pairing import verify_surface_inputs
+
+    unordered: Any = {"a" * 64, "b" * 64}
+    with pytest.raises(ValueError, match="ordered photo and prompt digests"):
+        verify_surface_inputs((unordered, "c" * 64), (unordered, "c" * 64))
