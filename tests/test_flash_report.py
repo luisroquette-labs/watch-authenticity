@@ -1363,7 +1363,11 @@ def test_oyster_perpetual_hour_markers_compare_dial_without_deciding_authenticit
     assert [row["status"] for row in checks] == expected_checks
     if checks:
         assert [row["photo"] for row in checks] == [1, 2]
-        assert all(row["expected"] == "baton indices" and "rolex.com" in row["url"] for row in checks)
+        brochure = (
+            "https://content.rolex.com/dam/new-watches-2020/media/brochures/"
+            "grand-public/2020_Oyster_New_Models_en.pdf"
+        )
+        assert all(row["expected"] == "baton indices" and row["url"] == brochure for row in checks)
         assert report["candidates"] == [{"brand": "Rolex", "family": "Oyster Perpetual 41", "reference": "124300",
                                          "reference_id": "rolex-oysterperpetual-124300"}]
     if reason == "factory_dial_difference":
