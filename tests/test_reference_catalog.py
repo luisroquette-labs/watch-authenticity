@@ -123,10 +123,11 @@ def test_omega_007_variant_is_catalogued_but_not_released(catalog_fixture):
         catalog_fixture.catalog.head_for(entry.reference_id)
 
 
-def test_speedmaster_moonwatch_001_is_pending_without_authenticity_head(catalog_fixture):
-    entry = catalog_fixture.catalog.entry_for("omega-speedmaster-31030425001001")
+@pytest.mark.parametrize("code", ["31030425001001", "31030425001002"])
+def test_speedmaster_moonwatch_is_pending_without_authenticity_head(catalog_fixture, code):
+    entry = catalog_fixture.catalog.entry_for(f"omega-speedmaster-{code}")
     assert (entry.brand, entry.family, entry.reference) == (
-        "omega", "speedmaster", "31030425001001"
+        "omega", "speedmaster", code
     )
     assert entry.status == "pending"
     assert entry.gold_freeze_sha256 is None

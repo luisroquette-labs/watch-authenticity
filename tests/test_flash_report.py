@@ -1162,3 +1162,70 @@ def test_tank_shared_case_marking_preserves_both_commercial_hypotheses(
     else:
         assert report["decision_reason"] == "reference_unresolved"
         assert "garantia" in guidance and "sem compartilhá-lo" in guidance
+
+
+@pytest.mark.parametrize(("rear_type", "linkage", "expected", "conflict"), [
+    ("exhibition", "single_photo", {"310.30.42.50.01.002"}, "310.30.42.50.01.001"),
+    ("solid", "single_photo", {"310.30.42.50.01.001"}, "310.30.42.50.01.002"),
+    ("open", "single_photo", {"310.30.42.50.01.001", "310.30.42.50.01.002"}, None),
+    ("open_and_window", "single_photo", {"310.30.42.50.01.001", "310.30.42.50.01.002"}, None),
+    ("transparent", "uncertain", {"310.30.42.50.01.001", "310.30.42.50.01.002"}, None),
+])
+def test_moonwatch_fitted_caseback_checks_factory_variant_only(
+    rear_type: str, linkage: str, expected: set[str], conflict: str | None,
+) -> None:
+    answer = _answer()
+    answer.update(
+        candidates=[
+            {"brand": "Omega", "family": "Speedmaster", "reference": "310.30.42.50.01.002",
+             "reference_id": None, "photo": 1},
+            {"brand": "Omega", "family": "Speedmaster", "reference": "310.30.42.50.01.001",
+             "reference_id": "omega-speedmaster-31030425001001", "photo": 1},
+        ],
+        observations=[
+            {"photo": 1, "angle": "caseback", "location": "fundo", "detail": "Leitura do fundo da caixa.",
+             "visibility": "visible", "field": "caseback_type",
+             "value": "open" if rear_type == "open_and_window" else rear_type},
+            {"photo": 1, "angle": "movement", "location": "bridge", "detail": "bridge: 3861",
+             "visibility": "visible", "field": "movement_marking", "value": "3861"},
+        ],
+        hypothesis="probable_original",
+        linkage=linkage,
+    )
+    if rear_type == "open_and_window":
+        answer["observations"].append({**answer["observations"][0], "value": "transparent"})
+    report = FlashReport("fixture").build_report(answer, {1})
+    candidates = cast(list[dict[str, Any]], report["candidates"])
+    assert {row["reference"] for row in candidates} == expected
+    assert all(row["reference_id"] is None for row in candidates)
+    assert report["conclusion"] == "inconclusive"
+    checks = cast(list[dict[str, Any]], report["technical_checks"])
+    if conflict:
+        assert report["decision_reason"] == "factory_caseback_difference"
+        reason = cast(str, report["decision_reason_text"])
+        assert conflict in reason and "substituída" in reason
+        assert {check["status"] for check in checks} == {"matched", "conflicting"}
+        assert all(check["photo"] == 1 and check["field"] == "caseback_type" for check in checks)
+    else:
+        assert not checks
+    if rear_type.startswith("open"):
+        assert "tampa" in cast(str, report["next_verification"])
+        assert report["decision_reason"] == ("caseback_removed" if rear_type == "open" else "caseback_state_uncertain")
+
+
+def test_moonwatch_replacement_caseback_keeps_identified_family_and_conditions_factory_reference() -> None:
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Omega", "family": "Speedmaster", "reference": "310.30.42.50.01.001",
+                     "reference_id": "omega-speedmaster-31030425001001", "photo": 1}],
+        observations=[{"photo": 1, "angle": "caseback", "location": "fundo", "detail": "Janela instalada.",
+                       "visibility": "visible", "field": "caseback_type", "value": "transparent"}],
+        hypothesis="probable_fake", linkage="single_photo",
+    )
+    report = FlashReport("fixture").build_report(answer, {1})
+    assert report["candidates"] == [
+        {"brand": "Omega", "family": "Speedmaster", "reference": None, "reference_id": None},
+    ]
+    assert report["conclusion"] == "inconclusive"
+    assert "310.30.42.50.01.001" in cast(str, report["decision_reason_text"])
+    assert "troca da tampa" in cast(str, report["next_verification"])
