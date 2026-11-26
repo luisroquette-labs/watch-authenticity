@@ -22,7 +22,7 @@ from reference_intelligence.compare import assess_reference
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
-VERSION = "flash-photo-report-v14"
+VERSION = "flash-photo-report-v15"
 CONCLUSIONS = {
     "probable_fake": "Divergências que justificam investigar falsificação",
     "visually_compatible": "Compatível nos detalhes examinados · autenticidade inconclusiva",
@@ -32,6 +32,7 @@ PROMPT = """Investigue em português as fotos numeradas de relógios. O usuário
 Responda JSON com candidates [{brand,family,reference,reference_id,photo}], non_watch_photos (lista de números de fotos), linkage (single_photo, consistent, mixed, uncertain), observations [{photo,angle,location,detail,visibility,field,value}], hypothesis (probable_fake, probable_original, inconclusive) e next_verification. Antes de avaliar o vínculo, liste em non_watch_photos as imagens que claramente mostram apenas fundo, texto, documentos ou acessórios avulsos sem relógio ou vista física de seus componentes. Exclua essas imagens dos candidatos, do vínculo e das observações. Se não houver relógio visível em nenhuma, use uncertain, listas vazias de candidatos e observações e hipótese inconclusive. Se restar uma imagem claramente de um único relógio, use single_photo. Se uma imagem mostrar mais de um relógio, use mixed, mesmo que seja a única.
 Nos candidates, photo é o número da foto em que características do relógio sustentam a hipótese. reference_id é um ID exato da lista ou null; brand, family e reference são textos ou null. Em cada observação, angle é a vista efetivamente vista (dial, cyclops, rehaut, crown, clasp ou caseback) e visibility é visible ou ambiguous. Escolha field entre movement_marking, um dos campos comparáveis listados ou null para descrição livre. Para um campo comparável, value é o valor visto, em inglês quando possível, ou null se ambíguo. Não repita o esperado como se tivesse visto. A hipótese deve ser sustentada por observações visíveis. Lotes mistos ou com vínculo incerto são inconclusivos.
 Quando o mostrador completo permitir determinar se há janela de data e em qual posição, registre essa leitura em uma observação própria com field date_position e angle dial. Use no date para ausência visível, e marque ambiguous com value null se a foto não permitir decidir. Confira se a referência proposta é compatível com essa leitura. Ao pedir nova foto, indique a área ou a inscrição a examinar sem supor códigos que não aparecem.
+No Cartier Tank Must automático, WSTA0040 é a configuração com correia de couro e WSTA0053 com pulseira de metal. A gravação externa 4324 pode aparecer nas duas, e a correia ou pulseira pode ter sido trocada. Preserve as alternativas quando a foto mostrar apenas essa marcação ou características compartilhadas. Para uma gravação de modelo legível no fundo, use uma observação caseback com field null e informe o código inteiro efetivamente lido em value. Use value null se a inscrição estiver ausente ou ilegível.
 Para crown_shape, descreva só o contorno da coroa. Use round, 7 sided se puder contar os sete lados, ou faceted se puder ver faces sem contá-las. Use ambiguous com value null se o contorno estiver incerto. Trate cor em observação própria apenas quando a foto permitir e não deduza a composição da pedra.
 Quando houver um código legível gravado diretamente no rotor, ponte, platina ou módulo visível, registre-o em uma observação com field movement_marking, angle movement, location rotor, bridge, plate ou module e visibility visible. Use angle movement apenas nesse campo e quando o componente interno estiver visível pela abertura ou por um fundo transparente. Nesse caso, escreva em detail exatamente a localização e a inscrição no formato "rotor: 26-330", trocando rotor e 26-330 pelos valores lidos. Para códigos gravados na tampa externa, use angle caseback, field null e descreva a inscrição na tampa. Um número de módulo na tampa não mostra o módulo instalado. Escreva só o código literal em value, separado de frases, nome do fabricante e contagem de joias. Omita números de série e códigos ilegíveis. Uma inscrição copiada pode parecer correta. Identificar o calibre depende da arquitetura do mecanismo; autenticidade e precisão exigem evidência própria."""
 _MOVEMENT_MARKING = "movement_marking"
@@ -86,6 +87,7 @@ _BALLON_BLEU_42_GENERATIONS = {
     "cartier-ballonbleu-w69012z4": "W69012Z4",
     "cartier-ballonbleu-wsbb0049": "WSBB0049",
 }
+_TANK_MUST_4324_REFERENCES = ("WSTA0040", "WSTA0053")
 _LIMIT_REASONS = {
     "unlinked_photos": "As vistas ainda não podem ser atribuídas ao mesmo exemplar.",
     "no_watch_visible": "As imagens enviadas não mostram um relógio ou componente que permita a análise.",
@@ -374,6 +376,25 @@ class FlashReport:
                     for ref in generations
                 ]
                 reference_id, claims = None, ()
+        tank_shared_case = (
+            linkage != "mixed" and date_readings <= {"6 o'clock"} and bool(parsed_candidates) and all(
+                _identity(candidate["brand"]) == "cartier"
+                and _identity(candidate["family"]) in {"tankmust", "tankmustxl", "tankmustextralarge"}
+                and (candidate["reference"] or "").upper() in _TANK_MUST_4324_REFERENCES
+                for candidate in parsed_candidates
+            ) and any(
+                item["angle"] == Angle.CASEBACK.value and item["visibility"] == "visible"
+                and item["field"] is None and item["value"] == "4324"
+                for item in parsed
+            )
+        )
+        if tank_shared_case:
+            template = parsed_candidates[0]
+            parsed_candidates = [
+                {**template, "reference": code, "reference_id": None}
+                for code in _TANK_MUST_4324_REFERENCES
+            ]
+            reference_id, claims, outside_catalog = None, (), False
         primary_checks = _technical_checks(reference_id, claims, parsed)
         divergent_fields = {check["field"] for check in primary_checks if check["status"] == "conflicting"}
         matching_fields = {check["field"] for check in primary_checks if check["status"] == "matched"}
@@ -449,7 +470,13 @@ class FlashReport:
                 next_verification = _REFERENCE_MARKING_PHOTO
             elif reference_id is None:
                 reason = "catalog_gap" if outside_catalog else "reference_unresolved"
-                if generation_ambiguous:
+                if tank_shared_case:
+                    next_verification = (
+                        "Confira a referência comercial no cartão de garantia ou no registro de serviço. "
+                        "Compare o número de série do documento com o da caixa, sem compartilhá-lo. "
+                        "A configuração atual da pulseira ajuda a comparar as versões."
+                    )
+                elif generation_ambiguous:
                     back_examined = any(
                         item["angle"] == Angle.CASEBACK.value and item["visibility"] == "visible"
                         and item["field"] != _MOVEMENT_MARKING
@@ -521,6 +548,10 @@ class FlashReport:
             limits[0] += " Cada comparação cita a ficha usada."
         if any(item["field"] == _MOVEMENT_MARKING for item in parsed):
             limits.append("A inscrição é uma transcrição do que aparece na foto. A identificação do calibre depende da arquitetura do movimento.")
+        if tank_shared_case:
+            scope = "A comparação vale se a gravação estiver no mesmo relógio. " if not linked else ""
+            limits.append(f"{scope}O código 4324 aparece em exemplares associados a WSTA0040 e WSTA0053. "
+                          "A correia ou pulseira pode ter sido trocada.")
         if non_watch and watch_indices:
             photo_numbers = ", ".join(str(photo) for photo in sorted(non_watch))
             limits.append(f"Sem relógio ou componente visível nas fotos de número {photo_numbers}.")
