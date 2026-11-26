@@ -738,6 +738,39 @@ def test_daydate_228235_compares_shared_features_without_dial_or_calibre_inferen
         assert not checks
 
 
+@pytest.mark.parametrize(("date_value", "hypothesis", "expected_id", "expected_status"), [
+    ("6 o'clock", "probable_original", "cartier-tankmust-wsta0053", "matched"),
+    ("6 o'clock", "probable_fake", "cartier-tankmust-wsta0053", "matched"),
+    ("no date", "probable_fake", None, "conflicting"),
+])
+def test_tank_must_wsta0053_checks_date_without_authenticating_a_copied_marking(
+    date_value: str, hypothesis: str, expected_id: str | None, expected_status: str,
+) -> None:
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Cartier", "family": "Tank Must XL", "reference": "WSTA0053",
+                     "reference_id": None, "photo": 1}],
+        hypothesis=hypothesis,
+        observations=[
+            {"photo": 1, "angle": "dial", "location": "data", "detail": "Análise da janela de data.",
+             "visibility": "visible", "field": "date_position", "value": date_value},
+            {"photo": 2, "angle": "movement", "location": "rotor", "detail": "rotor: 1847 MC",
+             "visibility": "visible", "field": "movement_marking", "value": "1847 MC"},
+        ],
+    )
+    report = FlashReport("fixture").build_report(answer, {1, 2})
+    candidate, = cast(list[dict[str, Any]], report["candidates"])
+    check, = cast(list[dict[str, Any]], report["technical_checks"])
+    assert candidate["reference_id"] == expected_id
+    assert report["conclusion"] == "inconclusive"
+    assert report["quality_score_0_1000"] is None
+    assert check["field"] == "date_position" and check["photo"] == 1
+    assert check["status"] == expected_status
+    assert check["url"] == "https://www.cartier.com/en-us/watches/collections/tank/tank-must-watch-CRWSTA0053.html"
+    assert any(row["field"] == "movement_marking" and row["photo"] == 2
+               for row in cast(list[dict[str, Any]], report["observations"]))
+
+
 @pytest.mark.parametrize("scenario, reason", [
     ("partial-reference", "reference_unresolved"),
     ("multiple-candidates", "reference_unresolved"),

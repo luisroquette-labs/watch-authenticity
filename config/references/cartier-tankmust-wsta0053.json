@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "reference_id": "cartier-tankmust-wsta0053",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "WSTA0053",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/tank/tank-must-watch-CRWSTA0053.html",
+      "citation": "Cartier Tank Must watch > Ref. WSTA0053",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "family_alias",
+      "value": "Tank Must XL",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/tank/tank-must-watch-CRWSTA0053.html",
+      "citation": "Cartier Tank Must watch > Extra-large model",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "date_position",
+      "value": "6 o'clock",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/tank/tank-must-watch-CRWSTA0053.html",
+      "citation": "Cartier WSTA0053 > Product description > Calendar aperture at 6 o'clock",
+      "observed_at": "2026-11-26",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "hand_shape",
+      "value": "sword shaped",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/tank/tank-must-watch-CRWSTA0053.html",
+      "citation": "Cartier WSTA0053 > Product description > Blued-steel sword-shaped hands",
+      "observed_at": "2026-11-26",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "case_width_mm",
+      "value": "31",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/tank/tank-must-watch-CRWSTA0053.html",
+      "citation": "Cartier WSTA0053 > Product description > Case dimensions 41 mm x 31 mm",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "case_length_mm",
+      "value": "41",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.com/en-us/watches/collections/tank/tank-must-watch-CRWSTA0053.html",
+      "citation": "Cartier WSTA0053 > Product description > Case dimensions 41 mm x 31 mm",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    }
+  ]
+}
