@@ -912,7 +912,13 @@ def main(source: str = "all") -> None:
     now = datetime.now(timezone.utc)
     job_deadline = time.monotonic() + 420
     if source == "research-census":
-        run_research_census_once(cos, bucket, prefix, now=now)
+        census = run_research_census_once(cos, bucket, prefix, now=now)
+        _persist_status(cos, bucket, prefix, {
+            "cycle": census["cycle"],
+            "source": source,
+            "state": "complete",
+            "census_sha256": hashlib.sha256(_canonical(census)).hexdigest(),
+        })
         return
     if source == "supercloneluxury":
         luxury_policy = get_source_policy(policies, source)
