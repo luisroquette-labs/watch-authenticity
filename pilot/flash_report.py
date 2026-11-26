@@ -329,6 +329,7 @@ class FlashReport:
             or linkage == "single_photo" and len(watch_indices) > 1
             or linkage == "consistent" and len(watch_indices) == 1):
             raise ValueError("resultado de análise inválido")
+        raw_hypothesis = hypothesis
         if not watch_indices:
             linkage, hypothesis = "uncertain", "inconclusive"
             candidates, observations = [], []
@@ -818,8 +819,10 @@ class FlashReport:
             limits.append("Há indícios de que o lote contém mais de um relógio.")
         elif linkage == "uncertain" and watch_indices:
             limits.append("O modelo não conseguiu vincular as fotos a uma só peça.")
-        if model_hypothesis == "inconclusive":
+        if raw_hypothesis == "inconclusive":
             hypothesis_origin = "model_abstained"
+        elif not watch_indices:
+            hypothesis_origin = "policy_veto"
         elif not linked:
             hypothesis_origin = "linkage_veto"
         elif hypothesis in {"inconclusive", "visually_compatible"}:

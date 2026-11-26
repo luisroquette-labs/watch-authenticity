@@ -79,6 +79,7 @@ def test_watchless_batch_discards_candidates_and_asks_for_a_watch_photo() -> Non
     report = FlashReport("fixture").build_report(answer, {1, 3})
     assert report["decision_reason"] == "no_watch_visible"
     assert report["conclusion"] == report["model_hypothesis"] == "inconclusive"
+    assert report["hypothesis_origin"] == "policy_veto"
     assert report["candidates"] == report["examined_photos"] == report["technical_checks"] == []
     assert "foto nítida do relógio inteiro" in str(report["next_verification"])
 
@@ -1719,3 +1720,83 @@ def test_shadow_hypothesis_changes_only_the_instruction() -> None:
     assert "Lotes mistos ou com vínculo incerto são inconclusivos." not in shadow[0]["text"]
     assert "Qual hipótese de autenticidade é mais bem sustentada" in shadow[0]["text"]
     assert "Omita números de série" in shadow[0]["text"]
+
+
+@pytest.mark.parametrize("candidate", ["probable_original", "inconclusive"])
+def test_review_uses_the_same_candidate_decision_as_gemini(candidate: str) -> None:
+    photos = [
+        ("dial", "image/png", base64.b64decode(_photo("black"))),
+        ("caseback", "image/png", base64.b64decode(_photo("silver"))),
+        ("cyclops", "image/png", base64.b64decode(_photo("gray"))),
+    ]
+    calls = []
+
+    def gemini(content):
+        calls.append("gemini")
+        assert "Qual hipótese de autenticidade é mais bem sustentada" in content[0]["text"]
+        return _answer(), {"model": MODEL, "model_response_id": "test-provider-id"}
+
+    def decide(capture, report):
+        calls.append("decide")
+        assert capture.case_id == "watch-1"
+        assert capture.gemini_response_id == "test-provider-id"
+        assert report["model_hypothesis"] == "probable_original"
+        return candidate
+
+    def review(request):
+        calls.append("review")
+        forbidden = {"gemini_hypothesis", "gemini_score_raw", "truth_label", "conclusion"}
+        assert not forbidden & request.keys()
+        return {"case_token": request["case_token"], "findings": [
+            {"claim_id": key, "photo_id": field["photo_id"],
+             "source_fact_id": field["source_fact_id"], "status": "supported",
+             "reading": "Leitura própria compatível no fixture"}
+            for key, field in request["review_fields"].items()
+        ]}
+
+    result = replay_with_review(
+        FlashReport("fixture"), "watch-1", photos, gemini, review,
+        candidate_decider=decide, shadow_hypothesis=True,
+    )
+
+    assert calls == ["gemini", "decide", "review"]
+    assert result["previous_policy"] == "inconclusive"
+    assert result["gemini_hypothesis"] == "probable_original"
+    assert result["gemini_only"] == result["with_review"] == candidate
+
+
+def test_candidate_replay_distinguishes_missing_evidence_from_review_failure() -> None:
+    photos = [
+        ("dial", "image/png", base64.b64decode(_photo("black"))),
+        ("caseback", "image/png", base64.b64decode(_photo("silver"))),
+        ("cyclops", "image/png", base64.b64decode(_photo("gray"))),
+    ]
+    def decision(_capture, _report):
+        return "probable_original"
+
+    answer = _answer()
+    metadata = {"model": MODEL, "model_response_id": "test-provider-id"}
+    service = FlashReport("fixture")
+    unavailable = replay_with_review(
+        service, "watch-1", photos, lambda _: (answer, metadata), lambda _: None,
+        candidate_decider=decision,
+    )
+    assert (unavailable["review_status"], unavailable["with_review"]) == ("unavailable", "unavailable")
+
+    answer["observations"] = []
+    inconclusive = replay_with_review(
+        service, "watch-1", photos, lambda _: (answer, metadata),
+        lambda _: pytest.fail("review must not be called without fields"),
+        candidate_decider=decision,
+    )
+    assert (inconclusive["review_status"], inconclusive["with_review"]) == (
+        "no_comparable_fields", "inconclusive",
+    )
+
+    answer["linkage"] = "uncertain"
+    unlinked = replay_with_review(
+        service, "watch-1", photos, lambda _: (answer, metadata),
+        lambda _: pytest.fail("review must not be called without linkage"),
+        candidate_decider=lambda *_: pytest.fail("candidate policy cannot publish mixed views"),
+    )
+    assert unlinked["gemini_only"] == unlinked["with_review"] == "inconclusive"
