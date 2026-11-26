@@ -240,6 +240,7 @@ def test_watchless_photo_indices_must_be_distinct_prepared_inputs(non_watch: obj
 
 @pytest.mark.parametrize(("family", "reference", "reference_id", "expected_id", "reason"), [
     ("Collection", "F-91W-1", None, "casio-f91w-1", "catalog_gap"),
+    ("Classic", "F-91W-1", "casio-f91w-1", "casio-f91w-1", "catalog_gap"),
     ("F-91W", "F-91W-1", "casio-f91w-1", "casio-f91w-1", "catalog_gap"),
     ("F-91W", "1", "casio-f91w-1", None, "reference_unresolved"),
     ("G-Shock", "F-91W-1", None, None, "reference_unresolved"),

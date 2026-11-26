@@ -34,6 +34,8 @@ def assess_reference(
     corroboration_count = 0
     lead_count = 0
     for claim in claims:
+        if claim.field == "family_alias":
+            continue
         if claim.source_class.authoritative:
             authoritative.setdefault(claim.field, []).append(claim)
         elif claim.source_class.corroborating:
