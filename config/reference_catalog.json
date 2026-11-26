@@ -73,6 +73,19 @@
       "head": null
     },
     {
+      "reference_id": "rolex-oysterperpetual-124300",
+      "brand": "rolex",
+      "family": "oysterperpetual",
+      "reference": "124300",
+      "aliases": [],
+      "identity_evidence_sha256": null,
+      "required_angles": ["dial", "rehaut", "crown", "clasp", "caseback"],
+      "gold_freeze_sha256": null,
+      "holdout_freeze_sha256": null,
+      "status": "pending",
+      "head": null
+    },
+    {
       "reference_id": "cartier-santos-wssa0061",
       "brand": "cartier",
       "family": "santos",

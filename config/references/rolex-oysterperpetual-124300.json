@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "reference_id": "rolex-oysterperpetual-124300",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "124300",
+      "source_class": "official_brand",
+      "source_url": "https://content.rolex.com/dam/new-watches-2020/media/brochures/grand-public/2020_Oyster_New_Models_en.pdf",
+      "citation": "New Watches 2020, pp. 21–22 · Oyster Perpetual 41 · Case reference",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "family_alias",
+      "value": "Oyster Perpetual 41",
+      "source_class": "official_brand",
+      "source_url": "https://content.rolex.com/dam/new-watches-2020/media/brochures/grand-public/2020_Oyster_New_Models_en.pdf",
+      "citation": "New Watches 2020, pp. 21–22 · Oyster Perpetual 41",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "dial_hour_markers",
+      "value": "baton indices",
+      "source_class": "official_brand",
+      "source_url": "https://content.rolex.com/dam/new-watches-2020/media/brochures/grand-public/2020_Oyster_New_Models_en.pdf",
+      "citation": "New Watches 2020, pp. 21–22 · fotos oficiais dos mostradores prateado e preto brilhante",
+      "observed_at": "2026-11-26",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "date_position",
+      "value": "no date",
+      "source_class": "official_brand",
+      "source_url": "https://content.rolex.com/dam/new-watches-2020/media/brochures/grand-public/2020_Oyster_New_Models_en.pdf",
+      "citation": "New Watches 2020, pp. 21–22 · Functions e fotos oficiais do mostrador inteiro",
+      "observed_at": "2026-11-26",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "calibre",
+      "value": "3230",
+      "source_class": "official_brand",
+      "source_url": "https://content.rolex.com/dam/new-watches-2020/media/brochures/grand-public/2020_Oyster_New_Models_en.pdf",
+      "citation": "New Watches 2020, pp. 21–22 · Movement · Calibre 3230",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    }
+  ]
+}
