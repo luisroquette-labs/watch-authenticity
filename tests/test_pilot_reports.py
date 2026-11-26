@@ -453,11 +453,15 @@ def test_confirmatory_bounds_require_independent_groups_and_adjusted_alpha() -> 
 
     assert confirmatory_lower_bound(2, ("auction-1", "auction-1"), alpha=0.05) is None
     assert confirmatory_lower_bound(0, (), alpha=0.05) is None
-    assert confirmatory_lower_bound(2, ("auction-1", "auction-2"), alpha=0.05) > 0
+    independent = confirmatory_lower_bound(2, ("auction-1", "auction-2"), alpha=0.05)
+    assert independent is not None and independent > 0
     for rate, n in [(0.95, 59), (0.99, 299)]:
-        assert precision_lower_bound(n - 1, n - 1, alpha=0.05) < rate
-        assert precision_lower_bound(n, n, alpha=0.05) >= rate
-    assert precision_lower_bound(59, 59, alpha=0.05 / 6) < 0.95
+        below = precision_lower_bound(n - 1, n - 1, alpha=0.05)
+        at_minimum = precision_lower_bound(n, n, alpha=0.05)
+        assert below is not None and below < rate
+        assert at_minimum is not None and at_minimum >= rate
+    adjusted = precision_lower_bound(59, 59, alpha=0.05 / 6)
+    assert adjusted is not None and adjusted < 0.95
 
 
 @pytest.mark.parametrize("alpha", [None, True, 0, -0.05, 0.1, "0.01"])
