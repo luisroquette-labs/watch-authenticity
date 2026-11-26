@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "reference_id": "rolex-daydate-228235",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "228235",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/day-date/m228235-0025",
+      "citation": "Day-Date 40 heading > Reference 228235",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "family_alias",
+      "value": "Day-Date 40",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/day-date/m228235-0025",
+      "citation": "Day-Date 40 heading",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "bezel_type",
+      "value": "fluted",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/day-date/m228235-0025",
+      "citation": "More Day-Date technical details > Model case > Bezel",
+      "observed_at": "2026-11-26",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "date_position",
+      "value": "3 o'clock",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/day-date/m228235-0025",
+      "citation": "Official front product photograph > Date aperture at 3 o'clock",
+      "observed_at": "2026-11-26",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "date_magnifier",
+      "value": "Cyclops",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/day-date/m228235-0025",
+      "citation": "More Day-Date technical details > Model case > Crystal",
+      "observed_at": "2026-11-26",
+      "applicable_angles": ["dial", "cyclops"]
+    },
+    {
+      "field": "bracelet_style",
+      "value": "President",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/day-date/m228235-0025",
+      "citation": "More Day-Date technical details > Bracelet > Bracelet",
+      "observed_at": "2026-11-26",
+      "applicable_angles": ["dial", "clasp"]
+    },
+    {
+      "field": "diameter_mm",
+      "value": "40",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/day-date/m228235-0025",
+      "citation": "More Day-Date technical details > Model case > Diameter",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "case_material",
+      "value": "18 ct Everose gold",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/day-date/m228235-0025",
+      "citation": "More Day-Date technical details > Model case > Material",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "calibre",
+      "value": "3255",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/day-date/m228235-0025",
+      "citation": "More Day-Date technical details > Movement > Calibre",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "water_resistance_m",
+      "value": "100",
+      "source_class": "official_brand",
+      "source_url": "https://www.rolex.com/watches/day-date/m228235-0025",
+      "citation": "More Day-Date technical details > Model case > Water resistance",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    }
+  ]
+}
