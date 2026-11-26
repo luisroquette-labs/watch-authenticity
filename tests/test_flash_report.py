@@ -1334,6 +1334,70 @@ def test_moonwatch_caseback_comparison_preserves_reference_scope(
         assert not checks
 
 
+@pytest.mark.parametrize(("linkage", "second_reading", "expected_checks", "reason"), [
+    ("consistent", "arabic numerals", ["conflicting", "conflicting"], "factory_dial_difference"),
+    ("consistent", "baton indices", ["conflicting", "matched"], "dial_hour_marker_readings_disagree"),
+    ("mixed", "arabic numerals", [], "unlinked_photos"),
+])
+def test_oyster_perpetual_hour_markers_compare_dial_without_deciding_authenticity(
+    linkage: str, second_reading: str, expected_checks: list[str], reason: str,
+) -> None:
+    answer = _answer()
+    marker = {"photo": 1, "angle": "dial", "location": "índices", "detail": "O relógio é falso.",
+              "visibility": "visible", "field": "dial_hour_markers", "value": "arabic numerals"}
+    answer.update(
+        linkage=linkage, hypothesis="probable_fake",
+        candidates=[{"brand": "Rolex", "family": "Oyster Perpetual 41", "reference": "124300",
+                     "reference_id": None, "photo": 1}],
+        observations=[marker, {**marker, "photo": 2, "value": second_reading},
+                      {**marker, "photo": 2, "angle": "caseback"}],
+    )
+    report = FlashReport("fixture").build_report(answer, {1, 2})
+    assert report["conclusion"] == "inconclusive"
+    assert report["decision_reason"] == reason
+    assert report["quality_score_0_1000"] is None
+    observations = cast(list[dict[str, Any]], report["observations"])
+    assert len(observations) == 2 and all(row["angle"] == "dial" for row in observations)
+    assert observations[0]["detail"] == "Marcadores de horas em algarismos arábicos."
+    checks = cast(list[dict[str, Any]], report["technical_checks"])
+    assert [row["status"] for row in checks] == expected_checks
+    if checks:
+        assert [row["photo"] for row in checks] == [1, 2]
+        assert all(row["expected"] == "baton indices" and "rolex.com" in row["url"] for row in checks)
+        assert report["candidates"] == [{"brand": "Rolex", "family": "Oyster Perpetual 41", "reference": "124300",
+                                         "reference_id": "rolex-oysterperpetual-124300"}]
+    if reason == "factory_dial_difference":
+        assert "mostrador de reposição" in cast(str, report["decision_reason_text"])
+        assert "arquitetura do movimento" in cast(str, report["next_verification"])
+
+
+@pytest.mark.parametrize(("visibility", "markers", "reason", "guidance"), [
+    ("ambiguous", None, "detail_not_verified", "marcadores das horas em foco"),
+    ("visible", "baton indices", "catalog_gap", "arquitetura do movimento"),
+])
+def test_oyster_perpetual_next_check_uses_remaining_evidence(
+    visibility: str, markers: str | None, reason: str, guidance: str,
+) -> None:
+    answer = _answer()
+    answer.update(
+        linkage="single_photo",
+        candidates=[{"brand": "Rolex", "family": "Oyster Perpetual 41", "reference": "124300",
+                     "reference_id": None, "photo": 1}],
+        observations=[
+            {"photo": 1, "angle": "dial", "location": "mostrador", "detail": "Sem janela de data.",
+             "visibility": "visible", "field": "date_position", "value": "no date"},
+            {"photo": 1, "angle": "dial", "location": "índices", "detail": "Marcadores das horas.",
+             "visibility": visibility, "field": "dial_hour_markers", "value": markers},
+        ],
+    )
+    report = FlashReport("fixture").build_report(answer, {1})
+    assert report["conclusion"] == "inconclusive"
+    assert report["decision_reason"] == reason
+    assert guidance in cast(str, report["next_verification"])
+    checks = cast(list[dict[str, Any]], report["technical_checks"])
+    assert sum(row["field"] == "dial_hour_markers" for row in checks) == int(markers is not None)
+
+
 @pytest.mark.parametrize(("code", "family"), [
     ("SPB383", "Prospex"), ("SPB383J1", "1968 Diver’s Modern Re-interpretation GMT"),
 ])

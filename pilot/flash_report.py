@@ -22,7 +22,7 @@ from reference_intelligence.compare import assess_reference
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
-VERSION = "flash-photo-report-v17"
+VERSION = "flash-photo-report-v18"
 CONCLUSIONS = {
     "probable_fake": "Divergências que justificam investigar falsificação",
     "visually_compatible": "Compatível nos detalhes examinados · autenticidade inconclusiva",
@@ -32,6 +32,7 @@ PROMPT = """Investigue em português as fotos numeradas de relógios. O usuário
 Responda JSON com candidates [{brand,family,reference,reference_id,photo}], non_watch_photos (lista de números de fotos), linkage (single_photo, consistent, mixed, uncertain), observations [{photo,angle,location,detail,visibility,field,value}], hypothesis (probable_fake, probable_original, inconclusive) e next_verification. Antes de avaliar o vínculo, liste em non_watch_photos as imagens que claramente mostram apenas fundo, texto, documentos ou acessórios avulsos sem relógio ou vista física de seus componentes. Exclua essas imagens dos candidatos, do vínculo e das observações. Se não houver relógio visível em nenhuma, use uncertain, listas vazias de candidatos e observações e hipótese inconclusive. Se restar uma imagem claramente de um único relógio, use single_photo. Se uma imagem mostrar mais de um relógio, use mixed, mesmo que seja a única.
 Nos candidates, photo é o número da foto em que características do relógio sustentam a hipótese. reference_id é um ID exato da lista ou null; brand, family e reference são textos ou null. Em cada observação, angle é a vista efetivamente vista (dial, cyclops, rehaut, crown, clasp ou caseback) e visibility é visible ou ambiguous. Escolha field entre movement_marking, um dos campos comparáveis listados ou null para descrição livre. Para um campo comparável, value é o valor visto, em inglês quando possível, ou null se ambíguo. Não repita o esperado como se tivesse visto. A hipótese deve ser sustentada por observações visíveis. Lotes mistos ou com vínculo incerto são inconclusivos.
 Quando o mostrador completo permitir determinar se há janela de data e em qual posição, registre essa leitura em uma observação própria com field date_position e angle dial. Use no date para ausência visível, e marque ambiguous com value null se a foto não permitir decidir. Confira se a referência proposta é compatível com essa leitura. Ao pedir nova foto, indique a área ou a inscrição a examinar sem supor códigos que não aparecem.
+Quando os marcadores das horas estiverem legíveis, use field dial_hour_markers e angle dial. Use baton indices para índices em bastão, arabic numerals para algarismos arábicos ou roman numerals para algarismos romanos. Se a leitura for mista ou ilegível, use ambiguous com value null. Compare o mostrador sem inferir a procedência da caixa ou do movimento.
 Em um mostrador de mergulho, se a inscrição DIVER’S trouxer claramente 200m ou 300m, use field dial_depth_marking, angle dial e apenas 200m ou 300m em value. Se ilegível, use ambiguous e value null. A inscrição ajuda a identificar a variante. Ela não verifica a resistência à água do exemplar. Para distinguir variantes de 300m, use field bezel_edge_color e angle dial se puder ler a cor da borda externa do bisel. Use silver-tone ou gold-tone, sem deduzir o material. Use o código completo da variante quando houver evidência suficiente e preserve alternativas compatíveis.
 No Cartier Tank Must automático, WSTA0040 é a configuração com correia de couro e WSTA0053 com pulseira de metal. A gravação externa 4324 pode aparecer nas duas, e a correia ou pulseira pode ter sido trocada. Preserve as alternativas quando a foto mostrar apenas essa marcação ou características compartilhadas. Para uma gravação de modelo legível no fundo, use uma observação caseback com field null e informe o código inteiro efetivamente lido em value. Use value null se a inscrição estiver ausente ou ilegível.
 Para crown_shape, descreva só o contorno da coroa. Use round, 7 sided se puder contar os sete lados, ou faceted se puder ver faces sem contá-las. Use ambiguous com value null se o contorno estiver incerto. Trate cor em observação própria apenas quando a foto permitir e não deduza a composição da pedra.
@@ -41,7 +42,13 @@ _DIAL_DEPTH_MARKING = "dial_depth_marking"
 _DIAL_DEPTH_VALUES = {"200m", "300m"}
 _BEZEL_EDGE_COLOR = "bezel_edge_color"
 _BEZEL_EDGE_TONES = {"silver tone": "prateado", "gold tone": "dourado"}
-IDENTIFICATION_ONLY_FIELDS = frozenset({_DIAL_DEPTH_MARKING, _BEZEL_EDGE_COLOR})
+_DIAL_HOUR_MARKERS = "dial_hour_markers"
+_DIAL_HOUR_MARKER_DETAILS = {
+    "baton indices": "Marcadores de horas em bastão.",
+    "arabic numerals": "Marcadores de horas em algarismos arábicos.",
+    "roman numerals": "Marcadores de horas em algarismos romanos.",
+}
+IDENTIFICATION_ONLY_FIELDS = frozenset({_DIAL_DEPTH_MARKING, _BEZEL_EDGE_COLOR, _DIAL_HOUR_MARKERS})
 _MOVEMENT_MARKING = "movement_marking"
 _MOVEMENT_REGIONS = {"rotor": "rotor", "bridge": "ponte", "plate": "platina", "module": "módulo"}
 _MOVEMENT_CODE = re.compile(r"(?=.{2,16}\Z)(?:[Cc]\.|[A-Za-z]{0,6}) ?\d[A-Za-z0-9]*(?:[-./‐‑–][A-Za-z0-9]+)*(?: [A-Za-z]{1,4}){0,2}")
@@ -58,6 +65,7 @@ _COMPARABLE_VALUES = {
     "display_type": {"analog", "digital"},
     _DIAL_DEPTH_MARKING: _DIAL_DEPTH_VALUES,
     _BEZEL_EDGE_COLOR: set(_BEZEL_EDGE_TONES),
+    _DIAL_HOUR_MARKERS: set(_DIAL_HOUR_MARKER_DETAILS),
     "hand_shape": {"sword shaped", "dauphine", "baton"},
 }
 _VALUE_ALIASES = {
@@ -88,6 +96,7 @@ _PHOTO_FOR_FIELD = {
     "crown_shape": "Fotografe a coroa de perfil e em foco, com luz lateral, para distinguir seu contorno e suas faces.",
     "date_magnifier": "Fotografe a janela de data perpendicular ao vidro, em foco e sem reflexo, para ver se há lente sobre ela.",
     "date_position": "Fotografe o mostrador de frente, inteiro e sem reflexo, para verificar se há data e em qual posição.",
+    _DIAL_HOUR_MARKERS: "Fotografe o mostrador de frente, sem reflexo e com todos os marcadores das horas em foco.",
     "display_type": "Fotografe o mostrador inteiro de frente e com o visor legível para verificar o tipo de indicação.",
     "hand_shape": "Fotografe os ponteiros de frente e de perto, com as pontas em foco, para comparar o formato.",
 }
@@ -111,6 +120,8 @@ _LIMIT_REASONS = {
     "date_readings_disagree": "As fotos levaram a leituras diferentes da janela de data. A referência exata segue em aberto.",
     "reference_unresolved": "Ainda há dúvida sobre a variante ou a referência exata.",
     "catalog_gap": "Para esta referência, a base técnica ainda não tem comparações estruturais suficientes para avaliar uma suspeita de falsificação.",
+    "factory_dial_difference": "Os marcadores das horas diferem dos mostradores documentados pela ficha. Outra variante ou um mostrador de reposição são explicações possíveis.",
+    "dial_hour_marker_readings_disagree": "As fotos levaram a leituras diferentes dos marcadores das horas. O mostrador segue em aberto.",
     "detail_not_verified": "Falta uma vista legível de um detalhe que a ficha permite comparar.",
     "compatible_or_insufficient": "Os detalhes disponíveis não distinguem uma réplica bem acabada de um original.",
 }
@@ -410,6 +421,14 @@ class FlashReport:
                     detail=f"Borda do bisel em tom {tone}." if tone else "Cor da borda do bisel indeterminada.",
                     value=value if tone else None, visibility="visible" if tone else "ambiguous",
                 )
+            elif field == _DIAL_HOUR_MARKERS:
+                value = _comparison_value(field, observation["value"] or "")
+                detail = _DIAL_HOUR_MARKER_DETAILS.get(value) if observation["visibility"] == "visible" else None
+                observation.update(
+                    field=field, location="marcadores das horas",
+                    detail=detail or "Marcadores das horas indeterminados nesta foto.",
+                    value=value if detail else None, visibility="visible" if detail else "ambiguous",
+                )
             parsed.append(observation)
         date_observations = [
             item for item in parsed
@@ -486,10 +505,15 @@ class FlashReport:
             identity_fields.add("caseback_type")
         auth_observations = [item for item in parsed if item["field"] not in identity_fields]
         primary_checks = _technical_checks(reference_id, claims, auth_observations)
+        dial_marker_checks = _technical_checks(
+            reference_id, claims, [item for item in parsed if item["field"] == _DIAL_HOUR_MARKERS],
+        ) if linked else []
+        dial_marker_conflict = any(check["status"] == "conflicting" for check in dial_marker_checks)
+        dial_marker_disagreement = len({check["observed"] for check in dial_marker_checks}) > 1
         divergent_fields = {check["field"] for check in primary_checks if check["status"] == "conflicting"}
         matching_fields = {check["field"] for check in primary_checks if check["status"] == "matched"}
         date_disagreement = len(date_readings) > 1
-        checks = [*primary_checks, *factory_caseback_checks, *depth_checks]
+        checks = [*primary_checks, *factory_caseback_checks, *depth_checks, *dial_marker_checks]
         rejected_references: set[str] = set()
         if linked and len(date_readings) == 1:
             date_statuses: dict[str, set[object]] = {}
@@ -517,7 +541,7 @@ class FlashReport:
         model_hypothesis = hypothesis
         if (rejected_references or rejected_by_depth or date_disagreement or caseback_disagreement
             or depth_disagreement or inconclusive_variants or reference_id in factory_conflicts
-            or not linked or not primary_checks
+            or dial_marker_conflict or dial_marker_disagreement or not linked or not primary_checks
             or hypothesis == "probable_original" and not compatibility_supported
             or hypothesis == "probable_fake" and len(divergent_fields & _STRUCTURAL_FIELDS) < 2):
             hypothesis = "inconclusive"
@@ -587,6 +611,15 @@ class FlashReport:
             elif caseback_disagreement:
                 reason = "caseback_state_uncertain"
                 next_verification = "Fotografe o fundo em ângulo oblíquo, com a junção da tampa com a caixa em foco."
+            elif dial_marker_disagreement:
+                reason = "dial_hour_marker_readings_disagree"
+                next_verification = _PHOTO_FOR_FIELD[_DIAL_HOUR_MARKERS]
+            elif dial_marker_conflict:
+                reason = "factory_dial_difference"
+                next_verification = (
+                    "Peça a um relojoeiro para conferir a referência da caixa e a arquitetura do movimento "
+                    "e verificar se o mostrador foi substituído. Se houver registro de serviço, leve-o para conferência."
+                )
             elif reference_id is None:
                 reason = "catalog_gap" if outside_catalog else "reference_unresolved"
                 if tank_shared_case:
@@ -622,6 +655,15 @@ class FlashReport:
                 reason = "catalog_gap"
                 if remaining:
                     next_verification = _PHOTO_FOR_FIELD[remaining[0]] + " Isso ajuda a conferir a referência. A autenticidade segue em aberto."
+                elif reference_id and _DIAL_HOUR_MARKERS in visual_reference_fields:
+                    if dial_marker_checks:
+                        next_verification = (
+                            "Confira a referência no cartão de garantia ou no registro de serviço. "
+                            "Peça a um relojoeiro para comparar a caixa e a arquitetura do movimento com a ficha."
+                        )
+                    else:
+                        reason = "detail_not_verified"
+                        next_verification = _PHOTO_FOR_FIELD[_DIAL_HOUR_MARKERS]
                 elif reference_id == "casio-f91w-1":
                     if any(item["angle"] == "caseback" and item["visibility"] == "visible" for item in parsed):
                         next_verification = (
