@@ -602,8 +602,9 @@ def test_aquanaut_catalogue_keeps_movement_marking_separate_from_reference_check
         ],
     )
     reporter = FlashReport("fixture")
+    lot_url = "https://www.artcurial.com/en/sales/MC-6026/lots/166-a"
     lot_claims = [claim for claim in reporter.claims[reference_id]
-                 if claim.field == "calibre" and "artcurial.com" in claim.source_url]
+                  if claim.field == "calibre" and claim.source_url == lot_url]
     assert {claim.value for claim in lot_claims} == {"324 S C", "26-330 S C"}
     assert all(not claim.applicable_angles for claim in lot_claims)
     report = reporter.build_report(answer, {1, 2})
