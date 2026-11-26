@@ -423,6 +423,15 @@ class FlashReport:
                 reason = "catalog_gap"
                 if remaining:
                     next_verification = _PHOTO_FOR_FIELD[remaining[0]] + " Isso ajuda a conferir a referência. A autenticidade segue em aberto."
+                elif reference_id == "casio-f91w-1":
+                    if any(item["angle"] == "caseback" and item["visibility"] == "visible" for item in parsed):
+                        next_verification = (
+                            "Se a inscrição da tampa estiver ilegível, fotografe o fundo de frente, em foco e sem reflexo. "
+                            "Se já estiver legível, peça a um relojoeiro para comparar a placa com a de um exemplar "
+                            "documentado da mesma geração. Réplicas também podem exibir CASIo no visor."
+                        )
+                    else:
+                        next_verification = _REFERENCE_MARKING_PHOTO
                 elif "date_position" in structural_fields:
                     next_verification = _REFERENCE_MARKING_PHOTO
             elif remaining:

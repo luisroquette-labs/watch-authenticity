@@ -280,6 +280,44 @@ def test_flash_resolves_only_exact_official_commercial_designation(
     assert report["decision_reason"] == reason
 
 
+@pytest.mark.parametrize("rear_detail", [
+    None,
+    "Fundo metálico com a inscrição 593",
+    "Tampa metálica visível, gravação ilegível",
+])
+def test_casio_f91w_guidance_requires_evidence_beyond_the_display_test(rear_detail: str | None) -> None:
+    rear_visible = rear_detail is not None
+    answer: dict[str, Any] = {
+        "candidates": [{"brand": "Casio", "family": "Classic", "reference": "F-91W-1",
+                        "reference_id": "casio-f91w-1", "photo": 1}],
+        "linkage": "consistent" if rear_visible else "single_photo",
+        "hypothesis": "probable_original",
+        "observations": [
+            {"photo": 1, "angle": "dial", "location": "visor", "detail": "Visor digital",
+             "visibility": "visible", "field": "display_type", "value": "digital"},
+        ],
+        "next_verification": "Acione o botão para ver CASIo e confirmar a autenticidade.",
+    }
+    if rear_visible:
+        answer["observations"].append(
+            {"photo": 2, "angle": "caseback", "location": "fundo",
+             "detail": rear_detail, "visibility": "visible",
+             "field": None, "value": None},
+        )
+    report = FlashReport("fixture").build_report(answer, {1, 2} if rear_visible else {1})
+    next_verification = str(report["next_verification"])
+    assert "confirmar a autenticidade" not in next_verification
+    if rear_visible:
+        assert "Se a inscrição da tampa estiver ilegível" in next_verification
+        assert "Se já estiver legível" in next_verification
+        assert "relojoeiro" in next_verification
+        assert "placa" in next_verification
+    else:
+        assert "Fotografe o fundo da caixa" in next_verification
+    assert report["conclusion"] == "inconclusive"
+    assert report["decision_reason"] == "catalog_gap"
+
+
 @pytest.mark.parametrize("case", ["wrong_brand", "mixed", "uncertain", "multiple_candidates", "catalogue_collision"])
 def test_commercial_designation_cannot_override_uncertain_identity(case: str) -> None:
     answer = _answer()
