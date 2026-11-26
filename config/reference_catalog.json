@@ -164,6 +164,19 @@
       "head": null
     },
     {
+      "reference_id": "patek-aquanaut-5168g010",
+      "brand": "patek",
+      "family": "aquanaut",
+      "reference": "5168g010",
+      "aliases": [],
+      "identity_evidence_sha256": null,
+      "required_angles": ["dial", "crown", "clasp", "caseback"],
+      "gold_freeze_sha256": null,
+      "holdout_freeze_sha256": null,
+      "status": "pending",
+      "head": null
+    },
+    {
       "reference_id": "patek-nautilus-58111g001",
       "brand": "patek",
       "family": "nautilus",

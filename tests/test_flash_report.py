@@ -586,6 +586,38 @@ def test_visible_internal_marking_through_transparent_caseback_keeps_its_origin(
     assert reading["location"] == "rotor"
 
 
+@pytest.mark.parametrize("marking", ["324 S C", "26-330 S C"])
+def test_aquanaut_catalogue_keeps_movement_marking_separate_from_reference_checks(marking: str) -> None:
+    reference_id = "patek-aquanaut-5168g010"
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Patek Philippe", "family": "Aquanaut", "reference": "5168G-010",
+                     "reference_id": reference_id, "photo": 1}],
+        hypothesis="probable_fake",
+        observations=[
+            {"photo": 1, "angle": "dial", "location": "janela da data", "detail": "Data visível às 3h.",
+             "visibility": "visible", "field": "date_position", "value": "3 o'clock"},
+            {"photo": 2, "angle": "movement", "location": "bridge", "detail": f"bridge: {marking}",
+             "visibility": "visible", "field": "movement_marking", "value": marking},
+        ],
+    )
+    reporter = FlashReport("fixture")
+    lot_claims = [claim for claim in reporter.claims[reference_id]
+                 if claim.field == "calibre" and "artcurial.com" in claim.source_url]
+    assert {claim.value for claim in lot_claims} == {"324 S C", "26-330 S C"}
+    assert all(not claim.applicable_angles for claim in lot_claims)
+    report = reporter.build_report(answer, {1, 2})
+    candidate, = cast(list[dict[str, Any]], report["candidates"])
+    assert candidate["reference_id"] == reference_id
+    check, = cast(list[dict[str, Any]], report["technical_checks"])
+    assert (check["photo"], check["field"], check["status"]) == (1, "date_position", "matched")
+    assert check["url"] == "https://www.patek.com/en/collection/aquanaut/5168g-010"
+    readings = cast(list[dict[str, Any]], report["observations"])
+    assert any(row["field"] == "movement_marking" and row["value"] == marking for row in readings)
+    assert report["conclusion"] == "inconclusive"
+    assert report["quality_score_0_1000"] is None
+
+
 @pytest.mark.parametrize("angle,location,visibility,value,retained", [
     ("movement", "rotor", "visible", "26-330 S C", True),
     ("movement", "plate", "visible", "1847 MC", True),
