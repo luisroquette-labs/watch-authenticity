@@ -481,14 +481,21 @@ class FlashReport:
                     else:
                         next_verification = _REFERENCE_MARKING_PHOTO
                 elif "date_position" in structural_fields:
+                    case_codes = {
+                        code for claim in claims if claim.field == "model_code"
+                        for code in map(str.strip, claim.value.split("/"))
+                        if _REFERENCE_CODE.fullmatch(code)
+                    }
                     if any(
                         item["angle"] == Angle.CASEBACK.value and item["visibility"] == "visible"
-                        and item["field"] is None for item in parsed
+                        and item["field"] is None
+                        and any(re.search(rf"\b{re.escape(code)}\b", item["detail"], re.IGNORECASE) for code in case_codes)
+                        for item in parsed
                     ):
                         next_verification = (
                             "Se o código da caixa já estiver legível, peça a um relojoeiro que verifique "
                             "quais componentes correspondem à referência e se houve substituições. "
-                            "Se estiver ilegível, envie uma macro da gravação com o número de série coberto."
+                            "Se estiver ilegível, envie uma macro em foco da gravação com o número de série coberto."
                         )
                     else:
                         next_verification = _REFERENCE_MARKING_PHOTO
