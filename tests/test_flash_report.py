@@ -774,8 +774,8 @@ def test_tank_must_wsta0053_checks_date_without_authenticating_a_copied_marking(
 @pytest.mark.parametrize(("reference", "date_value", "expected_status"), [
     ("W6920046", "no date", "matched"),
     ("W6920046", "3 o'clock", "conflicting"),
-    ("W69012Z4", "3 o'clock", "matched"),
     ("W69012Z4", "no date", "conflicting"),
+    ("WSBB0049", "no date", "conflicting"),
 ])
 def test_ballon_bleu_date_distinguishes_commercial_variants(
     reference: str, date_value: str, expected_status: str,
@@ -803,6 +803,57 @@ def test_ballon_bleu_date_distinguishes_commercial_variants(
     assert check["url"].startswith(f"https://www.cartier.mx/{reference.lower()}-")
     assert report["conclusion"] == "inconclusive"
     assert report["quality_score_0_1000"] is None
+
+
+@pytest.mark.parametrize("suggested", ["W69012Z4", "WSBB0049", None])
+@pytest.mark.parametrize("extra", ["none", "crown", "caseback", "1847 MC", "049"])
+def test_ballon_bleu_42_shared_details_keep_both_generations(suggested: str | None, extra: str) -> None:
+    answer = _answer()
+    models = [suggested] if suggested else ["W69012Z4", "WSBB0049"]
+    answer.update(
+        candidates=[{"brand": "Cartier", "family": "Ballon Bleu de Cartier", "reference": reference,
+                     "reference_id": None, "photo": 1} for reference in models],
+        linkage="single_photo",
+        observations=[
+            {"photo": 1, "angle": "dial", "location": "janela da data", "detail": "Data visível às 3h.",
+             "visibility": "visible", "field": "date_position", "value": "3 o'clock"},
+            {"photo": 1, "angle": "dial", "location": "ponteiros", "detail": "Ponteiros em forma de espada.",
+             "visibility": "visible", "field": "hand_shape", "value": "sword"},
+        ],
+    )
+    indices = {1}
+    if extra == "crown":
+        answer["observations"].append(
+            {"photo": 1, "angle": "crown", "location": "coroa", "detail": "Coroa visível na frente.",
+             "visibility": "visible", "field": None, "value": None},
+        )
+    elif extra != "none":
+        indices.add(2)
+        answer["linkage"] = "consistent"
+        observation = {"photo": 2, "angle": "caseback", "location": "fundo", "detail": "Tampa metálica visível.",
+                       "visibility": "visible", "field": None, "value": None}
+        if extra != "caseback":
+            observation.update(angle="movement", location="rotor", detail=f"rotor: {extra}",
+                               field="movement_marking", value=extra)
+        answer["observations"].append(observation)
+
+    report = FlashReport("fixture").build_report(answer, indices)
+    candidates = cast(list[dict[str, Any]], report["candidates"])
+    assert {candidate["reference"] for candidate in candidates} == {"W69012Z4", "WSBB0049"}
+    assert candidates[0]["reference"] == (suggested or "W69012Z4")
+    checks = cast(list[dict[str, Any]], report["technical_checks"])
+    assert {(check["reference_id"], check["field"], check["photo"], check["status"]) for check in checks} == {
+        (f"cartier-ballonbleu-{reference.lower()}", field, 1, "matched")
+        for reference in ("W69012Z4", "WSBB0049") for field in ("date_position", "hand_shape")
+    }
+    assert report["conclusion"] == "inconclusive"
+    assert report["decision_reason"] == "reference_unresolved"
+    requested = "cartão de garantia" if extra == "caseback" else "encaixe da pulseira"
+    assert requested in str(report["next_verification"])
+    assert report["quality_score_0_1000"] is None
+    if extra in {"1847 MC", "049"}:
+        assert any(item["photo"] == 2 and item["field"] == "movement_marking" and item["value"] == extra
+                   for item in cast(list[dict[str, Any]], report["observations"]))
 
 
 @pytest.mark.parametrize("case_code", ("3284", "3001", "3765"))

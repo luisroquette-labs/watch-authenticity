@@ -151,6 +151,19 @@
       "head": null
     },
     {
+      "reference_id": "cartier-ballonbleu-wsbb0049",
+      "brand": "cartier",
+      "family": "ballonbleu",
+      "reference": "wsbb0049",
+      "aliases": [],
+      "identity_evidence_sha256": null,
+      "required_angles": ["dial", "crown", "clasp", "caseback"],
+      "gold_freeze_sha256": null,
+      "holdout_freeze_sha256": null,
+      "status": "pending",
+      "head": null
+    },
+    {
       "reference_id": "patek-nautilus-58111g001",
       "brand": "patek",
       "family": "nautilus",
