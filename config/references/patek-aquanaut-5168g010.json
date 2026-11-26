@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "reference_id": "patek-aquanaut-5168g010",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "5168G-010",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/aquanaut/5168g-010",
+      "citation": "Aquanaut 5168G-010 > reference heading",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "dial_color",
+      "value": "green",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/aquanaut/5168g-010",
+      "citation": "Technical characteristics > Dial > Khaki green",
+      "observed_at": "2026-11-26",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "date_position",
+      "value": "3 o'clock",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/aquanaut/5168g-010",
+      "citation": "The scent of adventure > Key point 01: Date at 3 o'clock; product dial photograph",
+      "observed_at": "2026-11-26",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "case_material",
+      "value": "white gold",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/aquanaut/5168g-010",
+      "citation": "Technical characteristics > Case",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "diameter_mm",
+      "value": "42.2",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/aquanaut/5168g-010",
+      "citation": "Technical characteristics > Case > Diameter at 10-4 o'clock",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "calibre",
+      "value": "26-330 S C",
+      "source_class": "official_brand",
+      "source_url": "https://www.patek.com/en/collection/aquanaut/5168g-010",
+      "citation": "Current manufacturer specification > Movement; does not date the transition",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "calibre",
+      "value": "324 S C",
+      "source_class": "marketplace",
+      "source_url": "https://www.phillips.com/detail/patek-philippe/CH080123/85",
+      "citation": "Lot 85 > Calibre and photographed Certificate of Origin dated 26 October 2019",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "calibre",
+      "value": "26-330 S C",
+      "source_class": "marketplace",
+      "source_url": "https://www.artcurial.com/en/sales/MC-6026/lots/166-a",
+      "citation": "Lot 166 > Description > Movement; differs from the photographed certificate",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "calibre",
+      "value": "324 S C",
+      "source_class": "marketplace",
+      "source_url": "https://www.artcurial.com/en/sales/MC-6026/lots/166-a",
+      "citation": "Lot 166 > Gallery image 5 > Certificate of Origin calibre; date 30 April 2021 stated in the description",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    }
+  ]
+}
