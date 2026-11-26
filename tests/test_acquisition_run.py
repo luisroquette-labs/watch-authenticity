@@ -14,6 +14,7 @@ import pytest
 from acquisition.collect import DownloadRateLimited, UnsafeImage
 from acquisition.discovery import DiscoveryPage, DiscoveryRecord
 from acquisition.run import (
+    _persist_status,
     main,
     run_metadata_discovery_once,
     run_metadata_discovery_resilient,
@@ -116,6 +117,7 @@ def test_run_collects_before_committing_and_repeated_run_records_invocation(cos,
     assert calls == ["actual-now"]
     assert result["state"] == "complete"
     assert result["code_engine_jobrun"] == "wikimedia-first-123"
+    assert "code_engine_cron_event" not in result
     assert result["accepted_candidate_ids"] == ["candidate-123"]
     assert repeated["state"] == "already_complete"
     assert repeated["code_engine_jobrun"] == "wikimedia-cron-123"
@@ -351,6 +353,14 @@ def test_metadata_only_source_commits_without_downloading(cos, monkeypatch):
     )
     writes = cos.write_count
     monkeypatch.setenv("CE_JOBRUN", "metadata-cron-123")
+    monkeypatch.setenv("CE_SPECVERSION", "1.0")
+    monkeypatch.setenv("CE_TYPE", "dev.knative.sources.ping")
+    monkeypatch.setenv("CE_SUBDOMAIN", "test-project")
+    cron_source = "/apis/v1/namespaces/test-project/pingsources/watch-auth-acquisition-daily"
+    monkeypatch.setenv("CE_SOURCE", cron_source)
+    monkeypatch.setenv("CE_ID", "6e116099-5e49-4044-9268-fc31e6a1bfd6")
+    monkeypatch.setenv("CE_TIME", "2026-11-10T19:01:00.429658447Z")
+    monkeypatch.setenv("CE_DATA", "payload-must-not-be-persisted")
     repeated = run_metadata_discovery_once(
         cos,
         "private",
@@ -365,7 +375,50 @@ def test_metadata_only_source_commits_without_downloading(cos, monkeypatch):
     assert result["code_engine_jobrun"] == "metadata-first-123"
     assert repeated["state"] == "already_complete"
     assert repeated["code_engine_jobrun"] == "metadata-cron-123"
+    assert repeated["code_engine_cron_event"] == {
+        "source": cron_source,
+        "id": "6e116099-5e49-4044-9268-fc31e6a1bfd6",
+        "time": "2026-11-10T19:01:00.429658447Z",
+    }
+    persisted, = [body for key, body in cos.bodies.items()
+                  if "/acquisition-status/" in key and b'"code_engine_jobrun":"metadata-cron-123"' in body]
+    assert json.loads(persisted) == repeated
+    assert b"payload-must-not-be-persisted" not in persisted
+    assert any(key.endswith(hashlib.sha256(persisted).hexdigest() + ".json") for key in cos.bodies)
     assert cos.write_count == writes + 1
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("CE_JOBRUN", ""),
+        ("CE_TYPE", "com.ibm.cloud.cos.document.create"),
+        ("CE_SPECVERSION", ""),
+        ("CE_SUBDOMAIN", "other-project"),
+        ("CE_SOURCE", "/apis/v1/namespaces/test-project/pingsources/job?payload=data"),
+        ("CE_ID", "event with arbitrary payload"),
+        ("CE_TIME", "2026-02-31T19:01:00Z"),
+        ("CE_TIME", "2026-11-10T19:01:00"),
+        ("CE_TIME", "2026-11-10T19:01:00+00:60"),
+    ],
+)
+def test_invalid_cron_envelope_does_not_mark_terminal_receipt(cos, monkeypatch, variable, value):
+    for key, setting in {
+        "CE_JOBRUN": "metadata-job-123",
+        "CE_SPECVERSION": "1.0",
+        "CE_TYPE": "dev.knative.sources.ping",
+        "CE_SUBDOMAIN": "test-project",
+        "CE_SOURCE": "/apis/v1/namespaces/test-project/pingsources/watch-auth-acquisition-daily",
+        "CE_ID": "event-123",
+        "CE_TIME": "2026-11-10T19:01:00.429658447Z",
+    }.items():
+        monkeypatch.setenv(key, setting)
+    monkeypatch.setenv(variable, value)
+    key = _persist_status(cos, "private", "datasets", {
+        "cycle": "2026-11-10", "source": "wikimedia", "state": "already_complete",
+    })
+
+    assert "code_engine_cron_event" not in json.loads(cos.bodies[key])
 
 
 @pytest.mark.parametrize(

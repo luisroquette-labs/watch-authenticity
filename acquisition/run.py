@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Sequence
 from dataclasses import replace
@@ -297,6 +298,27 @@ def _load_latest_commit(
     raise RuntimeError("discovery checkpoint chain exceeds 1000 pages")
 
 
+def _reported_cron_event() -> dict[str, str] | None:
+    if os.environ.get("CE_SPECVERSION") != "1.0" or os.environ.get("CE_TYPE") != "dev.knative.sources.ping":
+        return None
+    source = os.environ.get("CE_SOURCE", "")
+    label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    match = re.fullmatch(rf"/apis/v1/namespaces/({label})/pingsources/{label}", source)
+    if match is None or match[1] != os.environ.get("CE_SUBDOMAIN"):
+        return None
+    event_id = os.environ.get("CE_ID", "")
+    event_time = os.environ.get("CE_TIME", "")
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", event_id) or not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:[0-5]\d)", event_time,
+    ):
+        return None
+    try:
+        datetime.fromisoformat(event_time)
+    except ValueError:
+        return None
+    return {"source": source, "id": event_id, "time": event_time}
+
+
 def _persist_status(
     cos_client: Any,
     bucket: str,
@@ -306,6 +328,8 @@ def _persist_status(
     jobrun = os.environ.get("CE_JOBRUN", "").strip()
     if jobrun:
         status["code_engine_jobrun"] = jobrun
+        if (cron_event := _reported_cron_event()) is not None:
+            status["code_engine_cron_event"] = cron_event
     body = _canonical(status)
     digest = hashlib.sha256(body).hexdigest()
     key = f"{prefix.strip('/')}/acquisition-status/{status['cycle']}/{digest}.json"
