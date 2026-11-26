@@ -92,6 +92,15 @@ def test_cartier_santos_knowledge_is_catalogued_but_not_released(catalog_fixture
         catalog_fixture.catalog.head_for(entry.reference_id)
 
 
+def test_cartier_tank_must_knowledge_is_catalogued_but_not_released(catalog_fixture):
+    entry = catalog_fixture.catalog.entry_for("cartier-tankmust-wsta0053")
+
+    assert (entry.brand, entry.family, entry.reference) == ("cartier", "tankmust", "wsta0053")
+    assert entry.status == "pending"
+    with pytest.raises(ReferenceNotAdmitted):
+        catalog_fixture.catalog.head_for(entry.reference_id)
+
+
 def test_omega_reference_is_research_only_without_admitted_head(catalog_fixture):
     entry = catalog_fixture.catalog.entry_for("omega-seamaster-21030422001001")
 
