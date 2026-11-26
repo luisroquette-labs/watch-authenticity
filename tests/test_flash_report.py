@@ -318,7 +318,31 @@ def test_casio_f91w_guidance_requires_evidence_beyond_the_display_test(rear_deta
     assert report["decision_reason"] == "catalog_gap"
 
 
-@pytest.mark.parametrize("case", ["wrong_brand", "mixed", "uncertain", "multiple_candidates", "catalogue_collision"])
+def test_flash_compares_one_exact_reference_repeated_across_linked_views() -> None:
+    answer = _answer()
+    candidate = {"brand": "Casio", "family": "Classic", "reference": "F-91W-1",
+                 "reference_id": "casio-f91w-1"}
+    answer["candidates"] = [{**candidate, "photo": 1}, {**candidate, "photo": 2}]
+    answer["observations"] = [
+        {"photo": 1, "angle": "dial", "location": "visor", "detail": "Mostrador digital LCD",
+         "visibility": "visible", "field": "display_type", "value": "digital"},
+        {"photo": 2, "angle": "caseback", "location": "fundo", "detail": "Inscrição 593 no fundo",
+         "visibility": "visible", "field": None, "value": None},
+    ]
+    report = FlashReport("fixture").build_report(answer, {1, 2})
+    assert report["candidates"] == [candidate]
+    check, = cast(list[dict[str, Any]], report["technical_checks"])
+    assert check["reference_id"] == "casio-f91w-1"
+    assert check["photo"] == 1 and check["field"] == "display_type" and check["status"] == "matched"
+    assert check["url"].startswith("https://www.casio.com/")
+    assert report["examined_photos"] == [1, 2]
+    assert report["conclusion"] == "inconclusive"
+    assert report["decision_reason"] == "catalog_gap"
+
+
+@pytest.mark.parametrize("case", [
+    "wrong_brand", "mixed", "uncertain", "multiple_candidates", "conflicting_ids", "catalogue_collision",
+])
 def test_commercial_designation_cannot_override_uncertain_identity(case: str) -> None:
     answer = _answer()
     candidate = {"brand": "Casio", "family": "Collection", "reference": "F-91W-1", "reference_id": None}
@@ -329,15 +353,20 @@ def test_commercial_designation_cannot_override_uncertain_identity(case: str) ->
     elif case in ("mixed", "uncertain"):
         answer["linkage"] = case
         candidate["reference_id"] = "casio-f91w-1"
+        answer["candidates"] = [{**candidate, "photo": 1}, {**candidate, "photo": 3}]
     elif case == "multiple_candidates":
         answer["candidates"].append({**candidate, "reference": "F-91W-3"})
+    elif case == "conflicting_ids":
+        answer["candidates"].append({**candidate, "reference_id": "rolex-submariner-126610ln"})
     else:
         reporter.reference_code_owners[("casio", "f91w1")].add("casio-other-registered-id")
     report = reporter.build_report(answer, {1, 3})
     assert not report["technical_checks"]
     assert report["conclusion"] == "inconclusive"
     assert report["decision_reason"] == ("unlinked_photos" if case in ("mixed", "uncertain") else "reference_unresolved")
-    assert all(item["reference_id"] is None for item in cast(list[dict[str, Any]], report["candidates"]))
+    candidates = cast(list[dict[str, Any]], report["candidates"])
+    assert len(candidates) == len(answer["candidates"])
+    assert all(item["reference_id"] is None for item in candidates)
 
 
 class _Response:

@@ -22,7 +22,7 @@ from reference_intelligence.compare import assess_reference
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
-VERSION = "flash-photo-report-v11"
+VERSION = "flash-photo-report-v12"
 CONCLUSIONS = {
     "probable_fake": "Divergências que justificam investigar falsificação",
     "visually_compatible": "Compatível nos detalhes examinados · autenticidade inconclusiva",
@@ -250,8 +250,9 @@ class FlashReport:
         if not watch_indices:
             linkage, hypothesis = "uncertain", "inconclusive"
             candidates, observations = [], []
+        linked = linkage in ("single_photo", "consistent")
         candidate_fields = {"brand", "family", "reference", "reference_id"}
-        watch_candidates = []
+        watch_candidates: list[dict[str, str | None]] = []
         for item in candidates:
             if not isinstance(item, dict) or set(item) - {"photo"} != candidate_fields:
                 raise ValueError("referência candidata inválida")
@@ -260,11 +261,12 @@ class FlashReport:
                 raise ValueError("referência candidata aponta para foto não enviada")
             if photo in non_watch or (non_watch and photo is None):
                 continue
-            watch_candidates.append({key: None if item[key] is None else _text(item[key], 100)
-                                     for key in ("brand", "family", "reference", "reference_id")})
+            candidate = {key: None if item[key] is None else _text(item[key], 100)
+                         for key in ("brand", "family", "reference", "reference_id")}
+            if not linked or candidate not in watch_candidates:
+                watch_candidates.append(candidate)
         parsed_candidates: list[dict[str, str | None]] = []
         outside_catalog = False
-        linked = linkage in ("single_photo", "consistent")
         for candidate in watch_candidates:
             identity = tuple(_identity(candidate[key]) for key in ("brand", "family", "reference"))
             proposed_id = candidate["reference_id"]
