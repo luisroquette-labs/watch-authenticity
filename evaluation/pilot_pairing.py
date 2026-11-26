@@ -59,6 +59,19 @@ def verify_paired_inputs(
     }
 
 
+def verify_surface_inputs(
+    native: tuple[tuple[str, ...], str], api: tuple[tuple[str, ...], str],
+) -> None:
+    for photos, prompt in (native, api):
+        if not photos or any(
+            not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None
+            for value in (*photos, prompt)
+        ):
+            raise ValueError("surface inputs require ordered photo and prompt digests")
+    if native != api:
+        raise ValueError("surface inputs require the same ordered photos and question")
+
+
 def replay_with_review(
     report_builder: FlashReport,
     case_id: str,
