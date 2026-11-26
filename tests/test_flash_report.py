@@ -172,6 +172,60 @@ def test_date_rejects_exact_candidate_without_promoting_another_identity(multipl
     assert {check["reference_id"]: check["status"] for check in checks} == statuses
 
 
+@pytest.mark.parametrize(("rear_visibility", "with_visible_screws"), [
+    (None, False),
+    ("ambiguous", False),
+    ("visible", False),
+    (None, True),
+    ("ambiguous", True),
+])
+def test_catalog_gap_does_not_require_resending_an_examined_rear_marking(
+    rear_visibility: str | None, with_visible_screws: bool,
+) -> None:
+    answer = _answer()
+    with_rear = rear_visibility is not None or with_visible_screws
+    answer.update(
+        candidates=[{"brand": "Cartier", "family": "Santos de Cartier", "reference": "WSSA0018",
+                     "reference_id": "cartier-santos-wssa0018", "photo": 1}],
+        hypothesis="inconclusive",
+        linkage="consistent" if with_rear else "single_photo",
+        observations=[
+            {"photo": 1, "angle": "dial", "location": "6 horas", "detail": "Janela de data.",
+             "visibility": "visible", "field": "date_position", "value": "6 o'clock"},
+        ],
+        next_verification="Examinar o movimento com um relojoeiro.",
+    )
+    if rear_visibility:
+        answer["observations"].append({
+            "photo": 2, "angle": "caseback", "location": "caseback text", "field": None, "value": None,
+            "visibility": rear_visibility,
+            "detail": "Gravação na tampa com STAINLESS STEEL e código 4072."
+            if rear_visibility == "visible" else "Gravação da tampa ilegível.",
+        })
+    if with_visible_screws:
+        answer["observations"].append({
+            "photo": 2, "angle": "caseback", "location": "parafusos da tampa",
+            "detail": "Parafusos visíveis.", "visibility": "visible", "field": None, "value": None,
+        })
+
+    report = FlashReport("fixture").build_report(answer, {1, 2} if with_rear else {1})
+
+    assert report["decision_reason"] == "catalog_gap"
+    assert report["conclusion"] == "inconclusive"
+    check, = cast(list[dict[str, Any]], report["technical_checks"])
+    assert check["field"] == "date_position" and check["status"] == "matched"
+    guidance = str(report["next_verification"])
+    if rear_visibility == "visible":
+        observations = cast(list[dict[str, Any]], report["observations"])
+        assert "4072" in observations[1]["detail"]
+        assert guidance.startswith("Se o código da caixa já estiver legível")
+        assert "relojoeiro" in guidance
+        assert "Se estiver ilegível, envie uma macro em foco" in guidance
+    else:
+        assert guidance.startswith("Fotografe o fundo da caixa de frente")
+    assert "número de série" in guidance
+
+
 def test_santos_medium_date_layout_is_sent_and_matches_without_guessing_a_case_code() -> None:
     builder = FlashReport("fixture")
     content, _ = builder.prepare([])
