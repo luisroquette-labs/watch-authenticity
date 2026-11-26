@@ -22,7 +22,7 @@ from reference_intelligence.compare import assess_reference
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
-VERSION = "flash-photo-report-v13"
+VERSION = "flash-photo-report-v14"
 CONCLUSIONS = {
     "probable_fake": "Divergências que justificam investigar falsificação",
     "visually_compatible": "Compatível nos detalhes examinados · autenticidade inconclusiva",
@@ -81,6 +81,10 @@ _PHOTO_FOR_FIELD = {
 _REFERENCE_MARKING_PHOTO = (
     "Fotografe o fundo da caixa de frente e em foco para verificar a gravação do modelo. Cubra o número de série."
 )
+_BALLON_BLEU_42_GENERATIONS = {
+    "cartier-ballonbleu-w69012z4": "W69012Z4",
+    "cartier-ballonbleu-wsbb0049": "WSBB0049",
+}
 _LIMIT_REASONS = {
     "unlinked_photos": "As vistas ainda não podem ser atribuídas ao mesmo exemplar.",
     "no_watch_visible": "As imagens enviadas não mostram um relógio ou componente que permita a análise.",
@@ -348,9 +352,6 @@ class FlashReport:
                 )
                 color_limited.add(observation["photo"])
             parsed.append(observation)
-        primary_checks = _technical_checks(reference_id, claims, parsed)
-        divergent_fields = {check["field"] for check in primary_checks if check["status"] == "conflicting"}
-        matching_fields = {check["field"] for check in primary_checks if check["status"] == "matched"}
         date_observations = [
             item for item in parsed
             if item["field"] == "date_position" and item["angle"] == Angle.DIAL.value
@@ -359,6 +360,20 @@ class FlashReport:
         date_readings = {
             _comparison_value("date_position", item["value"]) for item in date_observations
         }
+        generation_ambiguous = False
+        if linked and date_readings == {"3 o'clock"}:
+            candidate_ids = {self._exact_catalog_candidate(candidate) for candidate in parsed_candidates}
+            generation_ambiguous = bool(candidate_ids) and candidate_ids <= _BALLON_BLEU_42_GENERATIONS.keys()
+            if generation_ambiguous:
+                template = parsed_candidates[0]
+                parsed_candidates = [
+                    {**template, "reference": code, "reference_id": None}
+                    for code in _BALLON_BLEU_42_GENERATIONS.values()
+                ]
+                reference_id, claims = None, ()
+        primary_checks = _technical_checks(reference_id, claims, parsed)
+        divergent_fields = {check["field"] for check in primary_checks if check["status"] == "conflicting"}
+        matching_fields = {check["field"] for check in primary_checks if check["status"] == "matched"}
         date_disagreement = len(date_readings) > 1
         checks = list(primary_checks)
         rejected_references: set[str] = set()
@@ -373,8 +388,11 @@ class FlashReport:
                     if exact_id == reference_id:
                         date_checks = [check for check in primary_checks if check["field"] == "date_position"]
                     else:
-                        date_checks = _technical_checks(exact_id, self.claims.get(exact_id, ()), date_observations)
-                        checks.extend(date_checks)
+                        candidate_checks = _technical_checks(
+                            exact_id, self.claims.get(exact_id, ()), parsed if generation_ambiguous else date_observations,
+                        )
+                        checks.extend(candidate_checks)
+                        date_checks = [check for check in candidate_checks if check["field"] == "date_position"]
                     date_statuses[exact_id] = {check["status"] for check in date_checks}
                 if date_statuses[exact_id] == {CheckStatus.CONFLICTING.value}:
                     rejected_references.add(candidate_code)
@@ -428,6 +446,12 @@ class FlashReport:
                 next_verification = _REFERENCE_MARKING_PHOTO
             elif reference_id is None:
                 reason = "catalog_gap" if outside_catalog else "reference_unresolved"
+                if generation_ambiguous:
+                    next_verification = (
+                        "Fotografe o fundo e o encaixe da pulseira no mesmo enquadramento, em foco. "
+                        "A gravação da caixa e o mecanismo do encaixe podem ajudar a distinguir as gerações. "
+                        "Cubra o número de série."
+                    )
             elif len(structural_fields) < 2:
                 reason = "catalog_gap"
                 if remaining:
@@ -455,6 +479,8 @@ class FlashReport:
                 f"A posição ou a ausência de data observada diverge da ficha para {references}. "
                 "A referência exata segue em aberto."
             )
+        elif generation_ambiguous:
+            reason_text = "As duas gerações têm data às 3h. As vistas analisadas deixam a referência exata em aberto."
         elif reason == "catalog_gap" and outside_catalog:
             reason_text = "A referência sugerida pelo Gemini ainda não tem ficha técnica no catálogo deste piloto."
         limits = ["As observações nas fotos são do Gemini.",

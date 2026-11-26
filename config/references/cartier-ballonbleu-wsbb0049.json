@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "reference_id": "cartier-ballonbleu-wsbb0049",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "WSBB0049",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/wsbb0049-reloj-ballon-bleu-de-cartier/p",
+      "citation": "Cartier México WSBB0049 > Product reference",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "family_alias",
+      "value": "Ballon Bleu de Cartier",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/wsbb0049-reloj-ballon-bleu-de-cartier/p",
+      "citation": "Cartier México WSBB0049 > Product name",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "date_position",
+      "value": "3 o'clock",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/wsbb0049-reloj-ballon-bleu-de-cartier/p",
+      "citation": "Cartier México WSBB0049 > Product description > Apertura de calendario a las 3 horas",
+      "observed_at": "2026-11-26",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "hand_shape",
+      "value": "sword shaped",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/wsbb0049-reloj-ballon-bleu-de-cartier/p",
+      "citation": "Cartier México WSBB0049 > Product description > Agujas de acero azulado en forma de espada",
+      "observed_at": "2026-11-26",
+      "applicable_angles": ["dial"]
+    },
+    {
+      "field": "calibre",
+      "value": "1847 MC",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/wsbb0049-reloj-ballon-bleu-de-cartier/p",
+      "citation": "Cartier México WSBB0049 > Product description > calibre 1847 MC",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    }
+  ]
+}
