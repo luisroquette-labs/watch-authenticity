@@ -22,7 +22,7 @@ from reference_intelligence.compare import assess_reference
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
-VERSION = "flash-photo-report-v15"
+VERSION = "flash-photo-report-v16"
 CONCLUSIONS = {
     "probable_fake": "Divergências que justificam investigar falsificação",
     "visually_compatible": "Compatível nos detalhes examinados · autenticidade inconclusiva",
@@ -34,6 +34,7 @@ Nos candidates, photo é o número da foto em que características do relógio s
 Quando o mostrador completo permitir determinar se há janela de data e em qual posição, registre essa leitura em uma observação própria com field date_position e angle dial. Use no date para ausência visível, e marque ambiguous com value null se a foto não permitir decidir. Confira se a referência proposta é compatível com essa leitura. Ao pedir nova foto, indique a área ou a inscrição a examinar sem supor códigos que não aparecem.
 No Cartier Tank Must automático, WSTA0040 é a configuração com correia de couro e WSTA0053 com pulseira de metal. A gravação externa 4324 pode aparecer nas duas, e a correia ou pulseira pode ter sido trocada. Preserve as alternativas quando a foto mostrar apenas essa marcação ou características compartilhadas. Para uma gravação de modelo legível no fundo, use uma observação caseback com field null e informe o código inteiro efetivamente lido em value. Use value null se a inscrição estiver ausente ou ilegível.
 Para crown_shape, descreva só o contorno da coroa. Use round, 7 sided se puder contar os sete lados, ou faceted se puder ver faces sem contá-las. Use ambiguous com value null se o contorno estiver incerto. Trate cor em observação própria apenas quando a foto permitir e não deduza a composição da pedra.
+Na vista traseira de um Speedmaster Moonwatch, registre caseback_type com transparent só se houver uma janela instalada na tampa, solid se houver uma tampa opaca instalada ou open quando a tampa tiver sido removida. Se só aparecer o movimento e não der para ver se há uma tampa instalada, marque ambiguous com value null. Observe a borda, a junção ou a tampa removida. A foto não determina o material da janela nem se a tampa foi trocada.
 Quando houver um código legível gravado diretamente no rotor, ponte, platina ou módulo visível, registre-o em uma observação com field movement_marking, angle movement, location rotor, bridge, plate ou module e visibility visible. Use angle movement apenas nesse campo e quando o componente interno estiver visível pela abertura ou por um fundo transparente. Nesse caso, escreva em detail exatamente a localização e a inscrição no formato "rotor: 26-330", trocando rotor e 26-330 pelos valores lidos. Para códigos gravados na tampa externa, use angle caseback, field null e descreva a inscrição na tampa. Um número de módulo na tampa não mostra o módulo instalado. Escreva só o código literal em value, separado de frases, nome do fabricante e contagem de joias. Omita números de série e códigos ilegíveis. Uma inscrição copiada pode parecer correta. Identificar o calibre depende da arquitetura do mecanismo; autenticidade e precisão exigem evidência própria."""
 _MOVEMENT_MARKING = "movement_marking"
 _MOVEMENT_REGIONS = {"rotor": "rotor", "bridge": "ponte", "plate": "platina", "module": "módulo"}
@@ -88,6 +89,12 @@ _BALLON_BLEU_42_GENERATIONS = {
     "cartier-ballonbleu-wsbb0049": "WSBB0049",
 }
 _TANK_MUST_4324_REFERENCES = ("WSTA0040", "WSTA0053")
+_MOONWATCH_CASEBACK_REFERENCES = {
+    "omega-speedmaster-31030425001001": "310.30.42.50.01.001",
+    "omega-speedmaster-31030425001002": "310.30.42.50.01.002",
+}
+_INSTALLED_CASEBACK_TYPES = {"solid", "transparent"}
+_CASEBACK_ALIASES = {"exhibition": "transparent", "embossed seahorse medallion": "solid"}
 _LIMIT_REASONS = {
     "unlinked_photos": "As vistas ainda não podem ser atribuídas ao mesmo exemplar.",
     "no_watch_visible": "As imagens enviadas não mostram um relógio ou componente que permita a análise.",
@@ -273,6 +280,8 @@ class FlashReport:
                          for key in ("brand", "family", "reference", "reference_id")}
             if not linked or candidate not in watch_candidates:
                 watch_candidates.append(candidate)
+        moonwatch_candidates = {index for index, candidate in enumerate(watch_candidates)
+                                if self._moonwatch_factory_candidate(candidate)}
         parsed_candidates: list[dict[str, str | None]] = []
         outside_catalog = False
         for candidate in watch_candidates:
@@ -336,7 +345,7 @@ class FlashReport:
             field = (observation["field"] or "").casefold()
             if field and field not in accepted_fields:
                 continue
-            if field == "date_position":
+            if field in {"date_position", "caseback_type"}:
                 observation["field"] = field
             elif field == "crown_shape":
                 shape_value = _comparison_value(field, observation["value"] or "")
@@ -395,11 +404,42 @@ class FlashReport:
                 for code in _TANK_MUST_4324_REFERENCES
             ]
             reference_id, claims, outside_catalog = None, (), False
-        primary_checks = _technical_checks(reference_id, claims, parsed)
+        factory_caseback_checks = []
+        open_caseback = False
+        caseback_disagreement = False
+        if linked and moonwatch_candidates:
+            backs = [item for item in parsed if item["field"] == "caseback_type"
+                     and item["angle"] == Angle.CASEBACK.value and item["visibility"] == "visible"
+                     and _caseback_type(item["value"] or "") in _INSTALLED_CASEBACK_TYPES | {"open"}]
+            readings = {_caseback_type(item["value"]) for item in backs}
+            open_caseback = readings == {"open"}
+            caseback_disagreement = len(readings) > 1
+            if len(readings) == 1 and not open_caseback:
+                for candidate_id in _MOONWATCH_CASEBACK_REFERENCES:
+                    factory_caseback_checks.extend(_technical_checks(candidate_id, self.claims[candidate_id], backs))
+        factory_conflicts = {
+            check_reference for check in factory_caseback_checks
+            if check["status"] == "conflicting" and isinstance(check_reference := check["reference_id"], str)
+        }
+        if factory_conflicts or open_caseback or caseback_disagreement:
+            family_candidate = {**parsed_candidates[0], "reference": None, "reference_id": None}
+            remaining_candidates = []
+            for index, candidate in enumerate(parsed_candidates):
+                if index in moonwatch_candidates:
+                    if self._exact_catalog_candidate(candidate) in factory_conflicts:
+                        continue
+                    candidate["reference_id"] = None
+                remaining_candidates.append(candidate)
+            parsed_candidates = remaining_candidates or [family_candidate]
+        auth_observations = (
+            [item for item in parsed if item["field"] != "caseback_type"]
+            if reference_id in _MOONWATCH_CASEBACK_REFERENCES else parsed
+        )
+        primary_checks = _technical_checks(reference_id, claims, auth_observations)
         divergent_fields = {check["field"] for check in primary_checks if check["status"] == "conflicting"}
         matching_fields = {check["field"] for check in primary_checks if check["status"] == "matched"}
         date_disagreement = len(date_readings) > 1
-        checks = list(primary_checks)
+        checks = [*primary_checks, *factory_caseback_checks]
         rejected_references: set[str] = set()
         if linked and len(date_readings) == 1:
             date_statuses: dict[str, set[object]] = {}
@@ -425,7 +465,8 @@ class FlashReport:
             not divergent_fields and len(matching_fields) >= 2 and bool(matching_fields & _STRUCTURAL_FIELDS)
         )
         model_hypothesis = hypothesis
-        if (rejected_references or date_disagreement or not linked or not primary_checks
+        if (rejected_references or date_disagreement or caseback_disagreement or reference_id in factory_conflicts
+            or not linked or not primary_checks
             or hypothesis == "probable_original" and not compatibility_supported
             or hypothesis == "probable_fake" and len(divergent_fields & _STRUCTURAL_FIELDS) < 2):
             hypothesis = "inconclusive"
@@ -468,6 +509,18 @@ class FlashReport:
             elif rejected_references:
                 reason = "reference_conflict"
                 next_verification = _REFERENCE_MARKING_PHOTO
+            elif factory_conflicts:
+                reason = "factory_caseback_difference"
+                next_verification = (
+                    "Confira a referência num documento associado ao relógio e procure no histórico de serviço "
+                    "se houve troca da tampa. Compare o número de série em particular."
+                )
+            elif open_caseback:
+                reason = "caseback_removed"
+                next_verification = "Fotografe a tampa removida ao lado da caixa aberta, com a face externa da tampa visível."
+            elif caseback_disagreement:
+                reason = "caseback_state_uncertain"
+                next_verification = "Fotografe o fundo em ângulo oblíquo, com a junção da tampa com a caixa em foco."
             elif reference_id is None:
                 reason = "catalog_gap" if outside_catalog else "reference_unresolved"
                 if tank_shared_case:
@@ -538,6 +591,14 @@ class FlashReport:
                 f"A posição ou a ausência de data observada diverge da ficha para {references}. "
                 "A referência exata segue em aberto."
             )
+        elif reason == "factory_caseback_difference":
+            references = ", ".join(sorted(_MOONWATCH_CASEBACK_REFERENCES[candidate_id] for candidate_id in factory_conflicts))
+            reason_text = (f"O fundo instalado diverge da configuração de fábrica de {references}. "
+                           "Essa referência continua possível se a tampa tiver sido substituída.")
+        elif reason == "caseback_removed":
+            reason_text = "A caixa está aberta. A vista do movimento deixa em aberto o tipo original de tampa."
+        elif reason == "caseback_state_uncertain":
+            reason_text = "As leituras do fundo divergem. A configuração da tampa segue em aberto."
         elif generation_ambiguous:
             reason_text = "As duas gerações têm data às 3h. As vistas analisadas deixam a referência exata em aberto."
         elif reason == "catalog_gap" and outside_catalog:
@@ -548,6 +609,8 @@ class FlashReport:
             limits[0] += " Cada comparação cita a ficha usada."
         if any(item["field"] == _MOVEMENT_MARKING for item in parsed):
             limits.append("A inscrição é uma transcrição do que aparece na foto. A identificação do calibre depende da arquitetura do movimento.")
+        if factory_caseback_checks:
+            limits.append("A comparação descreve a tampa instalada. Uma troca pode alterar a configuração de fábrica.")
         if tank_shared_case:
             scope = "A comparação vale se a gravação estiver no mesmo relógio. " if not linked else ""
             limits.append(f"{scope}O código 4324 aparece em exemplares associados a WSTA0040 e WSTA0053. "
@@ -582,6 +645,23 @@ class FlashReport:
         identities = self.commercial_identities.get(reference_id, {self.reference_identity[reference_id]})
         return reference_id if identity in identities else None
 
+    def _moonwatch_factory_candidate(self, candidate: dict[str, str | None]) -> bool:
+        proposed = candidate["reference_id"]
+        exact = self._exact_catalog_candidate(candidate)
+        if exact in _MOONWATCH_CASEBACK_REFERENCES:
+            return proposed in (None, exact)
+        description = candidate["reference"] or ""
+        return (
+            proposed in (None, *_MOONWATCH_CASEBACK_REFERENCES)
+            and _identity(candidate["brand"]) == "omega" and _identity(candidate["family"]) == "speedmaster"
+            and "moonwatch" in description.casefold() and re.search(r"\d{3}", description) is None
+        )
+
+
+def _caseback_type(value: str) -> str:
+    normalized = _comparison_value("caseback_type", value)
+    return _CASEBACK_ALIASES.get(normalized, normalized)
+
 
 def _technical_checks(
     reference_id: str | None, claims: tuple[TechnicalClaim, ...], observations: list[dict[str, Any]],
@@ -601,9 +681,13 @@ def _technical_checks(
             if check.field == field and check.status is not CheckStatus.UNOBSERVABLE:
                 observed = _comparison_value(field, value)
                 expected = _comparison_value(field, check.expected)
+                comparable = _COMPARABLE_VALUES.get(field, set())
+                if reference_id in _MOONWATCH_CASEBACK_REFERENCES and field == "caseback_type":
+                    observed, expected = _caseback_type(value), _caseback_type(check.expected)
+                    comparable = _INSTALLED_CASEBACK_TYPES
                 if observed == expected:
                     status = CheckStatus.MATCHED
-                elif {observed, expected} <= _COMPARABLE_VALUES.get(field, set()):
+                elif {observed, expected} <= comparable:
                     status = CheckStatus.CONFLICTING
                 else:
                     continue

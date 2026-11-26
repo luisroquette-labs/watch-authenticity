@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "reference_id": "omega-speedmaster-31030425001002",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "310.30.42.50.01.002",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/31030425001002-en-gb.pdf",
+      "citation": "Product sheet > Reference",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "caseback_type",
+      "value": "transparent",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/31030425001002-en-gb.pdf",
+      "citation": "Omega 310.30.42.50.01.002 > Product sheet > Features > Transparent caseback",
+      "observed_at": "2026-11-26",
+      "applicable_angles": ["caseback"]
+    },
+    {
+      "field": "calibre",
+      "value": "Omega 3861",
+      "source_class": "official_brand",
+      "source_url": "https://www.omegawatches.com/media/pdf/watches/product-sheet/world/en-gb/31030425001002-en-gb.pdf",
+      "citation": "Product sheet > Movement > Calibre",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    }
+  ]
+}
