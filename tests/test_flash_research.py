@@ -47,8 +47,18 @@ def test_research_preserves_model_hypothesis_without_promoting_to_verdict(tmp_pa
                 return Response({"data": {"limit_remaining": 247.0, "usage": 2.0}})
             return Response({"data": [{"id": "google/gemini-3.8-flash", "context_length": 1_048_576, "pricing": {"prompt": "0.000000825", "image": "0.000000825", "completion": "0.000004125", "internal_reasoning": "0.000004125"}}]})
 
-        def post(self, *_args: object, **kwargs: object) -> Response:
-            assert cast(dict[str, object], kwargs["json"])["model"] == "google/gemini-3.8-flash"
+        def post(self, url: str, **kwargs: object) -> Response:
+            assert url == "https://openrouter.ai/api/v1/chat/completions"
+            request_body = cast(dict[str, object], kwargs["json"])
+            assert request_body["model"] == "google/gemini-3.8-flash"
+            assert request_body["provider"] == {
+                "only": ["google-vertex/global"],
+                "order": ["google-vertex/global"],
+                "allow_fallbacks": False,
+                "data_collection": "deny",
+                "zdr": True,
+            }
+            assert kwargs["allow_redirects"] is False
             return Response({"model": "google/gemini-3.8-flash", "id": "test", "usage": {"cost": 0.01}, "choices": [{"message": {"content": json.dumps(_answer())}}]})
 
     result = research(photo, "test-key", request=Client())
