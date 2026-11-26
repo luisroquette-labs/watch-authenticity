@@ -21,8 +21,17 @@
       "applicable_angles": []
     },
     {
+      "field": "family_alias",
+      "value": "1968 Heritage Diver’s GMT Watch",
+      "source_class": "official_brand",
+      "source_url": "https://www.seikowatches.com/ph-en/products/prospex/hbc002j1",
+      "citation": "Product page family heading",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
       "field": "family",
-      "value": "1968 Heritage Diver’s GMT",
+      "value": "1968 Heritage Diver’s GMT Watch",
       "source_class": "official_brand",
       "source_url": "https://www.seikowatches.com/ph-en/products/prospex/hbc002j1",
       "citation": "Product page family heading",

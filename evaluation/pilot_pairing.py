@@ -10,7 +10,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, cast
 
-from pilot.flash_report import FlashReport
+from pilot.flash_report import IDENTIFICATION_ONLY_FIELDS, FlashReport
 from pilot.flash_research import MODEL
 
 
@@ -88,6 +88,8 @@ def replay_with_review(
     fields: dict[str, dict[str, Any]] = {}
     expected_statuses: dict[str, set[str]] = {}
     for check in checks:
+        if check["field"] in IDENTIFICATION_ONLY_FIELDS:
+            continue
         fact = {name: check[name] for name in ("reference_id", "angle", "field", "expected", "url", "citation")}
         fact_id = _digest(fact)
         if fact_id not in facts:
