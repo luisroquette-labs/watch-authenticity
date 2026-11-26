@@ -771,6 +771,57 @@ def test_tank_must_wsta0053_checks_date_without_authenticating_a_copied_marking(
                for row in cast(list[dict[str, Any]], report["observations"]))
 
 
+@pytest.mark.parametrize(("reference", "date_value", "expected_status"), [
+    ("W6920046", "no date", "matched"),
+    ("W6920046", "3 o'clock", "conflicting"),
+    ("W69012Z4", "3 o'clock", "matched"),
+    ("W69012Z4", "no date", "conflicting"),
+])
+def test_ballon_bleu_date_distinguishes_commercial_variants(
+    reference: str, date_value: str, expected_status: str,
+) -> None:
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Cartier", "family": "Ballon Bleu de Cartier", "reference": reference,
+                     "reference_id": None, "photo": 1}],
+        linkage="single_photo",
+        hypothesis="probable_fake",
+        observations=[
+            {"photo": 1, "angle": "dial", "location": "mostrador", "detail": "Inspeção da posição da data.",
+             "visibility": "visible", "field": "date_position", "value": date_value},
+        ],
+    )
+    report = FlashReport("fixture").build_report(answer, {1})
+    candidate, = cast(list[dict[str, Any]], report["candidates"])
+    check, = cast(list[dict[str, Any]], report["technical_checks"])
+    if expected_status == "matched":
+        assert candidate["reference_id"] == f"cartier-ballonbleu-{reference.lower()}"
+    else:
+        assert candidate["reference_id"] is None
+        assert report["decision_reason"] == "reference_conflict"
+    assert (check["field"], check["photo"], check["status"]) == ("date_position", 1, expected_status)
+    assert check["url"].startswith(f"https://www.cartier.mx/{reference.lower()}-")
+    assert report["conclusion"] == "inconclusive"
+    assert report["quality_score_0_1000"] is None
+
+
+@pytest.mark.parametrize("case_code", ("3284", "3001", "3765"))
+def test_ballon_bleu_case_code_does_not_select_one_commercial_variant(case_code: str) -> None:
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Cartier", "family": "Ballon Bleu", "reference": case_code,
+                     "reference_id": None, "photo": 1}],
+        linkage="single_photo",
+        hypothesis="probable_original",
+        observations=[],
+    )
+    report = FlashReport("fixture").build_report(answer, {1})
+    candidate, = cast(list[dict[str, Any]], report["candidates"])
+    assert candidate["reference_id"] is None
+    assert not report["technical_checks"]
+    assert report["conclusion"] == "inconclusive"
+
+
 @pytest.mark.parametrize("scenario, reason", [
     ("partial-reference", "reference_unresolved"),
     ("multiple-candidates", "reference_unresolved"),

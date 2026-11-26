@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "reference_id": "cartier-ballonbleu-w6920046",
+  "claims": [
+    {
+      "field": "reference_designation",
+      "value": "W6920046",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/w6920046-reloj-ballon-bleu-de-cartier/p",
+      "citation": "Cartier México W6920046 > Product reference",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "family_alias",
+      "value": "Ballon Bleu de Cartier",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/w6920046-reloj-ballon-bleu-de-cartier/p",
+      "citation": "Cartier México W6920046 > Product name",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    },
+    {
+      "field": "date_position",
+      "value": "no date",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/w6920046-reloj-ballon-bleu-de-cartier/p",
+      "citation": "Cartier México W6920046 > Official frontal photo CRW6920046_1, complete dial without a date window",
+      "observed_at": "2026-11-26",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "hand_shape",
+      "value": "sword shaped",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/w6920046-reloj-ballon-bleu-de-cartier/p",
+      "citation": "Cartier México W6920046 > Product description > Manecillas en forma de espada",
+      "observed_at": "2026-11-26",
+      "applicable_angles": [
+        "dial"
+      ]
+    },
+    {
+      "field": "case_diameter_mm",
+      "value": "36.6",
+      "source_class": "official_brand",
+      "source_url": "https://www.cartier.mx/w6920046-reloj-ballon-bleu-de-cartier/p",
+      "citation": "Cartier México W6920046 > Product description > Dimensiones de la caja",
+      "observed_at": "2026-11-26",
+      "applicable_angles": []
+    }
+  ]
+}
