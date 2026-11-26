@@ -34,6 +34,19 @@
       "head": null
     },
     {
+      "reference_id": "rolex-daydate-228235",
+      "brand": "rolex",
+      "family": "daydate",
+      "reference": "228235",
+      "aliases": [],
+      "identity_evidence_sha256": null,
+      "required_angles": ["dial", "cyclops", "rehaut", "crown", "clasp", "caseback"],
+      "gold_freeze_sha256": null,
+      "holdout_freeze_sha256": null,
+      "status": "pending",
+      "head": null
+    },
+    {
       "reference_id": "rolex-daytona-126506",
       "brand": "rolex",
       "family": "daytona",

@@ -22,7 +22,7 @@ from reference_intelligence.compare import assess_reference
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
-VERSION = "flash-photo-report-v12"
+VERSION = "flash-photo-report-v13"
 CONCLUSIONS = {
     "probable_fake": "Divergências que justificam investigar falsificação",
     "visually_compatible": "Compatível nos detalhes examinados · autenticidade inconclusiva",
@@ -53,7 +53,7 @@ _COMPARABLE_VALUES = {
 _VALUE_ALIASES = {
     "bezel_color": {"blue and red": "red and blue", "red/blue": "red and blue", "blue/red": "red and blue"},
     "crown_shape": {"heptagonal": "7 sided", "seven sided": "7 sided"},
-    "date_magnifier": {"cyclops": "magnified", "absent": "no magnifier"},
+    "date_magnifier": {"cyclops": "magnified", "cyclops lens": "magnified", "present": "magnified", "absent": "no magnifier"},
 }
 _CROWN_SHAPE_DETAILS = {
     "7 sided": "Coroa com sete lados.",
@@ -154,11 +154,12 @@ class FlashReport:
                             if claim.field == "reference_designation" and _REFERENCE_CODE.fullmatch(claim.value)}
             for reference_code in designations | {code}:
                 self.reference_code_owners.setdefault((brand, reference_code), set()).add(reference_id)
-            if len(designations) == 1 and code not in designations:
+            families = {family} | {_identity(claim.value) for claim in official if claim.field == "family_alias"}
+            if len(designations) == 1 and (code not in designations or len(families) > 1):
                 designation, = designations
-                families = {family} | {_identity(claim.value) for claim in official if claim.field == "family_alias"}
                 self.commercial_identities[reference_id] = {(brand, alias, designation) for alias in families}
-                self.family_codes.add((brand, family))
+                if code != designation:
+                    self.family_codes.add((brand, family))
         self.known_reference_codes = {code for _, code in self.reference_code_owners}
         official_claims = [
             claim for claims in self.claims.values() for claim in claims

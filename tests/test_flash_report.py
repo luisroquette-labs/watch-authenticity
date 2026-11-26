@@ -697,6 +697,47 @@ def test_flash_batch_http_route(scenario: str, status: int, conclusion: str | No
             assert "uma das fotos anteriores" in data["next_verification"]
 
 
+@pytest.mark.parametrize(("family", "dial_color", "magnifier", "expected_id"), [
+    ("Day-Date", "green", "present", "rolex-daydate-228235"),
+    ("Day-Date 40", "white", "cyclops lens", "rolex-daydate-228235"),
+    ("Day-Date 36", "green", "cyclops", None),
+])
+def test_daydate_228235_compares_shared_features_without_dial_or_calibre_inference(
+    family: str, dial_color: str, magnifier: str, expected_id: str | None,
+) -> None:
+    answer = {
+        "candidates": [{"brand": "Rolex", "family": family, "reference": "228235",
+                        "reference_id": None, "photo": 1}],
+        "linkage": "single_photo",
+        "hypothesis": "probable_fake",
+        "observations": [
+            {"photo": 1, "angle": "dial", "location": "data", "detail": "Janela às 3 horas",
+             "visibility": "visible", "field": "date_position", "value": "3 o'clock"},
+            {"photo": 1, "angle": "dial", "location": "vidro", "detail": "Lente acima da data",
+             "visibility": "visible", "field": "date_magnifier", "value": magnifier},
+            {"photo": 1, "angle": "dial", "location": "mostrador", "detail": "Cor do mostrador",
+             "visibility": "visible", "field": "dial_color", "value": dial_color},
+            {"photo": 1, "angle": "dial", "location": "movimento", "detail": "Calibre 3255",
+             "visibility": "visible", "field": "calibre", "value": "3255"},
+        ],
+        "next_verification": "Fotografe o mostrador perpendicularmente.",
+    }
+    report = FlashReport("fixture").build_report(answer, {1})
+    candidate, = cast(list[dict[str, Any]], report["candidates"])
+    assert candidate["reference_id"] == expected_id
+    assert report["conclusion"] == "inconclusive"
+    assert all(row["field"] != "calibre" for row in cast(list[dict[str, Any]], report["observations"]))
+    checks = cast(list[dict[str, Any]], report["technical_checks"])
+    if expected_id:
+        assert report["decision_reason"] == "compatible_or_insufficient"
+        assert {row["field"] for row in checks} == {"date_position", "date_magnifier"}
+        assert all(row["photo"] == 1 and row["status"] == "matched" for row in checks)
+        assert all(row["url"] == "https://www.rolex.com/watches/day-date/m228235-0025" for row in checks)
+    else:
+        assert report["decision_reason"] == "reference_unresolved"
+        assert not checks
+
+
 @pytest.mark.parametrize("scenario, reason", [
     ("partial-reference", "reference_unresolved"),
     ("multiple-candidates", "reference_unresolved"),
