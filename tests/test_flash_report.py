@@ -1698,10 +1698,11 @@ def test_clasp_inscription_remains_an_observation_with_component_scope() -> None
 
     result = FlashReport("fixture").build_report(answer, {1, 3})
 
-    assert any(item["angle"] == "clasp" and "ORV" in item["detail"]
-               for item in result["observations"])
-    assert not any(item["field"] in {"clasp_code", "replica_factory"}
-                   for item in result["technical_checks"])
+    observations = cast(list[dict[str, object]], result["observations"])
+    checks = cast(list[dict[str, object]], result["technical_checks"])
+    assert any(item["angle"] == "clasp" and "ORV" in str(item["detail"])
+               for item in observations)
+    assert not any(item["field"] in {"clasp_code", "replica_factory"} for item in checks)
     assert result["conclusion"] == "inconclusive"
     assert result["hypothesis_origin"] == "policy_veto"
 
@@ -1716,10 +1717,12 @@ def test_shadow_hypothesis_changes_only_the_instruction() -> None:
 
     assert production[1:] == shadow[1:]
     assert (indices, mono) == (shadow_indices, shadow_mono)
-    assert "Lotes mistos ou com vínculo incerto são inconclusivos." in production[0]["text"]
-    assert "Lotes mistos ou com vínculo incerto são inconclusivos." not in shadow[0]["text"]
-    assert "Qual hipótese de autenticidade é mais bem sustentada" in shadow[0]["text"]
-    assert "Omita números de série" in shadow[0]["text"]
+    production_prompt = str(production[0]["text"])
+    shadow_prompt = str(shadow[0]["text"])
+    assert "Lotes mistos ou com vínculo incerto são inconclusivos." in production_prompt
+    assert "Lotes mistos ou com vínculo incerto são inconclusivos." not in shadow_prompt
+    assert "Qual hipótese de autenticidade é mais bem sustentada" in shadow_prompt
+    assert "Omita números de série" in shadow_prompt
 
 
 @pytest.mark.parametrize("candidate", ["probable_original", "inconclusive"])
@@ -1730,7 +1733,7 @@ def test_review_uses_the_same_candidate_decision_as_gemini(candidate: str) -> No
         ("cyclops", "image/png", base64.b64decode(_photo("gray"))),
     ]
     calls = []
-    material_claims = frozenset()
+    material_claims: frozenset[str] = frozenset()
 
     def gemini(content):
         calls.append("gemini")
@@ -1779,7 +1782,7 @@ def test_candidate_replay_distinguishes_missing_evidence_from_review_failure() -
         return ReplayDecision("probable_original", frozenset(fields))
 
     answer = _answer()
-    metadata = {"model": MODEL, "model_response_id": "test-provider-id"}
+    metadata: dict[str, object] = {"model": MODEL, "model_response_id": "test-provider-id"}
     service = FlashReport("fixture")
     unavailable = replay_with_review(
         service, "watch-1", photos, lambda _: (answer, metadata), lambda _: None,
