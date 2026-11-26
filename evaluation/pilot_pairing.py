@@ -119,11 +119,12 @@ def replay_with_review(
     ]
     linked = report["linkage"] in ("single_photo", "consistent")
     hypothesis = report["model_hypothesis"] if linked else "inconclusive"
+    previous_policy = report["conclusion"]
     result = {
         "capture": capture,
         "prepared_photos": prepared_photos,
         "prepared_media_sha256": _digest(prepared_photos),
-        "previous_policy": report["conclusion"],
+        "previous_policy": previous_policy,
         "previous_policy_reason": report["decision_reason"],
         "gemini_hypothesis": report["model_hypothesis"],
         "linkage": report["linkage"],
@@ -133,10 +134,7 @@ def replay_with_review(
     }
     if not linked:
         return {**result, "with_review": "inconclusive", "review_status": "unlinked_photos"}
-    reference_unsettled = report["decision_reason"] in (
-        "reference_conflict", "date_readings_disagree", "reference_unresolved",
-    )
-    color_limited = report["conclusion"] == "inconclusive" and bool(report["color_limited_photos"])
+    color_limited = previous_policy == "inconclusive" and bool(report["color_limited_photos"])
     if not fields:
         if report["decision_reason"] == "date_readings_disagree" or color_limited:
             return {**result, "with_review": "inconclusive", "review_status": "needs_verification"}
@@ -182,10 +180,10 @@ def replay_with_review(
         findings_by_claim[claim_id] = {**target, "status": status, "reading": reading.strip()}
         if expected_statuses[claim_id] != {status}:
             disputed_claim_ids.append(claim_id)
-    needs_verification = bool(disputed_claim_ids) or reference_unsettled or color_limited
+    needs_verification = bool(disputed_claim_ids) or previous_policy == "inconclusive"
     return {
         **result,
-        "with_review": "inconclusive" if needs_verification else hypothesis,
+        "with_review": "inconclusive" if needs_verification else previous_policy,
         "review_status": "needs_verification" if needs_verification else "supported",
         "review_findings": findings_by_claim,
         "disputed_claim_ids": disputed_claim_ids,

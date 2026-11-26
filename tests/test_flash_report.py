@@ -817,9 +817,11 @@ def test_catalogue_feedback_preserves_uncertainty(scenario: str, reason: str) ->
 
 
 @pytest.mark.parametrize(("scenario", "expected"), [
-    ("agree", "probable_original"),
+    ("agree", "visually_compatible"),
     ("different_reading", "inconclusive"),
-    ("independently_confirmed_divergence", "probable_fake"),
+    ("independently_confirmed_divergence", "inconclusive"),
+    ("supported_structural_divergence", "probable_fake"),
+    ("tank_date_only_review", "inconclusive"),
     ("unavailable", "unavailable"),
     ("mixed", "inconclusive"),
     ("date_reference_conflict", "inconclusive"),
@@ -852,6 +854,25 @@ def test_local_replay_shares_gemini_capture_and_blinds_reviewer(
     if scenario == "independently_confirmed_divergence":
         answer["hypothesis"] = "probable_fake"
         answer["observations"][0].update(value="blue", detail="Mostrador azul")
+    if scenario == "supported_structural_divergence":
+        answer["hypothesis"] = "probable_fake"
+        answer["candidates"] = [{"brand": "Cartier", "family": "Santos", "reference": "WSSA0061",
+                                 "reference_id": "cartier-santos-wssa0061", "photo": 1}]
+        answer["observations"] = [
+            {"photo": 1, "angle": "dial", "location": "ponteiros", "detail": "Ponteiros em bastão.",
+             "visibility": "visible", "field": "hand_shape", "value": "baton"},
+            {"photo": 3, "angle": "crown", "location": "coroa", "detail": "Coroa arredondada.",
+             "visibility": "visible", "field": "crown_shape", "value": "round"},
+        ]
+    if scenario == "tank_date_only_review":
+        answer["candidates"] = [{"brand": "Cartier", "family": "Tank Must XL", "reference": "WSTA0053",
+                                 "reference_id": "cartier-tankmust-wsta0053", "photo": 1}]
+        answer["observations"] = [
+            {"photo": 1, "angle": "dial", "location": "data", "detail": "Data às 6.",
+             "visibility": "visible", "field": "date_position", "value": "6 o'clock"},
+            {"photo": 3, "angle": "movement", "location": "rotor", "detail": "rotor: 1847 MC",
+             "visibility": "visible", "field": "movement_marking", "value": "1847 MC"},
+        ]
     provider = StubOpenRouter(answer)
     builder = FlashReport("fixture", request=provider)
     dial, white = (base64.b64decode(_photo(color)) for color in ("#100912", "white"))
@@ -874,10 +895,13 @@ def test_local_replay_shares_gemini_capture_and_blinds_reviewer(
         for field in request["review_fields"].values():
             fact = request["facts"][field["source_fact_id"]]
             assert set(fact) == {"reference_id", "angle", "field", "expected", "url", "citation"}
-            expected_reference = (
-                "cartier-santos-wssa0018" if date_scenario else "rolex-submariner-126610ln"
-            )
+            expected_reference = {
+                "tank_date_only_review": "cartier-tankmust-wsta0053",
+                "supported_structural_divergence": "cartier-santos-wssa0061",
+            }.get(scenario, "cartier-santos-wssa0018" if date_scenario else "rolex-submariner-126610ln")
             assert fact["reference_id"] == expected_reference
+            if scenario == "tank_date_only_review":
+                assert fact["field"] == "date_position"
         encoded = json.dumps(request)
         assert "seller-fixture" not in encoded and '"probable_original"' not in encoded
         assert '"probable_fake"' not in encoded and '"hypothesis"' not in encoded
@@ -887,7 +911,7 @@ def test_local_replay_shares_gemini_capture_and_blinds_reviewer(
                 "claim_id": key, "photo_id": item["photo_id"],
                 "source_fact_id": item["source_fact_id"], "reading": "Leitura simulada.",
                 "status": "contradicted" if (
-                    scenario in ("date_reference_conflict", "date_readings_disagree")
+                    scenario in ("date_reference_conflict", "date_readings_disagree", "supported_structural_divergence")
                     or scenario == "independently_confirmed_divergence" and item["field"] == "dial_color"
                 ) else "supported",
             }
@@ -920,5 +944,11 @@ def test_local_replay_shares_gemini_capture_and_blinds_reviewer(
         if scenario == "different_reading":
             disputed, = result["disputed_claim_ids"]
             assert result["review_findings"][disputed]["status"] == "not_visible"
+        if scenario in ("independently_confirmed_divergence", "tank_date_only_review"):
+            assert result["review_status"] == "needs_verification"
+            assert not result["disputed_claim_ids"]
+        if scenario == "supported_structural_divergence":
+            assert result["previous_policy"] == "probable_fake"
+            assert result["review_status"] == "supported"
     assert len(calls) == (0 if scenario == "mixed" else 1)
     assert len(provider.posts) == 1
