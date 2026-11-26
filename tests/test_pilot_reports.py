@@ -167,6 +167,18 @@ def test_census_refuses_malformed_freeze_digest() -> None:
         census(manifest)
 
 
+def test_census_cli_preserves_output_contract_with_shared_provenance(tmp_path) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(_manifest(
+        _case("first", split_family="shared"), _case("second", split_family="shared"),
+    )))
+    result = subprocess.run(
+        [sys.executable, "evaluation/pilot_reports.py", "census", str(manifest)],
+        capture_output=True, text=True, check=True,
+    )
+    assert set(json.loads(result.stdout)) == {"cases", "counts", "paired_test_references"}
+
+
 def test_cli_rejects_two_decisions_for_one_watch(tmp_path) -> None:
     cases = tmp_path / "cases.json"
     reports = tmp_path / "reports.json"

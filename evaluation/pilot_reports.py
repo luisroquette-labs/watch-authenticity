@@ -96,6 +96,17 @@ def census(
     confirmation_bytes: bytes | None = None,
     confirmation_sha256: str | None = None,
 ) -> dict[str, Any]:
+    result, _ = _census(manifest, confirmation_bytes=confirmation_bytes,
+                        confirmation_sha256=confirmation_sha256)
+    return result
+
+
+def _census(
+    manifest: dict[str, Any],
+    *,
+    confirmation_bytes: bytes | None,
+    confirmation_sha256: str | None,
+) -> tuple[dict[str, Any], dict[str, str]]:
     records = _load_confirmations(confirmation_bytes, confirmation_sha256)
     if not isinstance(manifest, dict):
         raise ValueError("manifest must be a JSON object")
@@ -257,10 +268,9 @@ def census(
         if status == "eligible" and case["partition"] == "test":
             test_labels[cohort][(reference, generation)].add(label)
 
-    return {
+    return ({
         "cases": details,
         "counts": counts,
-        "group_by_specimen": group_by_specimen,
         "paired_test_references": {
             cohort: [
                 {"reference": reference, "generation": generation}
@@ -269,7 +279,7 @@ def census(
             ]
             for cohort in sorted(_COHORTS)
         },
-    }
+    }, group_by_specimen)
 
 
 def score(
@@ -298,8 +308,8 @@ def score_frozen(
     if not _sha256(run_sha256) or hashlib.sha256(run_bytes).hexdigest() != run_sha256:
         raise ValueError("run receipt does not match the trusted SHA-256")
     manifest = _read_json(manifest_bytes)
-    admitted = census(manifest, confirmation_bytes=confirmation_bytes,
-                      confirmation_sha256=confirmation_sha256)
+    admitted, group_by_specimen = _census(manifest, confirmation_bytes=confirmation_bytes,
+                                         confirmation_sha256=confirmation_sha256)
     eligible = {case["specimen_id"] for case in admitted["cases"] if case["status"] == "eligible"}
     test_cases = [
         case for case in manifest["cases"]
@@ -366,7 +376,7 @@ def score_frozen(
         reports[specimen] = conclusion
     return {
         **_score_cases(test_cases, reports),
-        "by_reference_generation": _reference_metrics(test_cases, reports, admitted["group_by_specimen"]),
+        "by_reference_generation": _reference_metrics(test_cases, reports, group_by_specimen),
         "frozen_run": {"route": run["route"], "cohort": cohort,
                        "manifest_sha256": manifest_sha256, "run_sha256": run_sha256},
     }
