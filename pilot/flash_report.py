@@ -137,7 +137,7 @@ def _read_movement_marking(item: dict[str, Any], indices: set[int]) -> dict[str,
     if angle == "caseback" or not isinstance(detail, str) or detail.strip() != f"{component}: {code}":
         return {"photo": photo, "angle": "caseback", "location": "fundo", "visibility": "visible",
                 "field": None, "value": code, "detail": f"Inscrição legível na vista do fundo · {code}"}
-    return {"photo": photo, "angle": "caseback", "location": region, "visibility": "visible",
+    return {"photo": photo, "angle": "movement", "location": region, "visibility": "visible",
             "field": _MOVEMENT_MARKING, "value": code, "detail": f"Inscrição legível no movimento · {code}"}
 
 
@@ -335,8 +335,11 @@ class FlashReport:
                 raise ValueError("evidência aponta para foto não enviada")
             if item["visibility"] not in ("visible", "ambiguous"):
                 raise ValueError("visibilidade inválida")
+            angle = item["angle"]
+            if not (angle == "movement" and item["field"] is None and item["value"] is None):
+                angle = Angle(angle).value
             observation = {
-                "photo": item["photo"], "angle": Angle(item["angle"]).value,
+                "photo": item["photo"], "angle": angle,
                 "location": _text(item["location"], 100), "detail": _text(item["detail"], 360),
                 "visibility": item["visibility"],
                 "field": None if item["field"] is None else _text(item["field"], 80),
@@ -532,7 +535,6 @@ class FlashReport:
                 elif generation_ambiguous:
                     back_examined = any(
                         item["angle"] == Angle.CASEBACK.value and item["visibility"] == "visible"
-                        and item["field"] != _MOVEMENT_MARKING
                         for item in parsed
                     )
                     if back_examined:
@@ -624,7 +626,10 @@ class FlashReport:
             limits.append("O modelo não conseguiu vincular as fotos a uma só peça.")
         return {
             "report_version": VERSION, "conclusion": hypothesis, "conclusion_label": CONCLUSIONS[hypothesis],
-            "candidates": parsed_candidates, "linkage": linkage, "observations": parsed,
+            "candidates": parsed_candidates, "linkage": linkage,
+            "observations": [
+                {**item, "angle": Angle.CASEBACK.value} if item["angle"] == "movement" else item for item in parsed
+            ],
             "examined_photos": sorted({item["photo"] for item in parsed}),
             "color_limited_photos": sorted(color_limited),
             "technical_checks": checks, "limits": limits,
@@ -670,10 +675,12 @@ def _technical_checks(
         return []
     checks = []
     for item in observations:
-        field, angle, value = item["field"], Angle(item["angle"]), item["value"]
-        if (field == _MOVEMENT_MARKING or item["visibility"] != "visible" or value is None
-            or not any(claim.source_class.authoritative and claim.field == field
-                       and angle in claim.applicable_angles for claim in claims)):
+        field, value = item["field"], item["value"]
+        if field is None or field == _MOVEMENT_MARKING or item["visibility"] != "visible" or value is None:
+            continue
+        angle = Angle(item["angle"])
+        if not any(claim.source_class.authoritative and claim.field == field
+                   and angle in claim.applicable_angles for claim in claims):
             continue
         observation = VisualObservation(field, value, angle, True)
         assessment = assess_reference(reference_id, claims, (observation,), minimum_source_date=date.min)
