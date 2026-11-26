@@ -22,7 +22,7 @@ from reference_intelligence.compare import assess_reference
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
-VERSION = "flash-photo-report-v18"
+VERSION = "flash-photo-report-v19"
 CONCLUSIONS = {
     "probable_fake": "Divergências que justificam investigar falsificação",
     "visually_compatible": "Compatível nos detalhes examinados · autenticidade inconclusiva",
@@ -33,6 +33,7 @@ Responda JSON com candidates [{brand,family,reference,reference_id,photo}], non_
 Nos candidates, photo é o número da foto em que características do relógio sustentam a hipótese. reference_id é um ID exato da lista ou null; brand, family e reference são textos ou null. Em cada observação, angle é a vista efetivamente vista (dial, cyclops, rehaut, crown, clasp ou caseback) e visibility é visible ou ambiguous. Escolha field entre movement_marking, um dos campos comparáveis listados ou null para descrição livre. Para um campo comparável, value é o valor visto, em inglês quando possível, ou null se ambíguo. Não repita o esperado como se tivesse visto. A hipótese deve ser sustentada por observações visíveis. Lotes mistos ou com vínculo incerto são inconclusivos.
 Quando o mostrador completo permitir determinar se há janela de data e em qual posição, registre essa leitura em uma observação própria com field date_position e angle dial. Use no date para ausência visível, e marque ambiguous com value null se a foto não permitir decidir. Confira se a referência proposta é compatível com essa leitura. Ao pedir nova foto, indique a área ou a inscrição a examinar sem supor códigos que não aparecem.
 Quando os marcadores das horas estiverem legíveis, use field dial_hour_markers e angle dial. Use baton indices para índices em bastão, arabic numerals para algarismos arábicos ou roman numerals para algarismos romanos. Se a leitura for mista ou ilegível, use ambiguous com value null. Compare o mostrador sem inferir a procedência da caixa ou do movimento.
+Em um Rolex Oyster Perpetual, mostradores semelhantes aparecem em tamanhos diferentes. O motivo Celebration existe em 31, 36 e 41 mm. Se o motivo estiver visível, use Oyster Perpetual Celebration como família. Preserve a família sem tamanho ou código se os detalhes visíveis forem compartilhados. Para ler a referência gravada na própria caixa entre as asas, use angle caseback, location case between lugs, field null e value com o código de caixa literal. Só registre a leitura se estiver legível. Não use números do fecho, do cartão ou de série como referência da caixa.
 Em um mostrador de mergulho, se a inscrição DIVER’S trouxer claramente 200m ou 300m, use field dial_depth_marking, angle dial e apenas 200m ou 300m em value. Se ilegível, use ambiguous e value null. A inscrição ajuda a identificar a variante. Ela não verifica a resistência à água do exemplar. Para distinguir variantes de 300m, use field bezel_edge_color e angle dial se puder ler a cor da borda externa do bisel. Use silver-tone ou gold-tone, sem deduzir o material. Use o código completo da variante quando houver evidência suficiente e preserve alternativas compatíveis.
 No Cartier Tank Must automático, WSTA0040 é a configuração com correia de couro e WSTA0053 com pulseira de metal. A gravação externa 4324 pode aparecer nas duas, e a correia ou pulseira pode ter sido trocada. Preserve as alternativas quando a foto mostrar apenas essa marcação ou características compartilhadas. Para uma gravação de modelo legível no fundo, use uma observação caseback com field null e informe o código inteiro efetivamente lido em value. Use value null se a inscrição estiver ausente ou ilegível.
 Para crown_shape, descreva só o contorno da coroa. Use round, 7 sided se puder contar os sete lados, ou faceted se puder ver faces sem contá-las. Use ambiguous com value null se o contorno estiver incerto. Trate cor em observação própria apenas quando a foto permitir e não deduza a composição da pedra.
@@ -89,6 +90,9 @@ _COLOR_LOCATIONS = {
 }
 _IDENTITY_ALIASES = {"patekphilippe": "patek", "santosdecartier": "santos"}
 _REFERENCE_CODE = re.compile(r"(?=.*[0-9])[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*")
+_OYSTER_OVERLAPPING_CASES = re.compile(r"(?:ref\.?\s*)?m?(277200|126000|124300)(?:-[0-9]{4})?", re.IGNORECASE)
+_OYSTER_SIZE_FAMILY = re.compile(r"(?:rolex)?oysterperpetual(?:(?:31|36|41)(?![0-9])|celebration)")
+_OYSTER_SIZE_SOURCE = "https://assets.rolex.com/api/brochure/en_us/oyster-perpetual/m126000-0009.pdf"
 _UNRESOLVED_IDENTITY = {
     "", "desconhecida", "desconhecido", "na", "nãoidentificada", "nãoidentificado", "none", "null", "unknown",
 }
@@ -119,6 +123,7 @@ _LIMIT_REASONS = {
     "no_watch_visible": "As imagens enviadas não mostram um relógio ou componente que permita a análise.",
     "date_readings_disagree": "As fotos levaram a leituras diferentes da janela de data. A referência exata segue em aberto.",
     "reference_unresolved": "Ainda há dúvida sobre a variante ou a referência exata.",
+    "oyster_case_size_unresolved": "O tamanho e a referência da caixa deste Oyster Perpetual seguem em aberto.",
     "catalog_gap": "Para esta referência, a base técnica ainda não tem comparações estruturais suficientes para avaliar uma suspeita de falsificação.",
     "factory_dial_difference": "Os marcadores das horas diferem dos mostradores documentados pela ficha. Outra variante ou um mostrador de reposição são explicações possíveis.",
     "dial_hour_marker_readings_disagree": "As fotos levaram a leituras diferentes dos marcadores das horas. O mostrador segue em aberto.",
@@ -430,6 +435,13 @@ class FlashReport:
                     value=value if detail else None, visibility="visible" if detail else "ambiguous",
                 )
             parsed.append(observation)
+        oyster_without_case = self._resolve_oyster_case_identity(parsed_candidates, parsed, linked)
+        if len(parsed_candidates) == 1 and parsed_candidates[0]["reference_id"] != reference_id:
+            reference_id = parsed_candidates[0]["reference_id"]
+            claims = self.claims.get(reference_id or "", ())
+            visual_reference_fields = {
+                claim.field for claim in claims if claim.source_class.authoritative and claim.applicable_angles
+            }
         date_observations = [
             item for item in parsed
             if item["field"] == "date_position" and item["angle"] == Angle.DIAL.value
@@ -535,13 +547,16 @@ class FlashReport:
                 if date_statuses[exact_id] == {CheckStatus.CONFLICTING.value}:
                     rejected_references.add(candidate_code)
                     candidate.update(reference=None, reference_id=None)
+        oyster_size_unresolved = bool(oyster_without_case)
+        for candidate in oyster_without_case:
+            candidate.update(family="Oyster Perpetual", reference=None, reference_id=None)
         compatibility_supported = (
             not divergent_fields and len(matching_fields) >= 2 and bool(matching_fields & _STRUCTURAL_FIELDS)
         )
         model_hypothesis = hypothesis
         if (rejected_references or rejected_by_depth or date_disagreement or caseback_disagreement
             or depth_disagreement or inconclusive_variants or reference_id in factory_conflicts
-            or dial_marker_conflict or dial_marker_disagreement or not linked or not primary_checks
+            or dial_marker_conflict or dial_marker_disagreement or oyster_size_unresolved or not linked or not primary_checks
             or hypothesis == "probable_original" and not compatibility_supported
             or hypothesis == "probable_fake" and len(divergent_fields & _STRUCTURAL_FIELDS) < 2):
             hypothesis = "inconclusive"
@@ -620,6 +635,16 @@ class FlashReport:
                     "Peça a um relojoeiro para conferir a referência da caixa e a arquitetura do movimento "
                     "e verificar se o mostrador foi substituído. Se houver registro de serviço, leve-o para conferência."
                 )
+            elif oyster_size_unresolved:
+                if _DIAL_HOUR_MARKERS in visual_reference_fields and not dial_marker_checks:
+                    reason = "detail_not_verified"
+                    next_verification = _PHOTO_FOR_FIELD[_DIAL_HOUR_MARKERS]
+                else:
+                    reason = "oyster_case_size_unresolved"
+                    next_verification = (
+                        "Confira a referência no cartão de garantia ou no registro de serviço do exemplar. "
+                        "Se for medir, mostre o diâmetro da caixa sem a coroa, com a régua no mesmo plano."
+                    )
             elif reference_id is None:
                 reason = "catalog_gap" if outside_catalog else "reference_unresolved"
                 if tank_shared_case:
@@ -737,6 +762,10 @@ class FlashReport:
             limits.append("A inscrição no mostrador não comprova a resistência à água do exemplar.")
         if factory_caseback_checks:
             limits.append("A comparação descreve a tampa instalada. Uma troca pode alterar a configuração de fábrica.")
+        if oyster_size_unresolved:
+            limits.append(f"A Rolex documenta o mostrador Celebration nos tamanhos 31, 36 e 41 mm. Fonte: {_OYSTER_SIZE_SOURCE}")
+            if reference_id == "rolex-oysterperpetual-124300" and checks:
+                limits.append("A ficha do 124300 serve como comparação. A referência da caixa do exemplar segue em aberto.")
         if tank_shared_case:
             scope = "A comparação vale se a gravação estiver no mesmo relógio. " if not linked else ""
             limits.append(f"{scope}O código 4324 aparece em exemplares associados a WSTA0040 e WSTA0053. "
@@ -761,6 +790,30 @@ class FlashReport:
             "model_hypothesis": model_hypothesis, "next_verification": next_verification,
             "quality_score_0_1000": None,
         }
+
+    def _resolve_oyster_case_identity(
+        self, candidates: list[dict[str, str | None]], observations: list[dict[str, Any]], linked: bool,
+    ) -> list[dict[str, str | None]]:
+        case_marks = {
+            item["value"] for item in observations
+            if item["angle"] == Angle.CASEBACK.value and item["visibility"] == "visible"
+            and item["field"] is None and item["location"].casefold() == "case between lugs"
+            and _REFERENCE_CODE.fullmatch(item["value"] or "")
+        }
+        unresolved = []
+        for candidate in candidates:
+            if _identity(candidate["brand"]) != "rolex":
+                continue
+            reference = candidate["reference"] or ""
+            case_code = _OYSTER_OVERLAPPING_CASES.fullmatch(reference)
+            if case_code is None and (reference or not _OYSTER_SIZE_FAMILY.match(_identity(candidate["family"]))):
+                continue
+            if linked and case_code is not None and case_marks == {case_code[1]}:
+                candidate.update(family="Oyster Perpetual", reference=case_code[1])
+                candidate["reference_id"] = self._exact_catalog_candidate(candidate)
+            else:
+                unresolved.append(candidate)
+        return unresolved
 
     def _exact_catalog_candidate(self, candidate: dict[str, str | None]) -> str | None:
         if not _REFERENCE_CODE.fullmatch(candidate["reference"] or ""):

@@ -1368,8 +1368,8 @@ def test_oyster_perpetual_hour_markers_compare_dial_without_deciding_authenticit
             "grand-public/2020_Oyster_New_Models_en.pdf"
         )
         assert all(row["expected"] == "baton indices" and row["url"] == brochure for row in checks)
-        assert report["candidates"] == [{"brand": "Rolex", "family": "Oyster Perpetual 41", "reference": "124300",
-                                         "reference_id": "rolex-oysterperpetual-124300"}]
+        assert report["candidates"] == [{"brand": "Rolex", "family": "Oyster Perpetual", "reference": None,
+                                         "reference_id": None}]
     if reason == "factory_dial_difference":
         assert "mostrador de reposição" in cast(str, report["decision_reason_text"])
         assert "arquitetura do movimento" in cast(str, report["next_verification"])
@@ -1377,7 +1377,7 @@ def test_oyster_perpetual_hour_markers_compare_dial_without_deciding_authenticit
 
 @pytest.mark.parametrize(("visibility", "markers", "reason", "guidance"), [
     ("ambiguous", None, "detail_not_verified", "marcadores das horas em foco"),
-    ("visible", "baton indices", "catalog_gap", "arquitetura do movimento"),
+    ("visible", "baton indices", "oyster_case_size_unresolved", "diâmetro da caixa"),
 ])
 def test_oyster_perpetual_next_check_uses_remaining_evidence(
     visibility: str, markers: str | None, reason: str, guidance: str,
@@ -1400,6 +1400,52 @@ def test_oyster_perpetual_next_check_uses_remaining_evidence(
     assert guidance in cast(str, report["next_verification"])
     checks = cast(list[dict[str, Any]], report["technical_checks"])
     assert sum(row["field"] == "dial_hour_markers" for row in checks) == int(markers is not None)
+
+
+@pytest.mark.parametrize(("family", "reference", "case_marks", "location", "expected_reference"), [
+    ("Oyster Perpetual 41", "124300", (), "case between lugs", None),
+    ("Oyster Perpetual 41 mm", "124300", (), "case between lugs", None),
+    ("Oyster Perpetual Celebration Dial", "124300", (), "case between lugs", None),
+    ("Oyster Perpetual Celebration 41", "124300", (), "case between lugs", None),
+    ("Oyster Perpetual 41 Celebration Motif", "124300", (), "case between lugs", None),
+    ("Oyster Perpetual 41mm Turquoise Blue", None, (), "case between lugs", None),
+    (None, "124300", (), "case between lugs", None),
+    ("Oyster Perpetual Celebration", None, (), "case between lugs", None),
+    ("Oyster Perpetual 41", "124300", ("124300",), "case between lugs", "124300"),
+    ("Oyster Perpetual 36", "124300", ("124300",), "case between lugs", "124300"),
+    ("Oyster Perpetual 41", "124300", ("124300",), "clasp", None),
+    ("Oyster Perpetual 41", "124300", ("124300", "126000"), "case between lugs", None),
+    ("Oyster Perpetual 41", "124300", ("124300", "114300"), "case between lugs", None),
+])
+def test_oyster_perpetual_requires_case_evidence_to_promote_precise_reference(
+    family: str | None, reference: str | None, case_marks: tuple[str, ...], location: str, expected_reference: str | None,
+) -> None:
+    answer = _answer()
+    answer.update(
+        linkage="consistent" if case_marks else "single_photo",
+        candidates=[{"brand": "Rolex", "family": family, "reference": reference,
+                     "reference_id": "rolex-oysterperpetual-124300" if reference else None, "photo": 1}],
+        observations=[
+            {"photo": 1, "angle": "dial", "location": "dial", "detail": "Sem janela de data.",
+             "visibility": "visible", "field": "date_position", "value": "no date"},
+            {"photo": 1, "angle": "dial", "location": "índices", "detail": "Índices em bastão.",
+             "visibility": "visible", "field": "dial_hour_markers", "value": "baton indices"},
+            *[{"photo": index, "angle": "caseback", "location": location, "detail": f"Gravação {code}.",
+               "visibility": "visible", "field": None, "value": code}
+              for index, code in enumerate(case_marks, 2)],
+        ],
+    )
+    report = FlashReport("fixture").build_report(answer, set(range(1, len(case_marks) + 2)))
+    candidate, = cast(list[dict[str, Any]], report["candidates"])
+    assert candidate["reference"] == expected_reference
+    assert candidate["family"] == "Oyster Perpetual"
+    assert candidate["reference_id"] == ("rolex-oysterperpetual-124300" if expected_reference else None)
+    assert report["conclusion"] == "inconclusive"
+    if expected_reference or family == "Oyster Perpetual 41":
+        assert any(row["field"] == "dial_hour_markers" for row in cast(list[dict[str, Any]], report["technical_checks"]))
+    if expected_reference is None:
+        assert report["decision_reason"] == "oyster_case_size_unresolved"
+        assert "diâmetro" in cast(str, report["next_verification"])
 
 
 @pytest.mark.parametrize(("code", "family"), [
