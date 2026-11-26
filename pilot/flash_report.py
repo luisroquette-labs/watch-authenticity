@@ -22,7 +22,7 @@ from reference_intelligence.compare import assess_reference
 from reference_intelligence.knowledge import load_knowledge
 from reference_intelligence.types import CheckStatus, TechnicalClaim, VisualObservation
 
-VERSION = "flash-photo-report-v10"
+VERSION = "flash-photo-report-v11"
 CONCLUSIONS = {
     "probable_fake": "Divergências que justificam investigar falsificação",
     "visually_compatible": "Compatível nos detalhes examinados · autenticidade inconclusiva",
@@ -33,7 +33,7 @@ Responda JSON com candidates [{brand,family,reference,reference_id,photo}], non_
 Nos candidates, photo é o número da foto em que características do relógio sustentam a hipótese. reference_id é um ID exato da lista ou null; brand, family e reference são textos ou null. Em cada observação, angle é a vista efetivamente vista (dial, cyclops, rehaut, crown, clasp ou caseback) e visibility é visible ou ambiguous. Escolha field entre movement_marking, um dos campos comparáveis listados ou null para descrição livre. Para um campo comparável, value é o valor visto, em inglês quando possível, ou null se ambíguo. Não repita o esperado como se tivesse visto. A hipótese deve ser sustentada por observações visíveis. Lotes mistos ou com vínculo incerto são inconclusivos.
 Quando o mostrador completo permitir determinar se há janela de data e em qual posição, registre essa leitura em uma observação própria com field date_position e angle dial. Use no date para ausência visível, e marque ambiguous com value null se a foto não permitir decidir. Confira se a referência proposta é compatível com essa leitura. Ao pedir nova foto, indique a área ou a inscrição a examinar sem supor códigos que não aparecem.
 Para crown_shape, descreva só o contorno da coroa. Use round, 7 sided se puder contar os sete lados, ou faceted se puder ver faces sem contá-las. Use ambiguous com value null se o contorno estiver incerto. Trate cor em observação própria apenas quando a foto permitir e não deduza a composição da pedra.
-Quando houver um código legível no rotor, ponte, platina ou módulo visível, registre-o em uma observação com field movement_marking, angle caseback, location rotor, bridge, plate ou module e visibility visible. Escreva só o código literal em value, separado de frases, nome do fabricante e contagem de joias. Omita números de série e códigos ilegíveis. Uma inscrição copiada pode parecer correta. Identificar o calibre depende da arquitetura do mecanismo; autenticidade e precisão exigem evidência própria."""
+Quando houver um código legível gravado diretamente no rotor, ponte, platina ou módulo visível, registre-o em uma observação com field movement_marking, angle movement, location rotor, bridge, plate ou module e visibility visible. Use angle movement apenas nesse campo e quando o componente interno estiver visível pela abertura ou por um fundo transparente. Nesse caso, escreva em detail exatamente a localização e a inscrição no formato "rotor: 26-330", trocando rotor e 26-330 pelos valores lidos. Para códigos gravados na tampa externa, use angle caseback, field null e descreva a inscrição na tampa. Um número de módulo na tampa não mostra o módulo instalado. Escreva só o código literal em value, separado de frases, nome do fabricante e contagem de joias. Omita números de série e códigos ilegíveis. Uma inscrição copiada pode parecer correta. Identificar o calibre depende da arquitetura do mecanismo; autenticidade e precisão exigem evidência própria."""
 _MOVEMENT_MARKING = "movement_marking"
 _MOVEMENT_REGIONS = {"rotor": "rotor", "bridge": "ponte", "plate": "platina", "module": "módulo"}
 _MOVEMENT_CODE = re.compile(r"(?=.{2,16}\Z)(?:[Cc]\.|[A-Za-z]{0,6}) ?\d[A-Za-z0-9]*(?:[-./‐‑–][A-Za-z0-9]+)*(?: [A-Za-z]{1,4}){0,2}")
@@ -110,13 +110,19 @@ def _identity(value: str | None) -> str:
 
 def _read_movement_marking(item: dict[str, Any], indices: set[int]) -> dict[str, Any] | None:
     photo, location, value = item.get("photo"), item.get("location"), item.get("value")
-    if (not isinstance(photo, int) or isinstance(photo, bool) or photo not in indices or item.get("angle") != "caseback"
+    angle = item.get("angle")
+    if (not isinstance(photo, int) or isinstance(photo, bool) or photo not in indices or angle not in ("caseback", "movement")
         or item.get("visibility") != "visible" or not isinstance(location, str) or not isinstance(value, str)):
         return None
-    region = _MOVEMENT_REGIONS.get(location.strip().casefold())
+    component = location.strip().casefold()
+    region = _MOVEMENT_REGIONS.get(component)
     code = value.strip()
     if not region or not _MOVEMENT_CODE.fullmatch(code) or sum(char.isdigit() for char in code) > 5:
         return None
+    detail = item.get("detail")
+    if angle == "caseback" or not isinstance(detail, str) or detail.strip() != f"{component}: {code}":
+        return {"photo": photo, "angle": "caseback", "location": "fundo", "visibility": "visible",
+                "field": None, "value": code, "detail": f"Inscrição legível na vista do fundo · {code}"}
     return {"photo": photo, "angle": "caseback", "location": region, "visibility": "visible",
             "field": _MOVEMENT_MARKING, "value": code, "detail": f"Inscrição legível no movimento · {code}"}
 

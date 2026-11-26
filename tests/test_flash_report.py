@@ -451,16 +451,68 @@ def test_gmt_pepsi_compares_exterior_without_authenticating(
     assert all(item["photo"] == 1 and item["url"] == brochure for item in checks)
 
 
+@pytest.mark.parametrize("angle,detail", [
+    ("caseback", "Inscrição com código de módulo 593 gravado na tampa traseira metálica aparafusada"),
+    ("movement", "Inscrição com código de módulo 593 gravado na tampa traseira metálica aparafusada"),
+    ("movement", "Código 593 gravado na face externa da tampa traseira."),
+    ("movement", "593 stamped on the outer caseback."),
+    ("movement", "O código 593 está na tampa traseira fechada."),
+    ("movement", "The code 593 is on the exterior of the caseback."),
+    ("movement", "Este é um calibre genuíno garantido"),
+    ("movement", "plate: 593"),
+])
+def test_external_caseback_code_does_not_become_a_movement_reading(angle: str, detail: str) -> None:
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Casio", "family": "Classic", "reference": "F-91W-1",
+                     "reference_id": "casio-f91w-1", "photo": 1}],
+        observations=[
+            {"photo": 1, "angle": "dial", "location": "dial", "detail": "Mostrador digital LCD",
+             "visibility": "visible", "field": "display_type", "value": "digital"},
+            {"photo": 2, "angle": angle, "location": "module", "detail": detail,
+             "visibility": "visible", "field": "movement_marking", "value": "593"},
+            {"photo": 2, "angle": "caseback", "location": "caseback",
+             "detail": "Tampa traseira fixada por parafusos", "visibility": "visible",
+             "field": "caseback_type", "value": "screwed"},
+        ],
+    )
+    report = FlashReport("fixture").build_report(answer, {1, 2})
+    observations = cast(list[dict[str, Any]], report["observations"])
+    reading, = [item for item in observations if "593" in item["detail"]]
+    assert reading["photo"] == 2
+    assert reading["location"] == "fundo"
+    assert reading["field"] is None
+    assert reading["detail"] == "Inscrição legível na vista do fundo · 593"
+    assert all(item["field"] != "movement_marking" for item in observations)
+    assert report["conclusion"] != "probable_original"
+
+
+def test_visible_internal_marking_through_transparent_caseback_keeps_its_origin() -> None:
+    answer = _answer()
+    answer.update(linkage="single_photo", observations=[
+        {"photo": 1, "angle": "caseback", "location": "fundo",
+         "detail": "Rotor visível através do fundo transparente.",
+         "visibility": "visible", "field": None, "value": None},
+        {"photo": 1, "angle": "movement", "location": "rotor",
+         "detail": "rotor: 26-330", "visibility": "visible", "field": "movement_marking", "value": "26-330"},
+    ])
+    report = FlashReport("fixture").build_report(answer, {1})
+    reading, = [item for item in cast(list[dict[str, Any]], report["observations"])
+                if item["field"] == "movement_marking"]
+    assert reading["field"] == "movement_marking"
+    assert reading["location"] == "rotor"
+
+
 @pytest.mark.parametrize("angle,location,visibility,value,retained", [
-    ("caseback", "rotor", "visible", "26-330 S C", True),
-    ("caseback", "plate", "visible", "1847 MC", True),
-    ("caseback", "module", "visible", "593", True),
-    ("caseback", "bridge", "visible", "899/1", True),
-    ("caseback", "plate", "visible", "C.79350", True),
-    ("caseback", "bridge", "visible", "C. 79350", True),
-    ("caseback", "plate", "visible", "No.12345", False),
-    ("caseback", "plate", "visible", "C.123456", False),
-    ("caseback", "bridge", "ambiguous", "26-330", False),
+    ("movement", "rotor", "visible", "26-330 S C", True),
+    ("movement", "plate", "visible", "1847 MC", True),
+    ("movement", "module", "visible", "593", True),
+    ("movement", "bridge", "visible", "899/1", True),
+    ("movement", "plate", "visible", "C.79350", True),
+    ("movement", "bridge", "visible", "C. 79350", True),
+    ("movement", "plate", "visible", "No.12345", False),
+    ("movement", "plate", "visible", "C.123456", False),
+    ("movement", "bridge", "ambiguous", "26-330", False),
     ("caseback", "exterior da tampa", "visible", "593", False),
     ("dial", "rotor", "visible", "26-330", False),
     ("caseback", "bridge", "visible", "1234567890", False),
@@ -468,7 +520,7 @@ def test_gmt_pepsi_compares_exterior_without_authenticating(
     ("caseback", "bridge", "visible", "", False),
     ("caseback", "bridge", "visible", 3235, False),
     ("caseback", None, "visible", "26-330", False),
-    ("movement", "bridge", "visible", "26-330", False),
+    ("movement", "caseback", "visible", "26-330", False),
     ("caseback", "bridge", "unknown", "26-330", False),
 ])
 def test_movement_marking_is_literal_photo_evidence(
@@ -481,7 +533,7 @@ def test_movement_marking_is_literal_photo_evidence(
         linkage="single_photo",
         observations=[{"photo": 1, "angle": angle, "location": location, "visibility": visibility,
                        "field": "movement_marking", "value": value,
-                       "detail": "Este é um calibre genuíno garantido"}],
+                       "detail": f"{location}: {value}"}],
     )
     provider = StubOpenRouter(answer)
     report = FlashReport("fixture", request=provider)(
