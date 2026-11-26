@@ -125,12 +125,25 @@ def complete_flash(
     max_usage_usd: float = MAX_PROJECT_USAGE_USD,
 ) -> tuple[object, dict[str, object]]:
     headers, worst_case_cost = check_flash_budget(key, request=request, max_usage_usd=max_usage_usd)
+    endpoint = "google-vertex/global"
     start = time.monotonic()
     response = request.post(
         "https://openrouter.ai/api/v1/chat/completions", headers=headers,
-        json={"model": MODEL, "messages": [{"role": "user", "content": content}],
-              "max_tokens": MAX_COMPLETION_TOKENS, "temperature": 0,
-              "reasoning": {"effort": "low"}, "provider": {"allow_fallbacks": False}},
+        json={
+            "model": MODEL,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": MAX_COMPLETION_TOKENS,
+            "temperature": 0,
+            "reasoning": {"effort": "low"},
+            "provider": {
+                "only": [endpoint],
+                "order": [endpoint],
+                "allow_fallbacks": False,
+                "data_collection": "deny",
+                "zdr": True,
+            },
+        },
+        allow_redirects=False,
         timeout=75,
     )
     response.raise_for_status()
