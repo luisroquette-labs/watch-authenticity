@@ -481,7 +481,17 @@ class FlashReport:
                     else:
                         next_verification = _REFERENCE_MARKING_PHOTO
                 elif "date_position" in structural_fields:
-                    next_verification = _REFERENCE_MARKING_PHOTO
+                    if any(
+                        item["angle"] == Angle.CASEBACK.value and item["visibility"] == "visible"
+                        and item["field"] is None for item in parsed
+                    ):
+                        next_verification = (
+                            "Se o código da caixa já estiver legível, peça a um relojoeiro que verifique "
+                            "quais componentes correspondem à referência e se houve substituições. "
+                            "Se estiver ilegível, envie uma macro da gravação com o número de série coberto."
+                        )
+                    else:
+                        next_verification = _REFERENCE_MARKING_PHOTO
             elif remaining:
                 reason = "detail_not_verified"
                 next_verification = _PHOTO_FOR_FIELD[remaining[0]]
