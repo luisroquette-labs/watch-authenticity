@@ -54,6 +54,7 @@ _VALUE_ALIASES = {
     "bezel_color": {"blue and red": "red and blue", "red/blue": "red and blue", "blue/red": "red and blue"},
     "crown_shape": {"heptagonal": "7 sided", "seven sided": "7 sided"},
     "date_magnifier": {"cyclops": "magnified", "cyclops lens": "magnified", "present": "magnified", "absent": "no magnifier"},
+    "hand_shape": {"sword": "sword shaped"},
 }
 _CROWN_SHAPE_DETAILS = {
     "7 sided": "Coroa com sete lados.",
@@ -366,9 +367,11 @@ class FlashReport:
             generation_ambiguous = bool(candidate_ids) and candidate_ids <= _BALLON_BLEU_42_GENERATIONS.keys()
             if generation_ambiguous:
                 template = parsed_candidates[0]
+                first_reference = self._exact_catalog_candidate(template)
+                generations = sorted(_BALLON_BLEU_42_GENERATIONS, key=lambda ref: ref != first_reference)
                 parsed_candidates = [
-                    {**template, "reference": code, "reference_id": None}
-                    for code in _BALLON_BLEU_42_GENERATIONS.values()
+                    {**template, "reference": _BALLON_BLEU_42_GENERATIONS[ref], "reference_id": None}
+                    for ref in generations
                 ]
                 reference_id, claims = None, ()
         primary_checks = _technical_checks(reference_id, claims, parsed)
@@ -447,11 +450,23 @@ class FlashReport:
             elif reference_id is None:
                 reason = "catalog_gap" if outside_catalog else "reference_unresolved"
                 if generation_ambiguous:
-                    next_verification = (
-                        "Fotografe o fundo e o encaixe da pulseira no mesmo enquadramento, em foco. "
-                        "A gravação da caixa e o mecanismo do encaixe podem ajudar a distinguir as gerações. "
-                        "Cubra o número de série."
+                    back_examined = any(
+                        item["angle"] == Angle.CASEBACK.value and item["visibility"] == "visible"
+                        and item["field"] != _MOVEMENT_MARKING
+                        for item in parsed
                     )
+                    if back_examined:
+                        next_verification = (
+                            "Confira a referência comercial no cartão de garantia ou no registro de serviço. "
+                            "Compare o número de série do documento com o do fundo, sem compartilhá-lo. "
+                            "Se a gravação do modelo estiver ilegível, envie um macro dessa área com o número de série coberto."
+                        )
+                    else:
+                        next_verification = (
+                            "Fotografe o fundo e o encaixe da pulseira no mesmo enquadramento, em foco. "
+                            "A gravação da caixa e o mecanismo do encaixe podem ajudar a distinguir as gerações. "
+                            "Cubra o número de série."
+                        )
             elif len(structural_fields) < 2:
                 reason = "catalog_gap"
                 if remaining:

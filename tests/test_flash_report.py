@@ -818,7 +818,7 @@ def test_ballon_bleu_42_shared_details_keep_both_generations(suggested: str | No
             {"photo": 1, "angle": "dial", "location": "janela da data", "detail": "Data visível às 3h.",
              "visibility": "visible", "field": "date_position", "value": "3 o'clock"},
             {"photo": 1, "angle": "dial", "location": "ponteiros", "detail": "Ponteiros em forma de espada.",
-             "visibility": "visible", "field": "hand_shape", "value": "sword shaped"},
+             "visibility": "visible", "field": "hand_shape", "value": "sword"},
         ],
     )
     indices = {1}
@@ -840,6 +840,7 @@ def test_ballon_bleu_42_shared_details_keep_both_generations(suggested: str | No
     report = FlashReport("fixture").build_report(answer, indices)
     candidates = cast(list[dict[str, Any]], report["candidates"])
     assert {candidate["reference"] for candidate in candidates} == {"W69012Z4", "WSBB0049"}
+    assert candidates[0]["reference"] == (suggested or "W69012Z4")
     checks = cast(list[dict[str, Any]], report["technical_checks"])
     assert {(check["reference_id"], check["field"], check["photo"], check["status"]) for check in checks} == {
         (f"cartier-ballonbleu-{reference.lower()}", field, 1, "matched")
@@ -847,7 +848,8 @@ def test_ballon_bleu_42_shared_details_keep_both_generations(suggested: str | No
     }
     assert report["conclusion"] == "inconclusive"
     assert report["decision_reason"] == "reference_unresolved"
-    assert "encaixe da pulseira" in str(report["next_verification"])
+    requested = "cartão de garantia" if extra == "caseback" else "encaixe da pulseira"
+    assert requested in str(report["next_verification"])
     assert report["quality_score_0_1000"] is None
     if extra in {"1847 MC", "049"}:
         assert any(item["photo"] == 2 and item["field"] == "movement_marking" and item["value"] == extra
