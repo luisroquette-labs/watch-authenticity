@@ -11,6 +11,11 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, TypeGuard
 
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from evaluation.evaluate import false_reassurance_upper95
+
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _PARTITIONS = ("development", "calibration", "test")
 _COHORTS = ("representative", "stress")
@@ -156,6 +161,7 @@ def census(
                 partitions_by_key[key].add(partition)
 
     cross_partition_members: set[str] = set()
+    group_by_specimen: dict[str, str] = {}
     remaining = set(case_keys)
     for specimen in case_keys:
         if specimen not in remaining:
@@ -172,6 +178,8 @@ def census(
                     component.update(unseen)
                     frontier.extend(unseen)
         remaining.difference_update(component)
+        group = min(component)
+        group_by_specimen.update((member, group) for member in component)
         if len({partitions_by_case[member] for member in component
                 if partitions_by_case[member] in _PARTITIONS}) > 1:
             cross_partition_members.update(component)
@@ -252,6 +260,7 @@ def census(
     return {
         "cases": details,
         "counts": counts,
+        "group_by_specimen": group_by_specimen,
         "paired_test_references": {
             cohort: [
                 {"reference": reference, "generation": generation}
@@ -357,9 +366,50 @@ def score_frozen(
         reports[specimen] = conclusion
     return {
         **_score_cases(test_cases, reports),
+        "by_reference_generation": _reference_metrics(test_cases, reports, admitted["group_by_specimen"]),
         "frozen_run": {"route": run["route"], "cohort": cohort,
                        "manifest_sha256": manifest_sha256, "run_sha256": run_sha256},
     }
+
+
+def _reference_metrics(
+    cases: list[dict[str, Any]], reports: dict[str, str], group_by_specimen: dict[str, str],
+) -> list[dict[str, Any]]:
+    scopes: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for case in cases:
+        scopes[(case["reference"], case["generation"])].append(case)
+
+    results = []
+    for (reference, generation), scoped_cases in sorted(scopes.items()):
+        scoped_reports = {case["specimen_id"]: reports[case["specimen_id"]] for case in scoped_cases
+                          if case["specimen_id"] in reports}
+        metrics = _score_cases(scoped_cases, scoped_reports)["independent"]
+        metrics["decision_coverage"] = (metrics["correct"] + metrics["incorrect"]) / len(scoped_cases)
+        precision = {}
+        for label in _LABELS:
+            prediction = f"probable_{label}"
+            predicted = [case for case in scoped_cases if scoped_reports.get(case["specimen_id"]) == prediction]
+            total = len(predicted)
+            correct = sum(case["label"] == label for case in predicted)
+            groups = {group_by_specimen[case["specimen_id"]] for case in predicted}
+            shared = len(groups) < total
+            precision[prediction] = {
+                "decisions": total,
+                "correct": correct,
+                "precision": correct / total if total else None,
+                "lower_one_sided_95": 1 - false_reassurance_upper95(total - correct, total)
+                if total and not shared else None,
+                "shared_provenance": shared,
+            }
+        label_counts = Counter(case["label"] for case in scoped_cases)
+        results.append({
+            "reference": reference,
+            "generation": generation,
+            "specimens_by_label": {label: label_counts[label] for label in _LABELS},
+            "metrics": metrics,
+            "precision_by_prediction": precision,
+        })
+    return results
 
 
 def _score_cases(cases: list[dict[str, Any]], reports: dict[str, str]) -> dict[str, Any]:

@@ -324,3 +324,84 @@ def test_with_review_preserves_inconclusive_when_photos_cannot_be_linked(linkage
     receipt["conclusion"] = "probable_original"
     with pytest.raises(ValueError, match="unlinked photos require an inconclusive"):
         _frozen_score(data, params, reviewed)
+
+
+def test_frozen_scope_metrics_keep_prediction_precision_and_all_case_accuracy_separate() -> None:
+    cases = [
+        _case("fake-good"), _case("fake-wrong"), _case("original-good", "original"),
+        _case("abstained", "original"), _case("missing"),
+        _case("another-generation", "original", generation="later"),
+        _case("calibration-only", "original", partition="calibration", reference="other"),
+    ]
+    data, params, run = _frozen_inputs(*cases)
+    run["reports"] = {
+        case["specimen_id"]: _run_receipt(case, conclusion)
+        for case, conclusion in zip(
+            (cases[0], cases[1], cases[2], cases[3], cases[5]),
+            ("probable_fake", "probable_original", "probable_original", "visually_compatible", "probable_original"),
+            strict=True,
+        )
+    }
+    first, second = _frozen_score(data, params, run)["by_reference_generation"]
+    assert (first["reference"], first["generation"], second["generation"]) == ("126610LN", "2020", "later")
+    assert first["specimens_by_label"] == {"fake": 3, "original": 2}
+    assert second["specimens_by_label"] == {"fake": 0, "original": 1}
+    metrics = first["metrics"]
+    assert (metrics["cases"], metrics["correct"], metrics["incorrect"], metrics["inconclusive"],
+            metrics["unavailable"]) == (5, 2, 1, 1, 1)
+    assert metrics["accuracy_all_cases"] == 0.4
+    assert metrics["decision_coverage"] == 0.6
+    assert metrics["fake_called_original"] == 1
+    assert first["precision_by_prediction"]["probable_original"]["precision"] == 0.5
+    assert first["precision_by_prediction"]["probable_original"]["lower_one_sided_95"] == pytest.approx(1 - 0.95 ** 0.5)
+    assert first["precision_by_prediction"]["probable_fake"]["precision"] == 1.0
+    assert second["precision_by_prediction"]["probable_fake"]["lower_one_sided_95"] is None
+
+
+@pytest.mark.parametrize(("total", "band", "meets"), [
+    (58, 0.95, False), (59, 0.95, True), (298, 0.99, False), (299, 0.99, True),
+])
+def test_frozen_scope_precision_bound_uses_independent_decision_count(
+    total: int, band: float, meets: bool,
+) -> None:
+    cases = [_case(f"case-{index}", "original") for index in range(total)]
+    data, params, run = _frozen_inputs(*cases)
+    run["reports"] = {case["specimen_id"]: _run_receipt(case, "probable_original") for case in cases}
+    scope, = _frozen_score(data, params, run)["by_reference_generation"]
+    estimate = scope["precision_by_prediction"]["probable_original"]
+    assert estimate["decisions"] == total
+    assert estimate["precision"] == 1.0
+    assert (estimate["lower_one_sided_95"] >= band) is meets
+
+
+@pytest.mark.parametrize("cluster_field", ["split_family", "provenance_clusters"])
+def test_shared_group_precision_retains_counts_but_withholds_naive_interval(cluster_field: str) -> None:
+    value: str | list[str] = "shared" if cluster_field == "split_family" else ["shared"]
+    cases = [
+        _case("first", "original", **{cluster_field: value}),
+        _case("second", "original", **{cluster_field: value}),
+        _case("third", "fake"),
+    ]
+    data, params, run = _frozen_inputs(*cases)
+    run["reports"] = {
+        case["specimen_id"]: _run_receipt(case, f"probable_{case['label']}") for case in cases
+    }
+    scope, = _frozen_score(data, params, run)["by_reference_generation"]
+    estimates = scope["precision_by_prediction"]
+    original = estimates["probable_original"]
+    assert original["decisions"] == 2 and original["precision"] == 1.0
+    assert original["shared_provenance"] and original["lower_one_sided_95"] is None
+    assert estimates["probable_fake"]["lower_one_sided_95"] == pytest.approx(0.05)
+
+
+def test_unanswered_case_can_connect_two_published_decisions_by_provenance() -> None:
+    first = _case("first", "original", split_family="family")
+    middle = _case("middle", "original", split_family="family", provenance_clusters=["shared-source"])
+    second = _case("second", "original", provenance_clusters=["shared-source"])
+    data, params, run = _frozen_inputs(first, middle, second)
+    run["reports"] = {case["specimen_id"]: _run_receipt(case, "probable_original") for case in (first, second)}
+    scope, = _frozen_score(data, params, run)["by_reference_generation"]
+    original = scope["precision_by_prediction"]["probable_original"]
+    assert original["decisions"] == 2
+    assert original["shared_provenance"]
+    assert original["lower_one_sided_95"] is None
