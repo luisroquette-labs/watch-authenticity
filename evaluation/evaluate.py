@@ -67,17 +67,19 @@ class EntityCohort:
         return 1 - self.answered / self.total if self.total else 1.0
 
 
-def false_reassurance_upper95(errors: int, total: int) -> float:
+def _binomial_upper_bound(errors: int, total: int, *, alpha: float) -> float:
     """Exact one-sided binomial upper bound by inversion of the CDF."""
-    if not 0 <= errors <= total or total < 1:
-        raise ValueError("false-reassurance bound requires a nonempty valid count")
+    if not 0 <= errors <= total or total < 1 or not 0 < alpha < 1:
+        raise ValueError("binomial bound requires a nonempty valid count and alpha")
     if errors == total:
         return 1.0
     if errors == 0:
-        return 1 - 0.05 ** (1 / total)
+        return -math.expm1(math.log(alpha) / total)
     low, high = 0.0, 1.0
     for _ in range(55):
         middle = (low + high) / 2
+        if not low < middle < high:
+            break
         cdf = sum(
             math.exp(
                 math.lgamma(total + 1) - math.lgamma(index + 1)
@@ -87,11 +89,33 @@ def false_reassurance_upper95(errors: int, total: int) -> float:
             )
             for index in range(errors + 1)
         )
-        if cdf > 0.05:
+        if cdf > alpha:
             low = middle
         else:
             high = middle
     return high
+
+
+def false_reassurance_upper95(errors: int, total: int) -> float:
+    if not 0 <= errors <= total or total < 1:
+        raise ValueError("false-reassurance bound requires a nonempty valid count")
+    return _binomial_upper_bound(errors, total, alpha=0.05)
+
+
+def precision_lower_bound(correct: int, called: int, *, alpha: float) -> float | None:
+    if not 0 <= correct <= called or not 0 < alpha < 1:
+        raise ValueError("invalid precision sample")
+    if called == 0:
+        return None
+    return 1 - _binomial_upper_bound(called - correct, called, alpha=alpha)
+
+
+def confirmatory_lower_bound(
+    correct: int, groups: tuple[str, ...], *, alpha: float,
+) -> float | None:
+    if len(set(groups)) != len(groups):
+        return None
+    return precision_lower_bound(correct, len(groups), alpha=alpha)
 
 
 def evaluate_entity_safety(bundle: TrainingBundle, report: EntitySafetyReport) -> tuple[EntityCohort, ...]:

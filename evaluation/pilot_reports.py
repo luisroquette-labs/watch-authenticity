@@ -14,7 +14,7 @@ from typing import Any, TypeGuard
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from evaluation.evaluate import false_reassurance_upper95
+from evaluation.evaluate import confirmatory_lower_bound
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _PARTITIONS = ("development", "calibration", "test")
@@ -101,6 +101,15 @@ def census(
     return result
 
 
+def _confirmatory_alpha(freeze: dict[str, Any]) -> float | None:
+    if "confirmatory_alpha" not in freeze:
+        return None
+    alpha = freeze["confirmatory_alpha"]
+    if type(alpha) not in (int, float) or not 0 < alpha <= 0.05:
+        raise ValueError("confirmatory alpha must be in (0, 0.05]")
+    return float(alpha)
+
+
 def _census(
     manifest: dict[str, Any],
     *,
@@ -114,6 +123,7 @@ def _census(
     cases = manifest.get("cases")
     if not isinstance(freeze, dict):
         raise ValueError("manifest requires a freeze object")
+    _confirmatory_alpha(freeze)
     models = freeze.get("models")
     if (
         not isinstance(models, dict) or set(models) != {"gemini", "gpt"}
@@ -374,16 +384,27 @@ def score_frozen(
             gpt_ids.add(receipt["gpt_response_id"])
         gemini_ids.add(receipt["gemini_response_id"])
         reports[specimen] = conclusion
-    return {
-        **_score_cases(test_cases, reports),
-        "by_reference_generation": _reference_metrics(test_cases, reports, group_by_specimen),
-        "frozen_run": {"route": run["route"], "cohort": cohort,
-                       "manifest_sha256": manifest_sha256, "run_sha256": run_sha256},
-    }
+    alpha = _confirmatory_alpha(manifest["freeze"])
+    result = _score_cases(test_cases, reports)
+    result["by_reference_generation"] = _reference_metrics(
+        test_cases, reports, group_by_specimen, confirmatory_alpha=alpha,
+    )
+    result["frozen_run"] = {"route": run["route"], "cohort": cohort,
+                            "manifest_sha256": manifest_sha256, "run_sha256": run_sha256}
+    if alpha is not None:
+        groups = tuple(group_by_specimen[case["specimen_id"]] for case in test_cases)
+        result["confirmatory"] = {
+            "alpha": alpha,
+            "all_cases_accuracy_lower": confirmatory_lower_bound(
+                result["independent"]["correct"], groups, alpha=alpha,
+            ),
+        }
+    return result
 
 
 def _reference_metrics(
     cases: list[dict[str, Any]], reports: dict[str, str], group_by_specimen: dict[str, str],
+    *, confirmatory_alpha: float | None = None,
 ) -> list[dict[str, Any]]:
     scopes: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for case in cases:
@@ -401,16 +422,18 @@ def _reference_metrics(
             predicted = [case for case in scoped_cases if scoped_reports.get(case["specimen_id"]) == prediction]
             total = len(predicted)
             correct = sum(case["label"] == label for case in predicted)
-            groups = {group_by_specimen[case["specimen_id"]] for case in predicted}
-            shared = len(groups) < total
+            groups = tuple(group_by_specimen[case["specimen_id"]] for case in predicted)
             precision[prediction] = {
                 "decisions": total,
                 "correct": correct,
                 "precision": correct / total if total else None,
-                "lower_one_sided_95": 1 - false_reassurance_upper95(total - correct, total)
-                if total and not shared else None,
-                "shared_provenance": shared,
+                "lower_one_sided_95": confirmatory_lower_bound(correct, groups, alpha=0.05),
+                "shared_provenance": len(set(groups)) < total,
             }
+            if confirmatory_alpha is not None:
+                precision[prediction]["lower_confirmatory"] = confirmatory_lower_bound(
+                    correct, groups, alpha=confirmatory_alpha,
+                )
         label_counts = Counter(case["label"] for case in scoped_cases)
         results.append({
             "reference": reference,
