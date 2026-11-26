@@ -973,6 +973,58 @@ def test_ballon_bleu_case_code_does_not_select_one_commercial_variant(case_code:
     assert report["conclusion"] == "inconclusive"
 
 
+@pytest.mark.parametrize(("proposed", "case_marks", "lid_mark", "linkage", "expected"), [
+    ("16200", (), "16200", "single_photo", None),
+    ("16200", ("16233",), "16200", "consistent", "16233"),
+    ("16200", ("16200",), "16200", "consistent", "16200"),
+    ("16200", ("16233", "16234"), "16200", "consistent", None),
+    ("16233", ("16233", "16234"), "16200", "consistent", None),
+    ("16200", ("124300",), "16200", "consistent", None),
+    ("16200", ("126000",), "16200", "consistent", None),
+    ("16200", ("277200",), "16200", "consistent", None),
+    ("16200", ("A123456",), "16200", "consistent", None),
+    ("16200", (), "Ref. 16200", "single_photo", None),
+    ("16233", (), "16200", "single_photo", "16233"),
+    ("16200", ("16233",), "16200", "mixed", "16200"),
+])
+def test_datejust_separates_case_reference_from_removed_caseback(
+    proposed: str, case_marks: tuple[str, ...], lid_mark: str, linkage: str, expected: str | None,
+) -> None:
+    answer = _answer()
+    answer.update(
+        candidates=[{"brand": "Rolex", "family": "Datejust", "reference": proposed,
+                     "reference_id": None, "photo": 1}],
+        linkage=linkage,
+        hypothesis="probable_fake",
+        observations=[
+            {"photo": 1, "angle": "caseback", "location": "inside removed caseback",
+             "detail": f"{lid_mark} gravado na face interna da tampa removida.",
+             "visibility": "visible", "field": None, "value": lid_mark},
+            {"photo": 1, "angle": "movement", "location": "bridge", "detail": "bridge: 3135",
+             "visibility": "visible", "field": "movement_marking", "value": "3135"},
+        ] + [
+            {"photo": photo, "angle": "caseback", "location": "case between lugs",
+             "detail": f"Referência {code} gravada entre as asas.",
+             "visibility": "visible", "field": None, "value": code}
+            for photo, code in enumerate(case_marks, start=2)
+        ],
+    )
+    report = FlashReport("fixture").build_report(answer, set(range(1, len(case_marks) + 2)))
+    candidate, = cast(list[dict[str, Any]], report["candidates"])
+    assert candidate["family"] == "Datejust"
+    assert candidate["reference"] == expected
+    assert candidate["reference_id"] is None
+    assert report["conclusion"] == "inconclusive"
+    assert report["technical_checks"] == []
+    found = cast(list[dict[str, Any]], report["observations"])
+    assert any(row["photo"] == 1 and row["value"] == lid_mark for row in found)
+    assert any(row["photo"] == 1 and row["value"] == "3135" for row in found)
+    if expected is None:
+        assert report["decision_reason"] == "case_reference_unresolved"
+        guidance = cast(str, report["next_verification"])
+        assert "entre as asas" in guidance and "sem" in guidance
+
+
 def test_exact_reference_missing_from_catalogue_requests_an_independent_examination() -> None:
     answer = _answer()
     answer.update(
